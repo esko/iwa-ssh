@@ -12,6 +12,7 @@
     "test": "node scripts/test-ssh-command-parser.mjs",
     "typecheck": "tsc -b --noEmit",
     "fetch-assets": "node scripts/fetch-upstream-assets.mjs",
+    "bump-version": "node scripts/bump-version.mjs",
     "bundle:iwa": "node --experimental-strip-types iwa/build-bundle.mjs",
     "bundle:iwa:unsigned": "node --experimental-strip-types iwa/build-bundle.mjs --unsigned-only",
     "bundle:iwa:info": "node --experimental-strip-types iwa/bundle-info.mjs",
