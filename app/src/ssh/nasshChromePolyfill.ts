@@ -9,7 +9,7 @@ type ChromeWindowsStub = {
 
 type ChromeRuntimeStub = {
   getManifest?: () => { name: string; version: string; icons?: Record<string, string> };
-  sendMessage?: (...args: unknown[]) => void;
+  sendMessage?: (...args: unknown[]) => Promise<Record<string, never>> | void;
   getURL?: (path: string) => string;
   connect?: () => never;
 };
@@ -49,7 +49,9 @@ export function installNasshChromePolyfill(): void {
       const callback = args.at(-1);
       if (typeof callback === 'function') {
         setTimeout(() => callback({}), 0);
+        return;
       }
+      return Promise.resolve({});
     };
   }
 
