@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.swbn
+*.pem
+iwa/keys/*.pem
+iwa/keys/*.pkcs8
+.DS_Store
+*.log
+.vite/
+coverage/
+.env
+.env.*
+tsconfig.tsbuildinfo
+.commandcode/

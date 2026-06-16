@@ -1,0 +1,14 @@
+{
+  "versions": [
+    {
+      "version": "0.1.0",
+      "src": "https://example.com/iwa-ssh/releases/0.1.0/iwa-ssh.swbn",
+      "channels": ["default"]
+    }
+  ],
+  "channels": {
+    "default": {
+      "name": "Stable"
+    }
+  }
+}
