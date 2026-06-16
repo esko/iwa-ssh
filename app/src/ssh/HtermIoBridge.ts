@@ -5,6 +5,7 @@
  * talks to hterm.IO; we render via xterm instead of hterm UI.
  */
 
+import { log } from '../debug/logger';
 import type { TerminalAdapter } from '../terminal/TerminalAdapter';
 import type { HtermNamespace, HtermStubTerminal, HtermTerminalIo } from './upstreamTypes';
 import { upstreamImport } from './upstreamUrls';
@@ -19,6 +20,7 @@ export async function loadHtermTerminalIo(): Promise<HtermNamespace> {
       await upstreamImport('hterm/js/hterm_terminal_io.js');
       hterm.Terminal ??= { DEFAULT_PROFILE_ID: 'default' } as HtermNamespace['Terminal'];
       hterm.Terminal.DEFAULT_PROFILE_ID ??= 'default';
+      await hterm.initPromise;
       return hterm;
     })();
   }
@@ -61,9 +63,6 @@ export class HtermIoBridge {
     const IoCtor = hterm.Terminal.IO;
     this.io = new IoCtor(this.stubTerminal);
     this.stubTerminal.io = this.io;
-
-    this.io.sendString = () => {};
-    this.io.onVTKeystroke = () => {};
   }
 
   /** Forward xterm keystrokes into the active nassh/wassh session. */
@@ -76,14 +75,19 @@ export class HtermIoBridge {
   }
 
   resize(cols: number, rows: number): void {
+    if (
+      this.stubTerminal.screenSize.width === cols &&
+      this.stubTerminal.screenSize.height === rows
+    ) {
+      return;
+    }
     this.stubTerminal.screenSize.width = cols;
     this.stubTerminal.screenSize.height = rows;
+    log.term.debug('terminal resize', { cols, rows });
     this.io.onTerminalResize_(cols, rows);
   }
 
   dispose(): void {
     this.inputBound = false;
-    this.io.sendString = () => {};
-    this.io.onVTKeystroke = () => {};
   }
 }

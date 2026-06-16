@@ -2,6 +2,7 @@
  * SSH session facade: upstream nassh/wassh when assets are present, else local echo stub.
  */
 
+import { log } from '../debug/logger';
 import type { TerminalAdapter } from '../terminal/TerminalAdapter';
 import type { ConnectionStatus } from '../settings/types';
 import { NasshCommandBridge } from './NasshCommandBridge';
@@ -42,12 +43,15 @@ export class NasshSession {
     if (this.disposed) return;
 
     const upstreamReady = await areUpstreamAssetsReady();
+    log.session.debug('upstream assets ready', { upstreamReady });
+
     if (upstreamReady) {
       try {
         await this.connectViaBridge();
         return;
       } catch (error) {
-        console.warn('NasshCommandBridge unavailable, using echo stub:', error);
+        const message = error instanceof Error ? error.message : String(error);
+        log.session.warn('NasshCommandBridge unavailable, using echo stub', { message, error });
         await this.bridge?.disconnect().catch(() => undefined);
         this.bridge?.dispose();
         this.bridge = null;
@@ -93,10 +97,11 @@ export class NasshSession {
       host: this.options.host,
       port: this.options.port,
       username: this.options.username,
+      identityId: this.options.identityId,
       startupCommand: this.options.startupCommand,
       onStatus: (status, error) => this.setStatus(status, error),
     });
-    this.bridge.attachTerminal(this.adapter);
+    this.bridge.attachTerminal(this.adapter, { onOutput: this.onOutput ?? undefined });
     this.useBridge = true;
     await this.bridge.connect();
   }
@@ -142,13 +147,14 @@ export class NasshSession {
   }
 
   private handleResize(cols: number, rows: number): void {
-    if (this.useBridge) return;
-    void cols;
-    void rows;
+    if (this.useBridge) {
+      this.bridge?.resize(cols, rows);
+    }
   }
 
   private setStatus(status: ConnectionStatus, error?: string): void {
     this.status = status;
+    log.session.debug('status', { status, error });
     this.options.onStatus?.(status, error);
   }
 

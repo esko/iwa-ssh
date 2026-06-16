@@ -70,6 +70,20 @@ Modeled after ChromeOS Terminal shortcut toggles.
 | `backspaceSendsDelete` | `true` | Backspace sends `^?` (DEL) not `^H` |
 | `deleteSendsEscapeSequence` | `false` | Delete sends escape sequence vs DEL |
 
+### Implementation
+
+Keyboard settings are loaded from IndexedDB in `renderSession()` and passed to `Xterm6TerminalAdapter`. Bindings are applied in `app/src/terminal/keyboardBindings.ts`.
+
+| Setting | Where applied |
+|---------|----------------|
+| `ctrlShiftCopyPaste`, `ctrlCopyPaste` | Custom key handler on xterm (`attachCustomKeyEventHandler`) |
+| `ctrlTNewTab`, `ctrlWCloseTab`, `ctrlTabSwitch`, `altNumberSwitchTab` | `TabManager` window keydown handler (simulated tabs only) |
+| `copyOnSelect` | `mouseup` on terminal element |
+| `rightClickPaste`, `middleClickPaste` | `contextmenu` / `auxclick` on terminal element |
+| `scrollToBottomOnKeypress` | xterm `scrollOnUserInput` option |
+| `altSendsEscape` | xterm `macOptionIsMeta` (macOS); custom key handler skips Alt prefix on other platforms when disabled |
+| `backspaceSendsDelete`, `deleteSendsEscapeSequence` | Custom key handler overrides Backspace/Delete bytes |
+
 ---
 
 ## Behavior (`TerminalBehavior`)

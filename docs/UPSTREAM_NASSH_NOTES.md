@@ -45,7 +45,13 @@ upstream/libapps/
 | Extension manifest | IWA signed web bundle + `manifest.webmanifest` |
 | `nassh` preferences UI | `/settings` route + IndexedDB |
 
-Integration point: `NasshSession` should delegate to wassh for I/O while the adapter handles display/input/resize.
+Integration point: `NasshSession` delegates to `NasshCommandBridge` → upstream `CommandInstance` for I/O while the adapter handles display/input/resize.
+
+### Identity keys (IWA)
+
+Upstream `connectTo` accepts `identity` (basename under `/.ssh/identity/`). `NasshCommandBridge` stages keys from our IndexedDB `identities` store into nassh's indexeddb-fs (`nasshIdentity.ts`) before connect. Passphrase-protected PEM uses `SecureInputPrompt` via nassh `secureInput`.
+
+Not wired yet: syncing our IndexedDB `knownHosts` into nassh's `/.ssh/known_hosts` (host-key prompts remain stubbed in `KnownHostPrompt.ts`).
 
 ## Building Secure Shell (upstream)
 

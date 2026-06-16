@@ -27,6 +27,7 @@ export type HtermTerminalIo = {
 };
 
 export type HtermNamespace = {
+  initPromise?: Promise<void>;
   Terminal: {
     IO: new (terminal: HtermStubTerminal) => HtermTerminalIo;
     DEFAULT_PROFILE_ID: string;
@@ -39,6 +40,8 @@ export type NasshConnectParams = {
   username: string;
   command?: string;
   nasshOptions?: string;
+  /** Basename under /.ssh/identity/ (not a full path). */
+  identity?: string;
 };
 
 export type NasshCommandInstance = {

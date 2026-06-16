@@ -1,0 +1,67 @@
+/**
+ * Stage iwa-ssh identities into nassh's indexeddb-fs for -i/.ssh/identity/… usage.
+ */
+
+import { log } from '../debug/logger';
+import { listIdentities } from '../storage/indexedDb';
+import type { Identity } from '../settings/types';
+import { upstreamImport } from './upstreamUrls';
+
+type NasshFsModule = {
+  getIndexeddbFileSystem: () => Promise<{
+    createDirectory: (path: string) => Promise<void>;
+    writeFile: (path: string, contents: ArrayBuffer) => Promise<void>;
+  }>;
+};
+
+let fsModulePromise: Promise<NasshFsModule> | null = null;
+
+async function loadNasshFs(): Promise<NasshFsModule> {
+  if (!fsModulePromise) {
+    fsModulePromise = upstreamImport<NasshFsModule>('nassh/js/nassh_fs.js');
+  }
+  return fsModulePromise;
+}
+
+async function getIdentityById(identityId: string): Promise<Identity | undefined> {
+  const identities = await listIdentities();
+  return identities.find((entry) => entry.id === identityId);
+}
+
+/** Filename placed under /.ssh/identity/ for upstream ssh -i. */
+export function nasshIdentityFilename(identityId: string): string {
+  return `iwa-ssh-${identityId}`;
+}
+
+/**
+ * Copy a stored private key PEM into nassh's virtual filesystem.
+ * Returns the identity filename for connectTo params, or undefined when unavailable.
+ */
+export async function stageIdentityForNassh(identityId: string): Promise<string | undefined> {
+  const identity = await getIdentityById(identityId);
+  if (!identity) {
+    log.ssh.warn('identity not found', { identityId });
+    return undefined;
+  }
+
+  if (!identity.encryptedPrivateKey) {
+    log.ssh.warn('identity has no private key material', { identityId, label: identity.label });
+    return undefined;
+  }
+
+  const filename = nasshIdentityFilename(identityId);
+  const { getIndexeddbFileSystem } = await loadNasshFs();
+  const fileSystem = await getIndexeddbFileSystem();
+
+  await fileSystem.createDirectory('/.ssh');
+  await fileSystem.createDirectory('/.ssh/identity');
+  await fileSystem.writeFile(`/.ssh/identity/${filename}`, identity.encryptedPrivateKey);
+
+  if (identity.publicKey) {
+    const pubBytes = new TextEncoder().encode(`${identity.publicKey.trim()}\n`);
+    await fileSystem.writeFile(`/.ssh/identity/${filename}.pub`, pubBytes.buffer);
+  }
+
+  log.ssh.info('staged identity for nassh', { identityId, filename, label: identity.label });
+  return filename;
+}

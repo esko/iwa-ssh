@@ -4,12 +4,14 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import type { TerminalAdapter } from './TerminalAdapter';
-import type { TerminalAppearance } from '../settings/types';
+import { applyKeyboardBindings, type KeyboardBindingsHandle } from './keyboardBindings';
+import type { KeyboardSettings, TerminalAppearance } from '../settings/types';
 
 import '@xterm/xterm/css/xterm.css';
 
 export type Xterm6TerminalAdapterOptions = {
   appearance: TerminalAppearance;
+  keyboard?: KeyboardSettings;
   onBell?: () => void;
 };
 
@@ -21,9 +23,12 @@ export class Xterm6TerminalAdapter implements TerminalAdapter {
   private inputCb: ((data: string) => void) | null = null;
   private resizeCb: ((cols: number, rows: number) => void) | null = null;
   private container: HTMLElement | null = null;
+  private keyboardBindings: KeyboardBindingsHandle | null = null;
+  private readonly keyboard: KeyboardSettings | undefined;
 
   constructor(options: Xterm6TerminalAdapterOptions) {
     const { appearance } = options;
+    this.keyboard = options.keyboard;
     this.terminal = new Terminal({
       fontFamily: appearance.fontFamily,
       fontSize: appearance.fontSize,
@@ -57,6 +62,9 @@ export class Xterm6TerminalAdapter implements TerminalAdapter {
   open(el: HTMLElement): void {
     this.container = el;
     this.terminal.open(el);
+    if (this.keyboard) {
+      this.keyboardBindings = applyKeyboardBindings(this.terminal, el, this.keyboard);
+    }
     this.fitAddon.fit();
     this.resizeObserver = new ResizeObserver(() => this.fit());
     this.resizeObserver.observe(el);
@@ -89,6 +97,8 @@ export class Xterm6TerminalAdapter implements TerminalAdapter {
   }
 
   dispose(): void {
+    this.keyboardBindings?.dispose();
+    this.keyboardBindings = null;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.terminal.dispose();

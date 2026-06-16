@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Start Vite dev server and open Chrome on /dev for inspection.
+ * Start Vite dev server and open Chrome on /debug for inspection.
  *
  * Chrome opens with remote debugging on port 9222 so DevTools / CDP clients
  * (including agent-browser) can attach.
@@ -13,7 +13,8 @@ import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.IWA_SSH_DEV_PORT || 5173);
-const DEV_URL = `http://127.0.0.1:${PORT}/dev`;
+const DEV_URL = `http://127.0.0.1:${PORT}/debug`;
+const IWA_PROXY_URL = `http://127.0.0.1:${PORT}/`;
 const DEBUG_PORT = Number(process.env.CHROME_DEBUG_PORT || 9222);
 
 function waitForPort(port, timeoutMs = 30_000) {
@@ -78,6 +79,7 @@ vite.on('exit', (code) => shutdown(code ?? 0));
     const chromeBin = findChrome();
     if (!chromeBin) {
       console.log(`\nDev server ready: ${DEV_URL}`);
+      console.log(`IWA Dev Mode Proxy URL (ChromeOS): ${IWA_PROXY_URL}`);
       console.log('Set CHROME_PATH to open Chrome automatically.');
       return;
     }
@@ -100,6 +102,7 @@ vite.on('exit', (code) => shutdown(code ?? 0));
     });
 
     console.log(`\n  Dev inspector:  ${DEV_URL}`);
+    console.log(`  IWA proxy URL:  ${IWA_PROXY_URL}  (chrome://web-app-internals → Dev Mode Proxy)`);
     console.log(`  CDP port:       ${DEBUG_PORT}`);
     console.log(`  Profile dir:    ${userDataDir}`);
     console.log('\n  Press Ctrl+C to stop Vite and Chrome.\n');

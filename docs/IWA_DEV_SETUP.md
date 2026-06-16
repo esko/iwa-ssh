@@ -2,6 +2,42 @@
 
 Personal-use **local-only** Isolated Web App for ChromeOS SSH. No web server hosting, no update CDN, no `example.com` URLs. Requires **Chrome or ChromeOS 120+**.
 
+## First SSH test on ChromeOS (Dev Mode Proxy)
+
+One-time setup, then a repeatable smoke path. No hosting or `.swbn` required.
+
+### One-time
+
+1. `chrome://flags/#enable-isolated-web-app-dev-mode` → **Enabled** → restart Chrome
+2. In Crostini (or Linux on Chromebook): clone repo, `npm install`, `git submodule update --init upstream/libapps`, `npm run fetch-assets`
+3. Optional: `chrome://flags/#enable-direct-sockets-for-isolated-web-apps` if TCPSocket is missing after install
+
+### Each test session
+
+1. `npm run dev` — Vite on `http://127.0.0.1:5173` (keep terminal open)
+2. `chrome://web-app-internals` → **Install IWA with Dev Mode Proxy**
+3. URL: `http://127.0.0.1:5173/` (prefer `127.0.0.1` over `localhost`)
+4. Launch **iwa-ssh** from the app launcher (not a normal browser tab)
+5. Open **Debug** (`/debug`) — confirm **TCPSocket** = yes, **Upstream assets** = ready, **IWA origin** = yes
+6. **Connect** → enter host, port, username → accept host-key prompt if shown
+7. Terminal shows a shell prompt; run `echo ok` on the remote host
+
+### After code changes
+
+- Save files; Vite hot-reloads. If the IWA window goes stale: **Web App Internals** → **Force update check**, or close and reopen the app.
+- Reinstall Dev Mode Proxy only if you changed the dev server port or the install is broken.
+
+### Quick checks if SSH fails
+
+| Check | Expected |
+|-------|----------|
+| Installed via Dev Mode Proxy | `isolated-app://…` origin on `/debug` |
+| `TCPSocket` on `/debug` | yes |
+| Upstream assets | ready (`npm run fetch-assets`) |
+| Target host | reachable on port 22 from the Chromebook |
+
+See [tests/e2e/README.md](../tests/e2e/README.md) for terminal UI smoke tests (simulated tabs) and [tests/e2e/smoke-terminal.spec.md](../tests/e2e/smoke-terminal.spec.md) for vim/tmux/fish once SSH is wired.
+
 ## Local-only workflow (recommended)
 
 You have two ways to run this on your Chromebook — both stay on the machine:

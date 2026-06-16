@@ -39,7 +39,7 @@ ChromeOS **Isolated Web App (IWA)** SSH client. Reuses Chromium's **nassh/wassh*
 ```bash
 npm install
 npm run dev      # Vite dev server → http://localhost:5173
-npm run dev:chrome  # Vite + Chrome on /dev (CDP port 9222)
+npm run dev:chrome  # Vite + Chrome on /debug (CDP port 9222)
 npm run build    # typecheck + production bundle → dist/
 npm run typecheck
 npm run preview  # serve dist/ locally

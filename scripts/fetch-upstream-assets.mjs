@@ -100,6 +100,14 @@ function tryFetchPlugin() {
     };
   }
 
+  const defaultWasm = path.join(PLUGIN_SRC, 'wasm/ssh.wasm');
+  if (!exists(defaultWasm)) {
+    return {
+      ok: false,
+      reason: `default OpenSSH plugin missing at ${path.relative(REPO_ROOT, defaultWasm)} (not wasm-openssh-* alone)`,
+    };
+  }
+
   return { ok: true };
 }
 
@@ -316,6 +324,12 @@ async function main() {
   }
   if (pluginCount === 0) {
     throw new Error('no plugin .wasm files copied — run upstream/libapps/nassh/bin/plugin');
+  }
+  const defaultWasmOut = path.join(OUT_DIR, 'plugin/wasm/ssh.wasm');
+  if (!exists(defaultWasmOut)) {
+    throw new Error(
+      `missing ${path.relative(REPO_ROOT, defaultWasmOut)} — default client is plugin/wasm/, not wasm-openssh-* only`,
+    );
   }
   if (nasshCount === 0) {
     throw new Error('no nassh bridge JS files copied');

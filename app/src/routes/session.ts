@@ -117,7 +117,7 @@ export async function renderSession(root: HTMLElement, sessionId: string, query 
     if (reconnectBtn) reconnectBtn.disabled = status === 'connecting' || status === 'connected';
   };
 
-  const adapter = new Xterm6TerminalAdapter({ appearance });
+  const adapter = new Xterm6TerminalAdapter({ appearance, keyboard: settings.keyboard });
   const session = new NasshSession({
     host: params.host,
     port: params.port,
