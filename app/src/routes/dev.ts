@@ -2,7 +2,7 @@ import { Router } from '../app-shell/router';
 import { getRuntimeLabel, isIwaOrigin, usesNativeAppTabs, usesSimulatedTabs } from '../app-shell/tabMode';
 import { getDebugFlags } from '../debug/flags';
 import { getRecentLogs, getSessionDebugState } from '../debug/logger';
-import { isDirectSocketsAvailable } from '../ssh/DirectSocketTransport';
+import { isDirectSocketsAvailable } from '../ssh/DirectSocketProbe';
 import { ensureHostTrusted, stubHostFingerprint } from '../ssh/KnownHostPrompt';
 import { areUpstreamAssetsReady } from '../ssh/upstreamAssets';
 import {

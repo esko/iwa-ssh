@@ -12,7 +12,7 @@ type AppSettings = {
 };
 ```
 
-Global settings apply to all new terminal sessions. Profiles may override appearance per connection (see below).
+Global settings apply to **new terminal sessions only** (existing sessions keep their initial appearance/keyboard config). Profiles may override appearance per connection (see below).
 
 ---
 
@@ -26,8 +26,8 @@ Global settings apply to all new terminal sessions. Profiles may override appear
 | `letterSpacing` | number | `0` | Pixels |
 | `cursorStyle` | `'block' \| 'bar' \| 'underline'` | `block` | |
 | `cursorBlink` | boolean | `true` | |
-| `boldTextEnabled` | boolean | `true` | |
-| `bell` | `'none' \| 'visual' \| 'sound'` | `visual` | Visual = brief flash |
+| `boldTextEnabled` | boolean | `true` | Passed to xterm `fontWeightBold` |
+| `bell` | `'none' \| 'visual' \| 'sound'` | `visual` | Visual = brief flash; `sound` coerced to `visual` (not implemented) |
 | `scrollbackLines` | number | `10000` | xterm scrollback |
 | `themePreset` | `ThemePresetId` | `chromeos-dark` | See presets below |
 | `customTheme` | `ITheme` | — | Used when preset is `custom` |
@@ -125,12 +125,12 @@ type Identity = {
   id: string;
   label: string;
   publicKey: string;
-  encryptedPrivateKey?: ArrayBuffer;
+  privateKeyPemBytesDevOnly?: ArrayBuffer;
   createdAt: number;
 };
 ```
 
-Private keys are encrypted at rest (WebCrypto + user passphrase). No plaintext passwords — see [SECURITY.md](./SECURITY.md).
+Private keys are stored as **raw PEM bytes** during MVP (`privateKeyPemBytesDevOnly`). WebCrypto encryption is not implemented yet — see [SECURITY.md](./SECURITY.md).
 
 ---
 
@@ -146,7 +146,7 @@ type KnownHost = {
 };
 ```
 
-Keyed by `host:port` in IndexedDB. Trust prompts compare against this store before connecting.
+Keyed by `host:port` in IndexedDB. While `isHostKeyVerificationStubbed()` is true, the connect modal is a UI stub only — nothing is persisted and fingerprints are placeholders.
 
 ---
 

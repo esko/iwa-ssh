@@ -17,8 +17,8 @@ ChromeOS **Isolated Web App (IWA)** SSH client. Reuses Chromium's **nassh/wassh*
 │  └──────┬──────────────────────────────────────────┘   │
 │         │                                               │
 │  ┌──────▼──────────┐      ┌─────────────────────────┐  │
-│  │ NasshSession    │─────▶│ DirectSocketTransport   │  │
-│  │ (wassh bridge)  │      │ (TCPSocket / IWA perm)  │  │
+│  │ NasshSession    │─────▶│ wassh via nassh (Direct Sockets) │  │
+│  │ (wassh bridge)  │      │ DirectSocketProbe = dev checks   │  │
 │  └─────────────────┘      └─────────────────────────┘  │
 └─────────────────────────────────────────────────────────┘
          ▲
@@ -30,7 +30,7 @@ ChromeOS **Isolated Web App (IWA)** SSH client. Reuses Chromium's **nassh/wassh*
 |-------|----------|-------|
 | UI / routing | `app/src/app-shell/`, `app/src/routes/` | Hash-free client router |
 | Terminal | `app/src/terminal/` | `TerminalAdapter` + xterm.js 6 |
-| SSH session | `app/src/ssh/` | `NasshSession` + `DirectSocketTransport` |
+| SSH session | `app/src/ssh/` | `NasshSession` + `NasshCommandBridge` (wassh via Direct Sockets) |
 | Persistence | `app/src/storage/` | Profiles, settings, identities, known hosts |
 | Upstream | `upstream/libapps/` | Chromium libapps (nassh/wassh) |
 
@@ -45,7 +45,7 @@ npm run typecheck
 npm run preview  # serve dist/ locally
 ```
 
-**IWA install on ChromeOS** (local only — Dev Mode Proxy or `.swbn` from disk): see [docs/IWA_DEV_SETUP.md](docs/IWA_DEV_SETUP.md).
+**IWA install on ChromeOS** (local only — Dev Mode Proxy or `.swbn` from disk): see [docs/IWA_DEV_SETUP.md](docs/IWA_DEV_SETUP.md). Reference apps: [IWA Kitchen Sink](https://github.com/chromeos/iwa-sink), [Telnet client](https://github.com/GoogleChromeLabs/telnet-client). Direct Sockets: [Chrome docs](https://developer.chrome.com/docs/iwa/direct-sockets).
 
 **Upstream nassh/wassh build and submodule:** see [docs/UPSTREAM_NASSH_NOTES.md](docs/UPSTREAM_NASSH_NOTES.md).
 
@@ -59,12 +59,12 @@ git submodule update --init --depth 1 upstream/libapps
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| **0** | Repo bootstrap, app shell, echo stub session, Direct Sockets scaffold | Done (dev server + unsigned bundle) |
-| **1** | Upstream libapps build; wire wassh + `DirectSocketTransport` | Not started |
-| **2** | Terminal adapter, xterm.js, session I/O, resize/window-change | Partial (adapter + xterm UI; wassh I/O pending) |
-| **3** | Profiles, connect screen, settings shell | Done (IndexedDB, connect, profiles, settings) |
-| **4** | Tabbed manifest, appearance/keyboard settings, known_hosts, key import | Partial (manifest + settings UI; trust UI + keys pending) |
-| **5** | E2E smoke tests (vim/tmux/fish), signed bundle, security notes | Partial (docs + unsigned bundle script) |
+| **0** | Repo bootstrap, app shell, echo stub session, Direct Sockets probe | Done |
+| **1** | Upstream libapps assets; wire nassh CommandInstance + wassh | In progress (bridge + fetch-assets; needs ChromeOS IWA verify) |
+| **2** | Terminal adapter, xterm.js, session I/O, resize/window-change | Done (adapter + HtermIoBridge; live SSH pending verify) |
+| **3** | Profiles, connect screen, settings shell | Done |
+| **4** | Tabbed manifest, appearance/keyboard settings, known_hosts, key import | Partial (host-key + key storage are dev stubs) |
+| **5** | E2E smoke tests (vim/tmux/fish), signed bundle, security notes | Partial (docs + bundle script; signing key placeholder) |
 
 Track work on the [issue tracker](https://github.com/esko/iwa-ssh/issues).
 

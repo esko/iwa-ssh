@@ -465,6 +465,19 @@ textarea {
   margin: 0 0 0.75rem;
 }
 
+.modal-dialog__warning {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning, #f9a825) 18%, transparent);
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.settings-note {
+  margin: 0 0 1rem;
+}
+
 .modal-dialog__footer {
   padding: 0 1.25rem 1.25rem;
 }

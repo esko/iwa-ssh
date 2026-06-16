@@ -6,7 +6,7 @@
  */
 
 import { log } from '../debug/logger';
-import type { TerminalAdapter } from '../terminal/TerminalAdapter';
+import type { TerminalAdapter, TerminalSubscription } from '../terminal/TerminalAdapter';
 import type { HtermNamespace, HtermStubTerminal, HtermTerminalIo } from './upstreamTypes';
 import { upstreamImport } from './upstreamUrls';
 
@@ -37,7 +37,7 @@ export type AttachTerminalOptions = HtermIoBridgeOptions;
 export class HtermIoBridge {
   readonly io: HtermTerminalIo;
   private readonly stubTerminal: HtermStubTerminal;
-  private inputBound = false;
+  private inputSubscription: TerminalSubscription | null = null;
 
   constructor(
     private readonly adapter: TerminalAdapter,
@@ -67,9 +67,8 @@ export class HtermIoBridge {
 
   /** Forward xterm keystrokes into the active nassh/wassh session. */
   bindInput(): void {
-    if (this.inputBound) return;
-    this.inputBound = true;
-    this.adapter.onInput((data) => {
+    if (this.inputSubscription) return;
+    this.inputSubscription = this.adapter.onInput((data) => {
       this.io.sendString(data);
     });
   }
@@ -88,6 +87,7 @@ export class HtermIoBridge {
   }
 
   dispose(): void {
-    this.inputBound = false;
+    this.inputSubscription?.dispose();
+    this.inputSubscription = null;
   }
 }

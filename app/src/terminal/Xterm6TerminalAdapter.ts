@@ -3,7 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
-import type { TerminalAdapter } from './TerminalAdapter';
+import type { TerminalAdapter, TerminalSubscription } from './TerminalAdapter';
 import { applyKeyboardBindings, type KeyboardBindingsHandle } from './keyboardBindings';
 import type { KeyboardSettings, TerminalAppearance } from '../settings/types';
 
@@ -20,8 +20,8 @@ export class Xterm6TerminalAdapter implements TerminalAdapter {
   private readonly fitAddon: FitAddon;
   private readonly searchAddon: SearchAddon;
   private resizeObserver: ResizeObserver | null = null;
-  private inputCb: ((data: string) => void) | null = null;
-  private resizeCb: ((cols: number, rows: number) => void) | null = null;
+  private readonly inputListeners = new Set<(data: string) => void>();
+  private readonly resizeListeners = new Set<(cols: number, rows: number) => void>();
   private container: HTMLElement | null = null;
   private keyboardBindings: KeyboardBindingsHandle | null = null;
   private readonly keyboard: KeyboardSettings | undefined;
@@ -29,6 +29,9 @@ export class Xterm6TerminalAdapter implements TerminalAdapter {
   constructor(options: Xterm6TerminalAdapterOptions) {
     const { appearance } = options;
     this.keyboard = options.keyboard;
+    const fontWeight = appearance.boldTextEnabled ? 'normal' : 'normal';
+    const fontWeightBold = appearance.boldTextEnabled ? 'bold' : fontWeight;
+
     this.terminal = new Terminal({
       fontFamily: appearance.fontFamily,
       fontSize: appearance.fontSize,
@@ -36,6 +39,8 @@ export class Xterm6TerminalAdapter implements TerminalAdapter {
       letterSpacing: appearance.letterSpacing,
       cursorStyle: appearance.cursorStyle,
       cursorBlink: appearance.cursorBlink,
+      fontWeight,
+      fontWeightBold,
       scrollback: appearance.scrollbackLines,
       theme: appearance.theme,
       allowProposedApi: true,
@@ -48,8 +53,16 @@ export class Xterm6TerminalAdapter implements TerminalAdapter {
     this.terminal.loadAddon(this.searchAddon);
     this.terminal.loadAddon(new ClipboardAddon());
 
-    this.terminal.onData((data) => this.inputCb?.(data));
-    this.terminal.onResize(({ cols, rows }) => this.resizeCb?.(cols, rows));
+    this.terminal.onData((data) => {
+      for (const listener of this.inputListeners) {
+        listener(data);
+      }
+    });
+    this.terminal.onResize(({ cols, rows }) => {
+      for (const listener of this.resizeListeners) {
+        listener(cols, rows);
+      }
+    });
     this.terminal.onBell(() => {
       if (options.onBell) {
         options.onBell();
@@ -75,12 +88,14 @@ export class Xterm6TerminalAdapter implements TerminalAdapter {
     this.terminal.write(data);
   }
 
-  onInput(cb: (data: string) => void): void {
-    this.inputCb = cb;
+  onInput(cb: (data: string) => void): TerminalSubscription {
+    this.inputListeners.add(cb);
+    return { dispose: () => this.inputListeners.delete(cb) };
   }
 
-  onResize(cb: (cols: number, rows: number) => void): void {
-    this.resizeCb = cb;
+  onResize(cb: (cols: number, rows: number) => void): TerminalSubscription {
+    this.resizeListeners.add(cb);
+    return { dispose: () => this.resizeListeners.delete(cb) };
   }
 
   focus(): void {
@@ -99,6 +114,8 @@ export class Xterm6TerminalAdapter implements TerminalAdapter {
   dispose(): void {
     this.keyboardBindings?.dispose();
     this.keyboardBindings = null;
+    this.inputListeners.clear();
+    this.resizeListeners.clear();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.terminal.dispose();

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:chrome": "node scripts/dev-chrome.mjs",
+    "install:iwa": "node scripts/install-iwa-dev.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",

@@ -2,6 +2,31 @@
 
 Personal-use **local-only** Isolated Web App for ChromeOS SSH. No web server hosting, no update CDN, no `example.com` URLs. Requires **Chrome or ChromeOS 120+**.
 
+## Official references
+
+Use these before debugging iwa-ssh install or TCP issues:
+
+| Resource | Role |
+|----------|------|
+| [Getting started with IWAs](https://chromeos.dev/en/tutorials/getting-started-with-isolated-web-apps) | End-to-end tutorial (uses Kitchen Sink) |
+| [IWA Kitchen Sink](https://github.com/chromeos/iwa-sink) (`chromeos/iwa-sink`) | Reference app — Direct Sockets tab, manifest, signed-bundle releases |
+| [Telnet client](https://github.com/GoogleChromeLabs/telnet-client) | Minimal Direct Sockets terminal (closest analogue to SSH) |
+| [Direct Sockets (Chrome docs)](https://developer.chrome.com/docs/iwa/direct-sockets) | Required `permissions_policy`, `TCPSocket` usage, DevTools from Chrome 138+ |
+
+iwa-ssh’s manifest `permissions_policy` matches Kitchen Sink / Telnet for TCP SSH targets:
+
+```json
+"permissions_policy": {
+  "cross-origin-isolated": ["self"],
+  "direct-sockets": ["self"],
+  "direct-sockets-private": ["self"],
+  "local-network": ["self"],
+  "loopback-network": ["self"]
+}
+```
+
+Per the [Direct Sockets doc](https://developer.chrome.com/docs/iwa/direct-sockets): `cross-origin-isolated` is required for all IWAs; `direct-sockets` enables `TCPSocket`; private/local/loopback keys cover LAN and RFC1918 targets.
+
 ## First SSH test on ChromeOS (Dev Mode Proxy)
 
 One-time setup, then a repeatable smoke path. No hosting or `.swbn` required.
@@ -9,8 +34,34 @@ One-time setup, then a repeatable smoke path. No hosting or `.swbn` required.
 ### One-time
 
 1. `chrome://flags/#enable-isolated-web-app-dev-mode` → **Enabled** → restart Chrome
-2. In Crostini (or Linux on Chromebook): clone repo, `npm install`, `git submodule update --init upstream/libapps`, `npm run fetch-assets`
-3. Optional: `chrome://flags/#enable-direct-sockets-for-isolated-web-apps` if TCPSocket is missing after install
+2. Also enable `chrome://flags/#enable-isolated-web-apps` if present (required on some channels)
+3. In Crostini (or Linux on Chromebook): clone repo, `npm install`, `git submodule update --init upstream/libapps`, `npm run fetch-assets`
+4. Optional: `chrome://flags/#enable-direct-sockets-for-isolated-web-apps` if TCPSocket is missing after install
+
+### Sanity-check: install a reference IWA first
+
+If install fails with *“manifest could not be fetched, parsed…”*, verify flags + Dev Mode Proxy with a known-good app:
+
+| Example | What it proves | How to try |
+|---------|----------------|------------|
+| [IWA Kitchen Sink](https://github.com/chromeos/iwa-sink) | Full IWA stack + **Direct Sockets** demo UI | Follow [getting started tutorial](https://chromeos.dev/en/tutorials/getting-started-with-isolated-web-apps); or install signed bundle from [releases](https://github.com/chromeos/iwa-sink/releases) via Web App Internals |
+| [Telnet client](https://github.com/GoogleChromeLabs/telnet-client) | Raw TCP terminal over Direct Sockets | `npm install && npm run start` → Dev Mode Proxy → `http://127.0.0.1:4321/` |
+| [IWA Bundling Example](https://github.com/michaelwasserman/iwa-bundling-example) | Minimal manifest + install path | `cd static && python3 -m http.server 8765` → `http://127.0.0.1:8765/` |
+
+Install steps (same for any dev-proxy example):
+
+1. Start the example’s dev/static server
+2. `chrome://web-app-internals` → **Install IWA with Dev Mode Proxy**
+3. Paste `http://127.0.0.1:<port>/` (trailing slash)
+
+Kitchen Sink’s Direct Sockets tab is the best place to confirm `TCPSocket` works on your Chromebook before testing iwa-ssh.
+
+CLI install (Linux/Crostini alternative to Web App Internals — Chrome must be fully quit first):
+
+```bash
+google-chrome --enable-features=IsolatedWebApps,IsolatedWebAppDevMode \
+  --install-isolated-web-app-from-url=http://127.0.0.1:5173/
+```
 
 ### Each test session
 
@@ -74,6 +125,7 @@ Optional flags while developing:
 
 | Flag | Purpose |
 |------|---------|
+| `#enable-isolated-web-apps` | Base IWA feature gate (enable if install fails) |
 | `#enable-isolated-web-app-dev-mode` | Required for local IWA install |
 | `#enable-direct-sockets-for-isolated-web-apps` | Direct Sockets in IWAs (if not default on your channel) |
 
@@ -130,6 +182,8 @@ Keys under `iwa/keys/*.pem` are gitignored — never commit private keys.
 
 ## Direct Sockets debugging
 
+See [Direct Sockets (Chrome docs)](https://developer.chrome.com/docs/iwa/direct-sockets) for manifest requirements and API usage.
+
 From **Chrome 138+**, Direct Sockets traffic appears in DevTools **Network** panel when inspecting the IWA:
 
 1. Open the IWA window
@@ -142,7 +196,7 @@ If `TCPSocket` is undefined:
 
 - Confirm IWA dev mode is enabled
 - Confirm install via Dev Mode Proxy or signed bundle (not a normal browser tab)
-- Check `direct-sockets` is in the web app manifest `permissions_policy`
+- Check `permissions_policy` includes `direct-sockets`, `cross-origin-isolated`, and LAN keys (`direct-sockets-private`, `local-network`, `loopback-network`) — see [Direct Sockets doc](https://developer.chrome.com/docs/iwa/direct-sockets)
 
 ## Local workflow
 
@@ -178,7 +232,7 @@ For personal local use, **skip remote updates entirely**. When you change the ap
 
 | Symptom | Check |
 |---------|-------|
-| `TCPSocket` unavailable | IWA install path, not plain `localhost` tab |
+| `TCPSocket` unavailable | IWA install path, not plain `localhost` tab; manifest needs `permissions_policy.direct-sockets` and `cross-origin-isolated` |
 | Integrity Block V1 error | Re-sign with current `wbn-sign` (V2 required since M129) |
 | xterm blank/broken in prod build | Vite re-minifying xterm — see `vite.config.ts` `optimizeDeps.exclude` |
 | Different app after re-signing with new key | Web Bundle ID changes with key — expected |

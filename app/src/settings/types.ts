@@ -91,7 +91,8 @@ export type Identity = {
   id: string;
   label: string;
   publicKey: string;
-  encryptedPrivateKey?: ArrayBuffer;
+  /** Raw PEM bytes at rest — NOT encrypted. Rename intentional until WebCrypto lands. */
+  privateKeyPemBytesDevOnly?: ArrayBuffer;
   createdAt: number;
 };
 

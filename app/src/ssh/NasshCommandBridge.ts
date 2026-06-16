@@ -16,7 +16,7 @@ import type {
   NasshConnectParams,
   NasshJsModule,
 } from './upstreamTypes';
-import { isDirectSocketsAvailable } from './DirectSocketTransport';
+import { isDirectSocketsAvailable } from './DirectSocketProbe';
 import { upstreamImport } from './upstreamUrls';
 
 export type NasshCommandBridgeOptions = {

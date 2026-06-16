@@ -1,8 +1,9 @@
 /**
- * Direct Sockets TCP transport for wassh.
+ * Direct Sockets availability probe and dev-time TCP smoke test.
  *
- * Chrome IWA exposes TCPSocket for raw TCP. This module will bridge
- * nassh's socket abstraction to the browser Direct Sockets API.
+ * Real SSH traffic uses upstream wassh via nassh CommandInstance
+ * (--field-trial-direct-sockets), not this module. Use isDirectSocketsAvailable()
+ * and openDirectTcpSocket() only for capability checks (e.g. /debug).
  *
  * @see https://developer.chrome.com/docs/iwa/direct-sockets
  */

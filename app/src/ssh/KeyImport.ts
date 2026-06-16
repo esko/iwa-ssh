@@ -13,7 +13,7 @@ type ParseError = { ok: false; message: string };
 type ParseSuccess = { ok: true; value: ParsedOpenSshKey };
 
 // TODO(security): encrypt privateKeyBytes with WebCrypto + user passphrase before persisting.
-// MVP stores the raw PEM bytes in Identity.encryptedPrivateKey until passphrase UI lands.
+// Dev-only: raw PEM bytes are stored in Identity.privateKeyPemBytesDevOnly until encryption lands.
 
 function readUint32BE(buf: Uint8Array, offset: number): [number, number] {
   const view = new DataView(buf.buffer, buf.byteOffset + offset, buf.byteLength - offset);
@@ -152,7 +152,7 @@ export async function importIdentityFromPem(pem: string, label?: string): Promis
     id: crypto.randomUUID(),
     label: label?.trim() || parsed.value.label,
     publicKey: parsed.value.publicKey,
-    encryptedPrivateKey: parsed.value.privateKeyBytes,
+    privateKeyPemBytesDevOnly: parsed.value.privateKeyBytes,
     createdAt: Date.now(),
   };
 
@@ -204,7 +204,8 @@ export function showKeyImportDialog(): Promise<Identity | null> {
       </header>
       <form id="key-import-form" class="modal-dialog__body form form--compact">
         <p class="muted modal-dialog__intro">
-          OpenSSH private key PEM only. Passphrase-protected keys can be imported; decryption at connect time is not wired yet.
+          OpenSSH private key PEM only. Keys are stored as raw PEM bytes locally (not encrypted yet).
+          Passphrase-protected keys can be imported; decryption at connect time is not wired yet.
         </p>
         <div class="form-row">
           <label for="key-import-label">Label</label>

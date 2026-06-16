@@ -3,7 +3,7 @@
  */
 
 import { log } from '../debug/logger';
-import type { TerminalAdapter } from '../terminal/TerminalAdapter';
+import type { TerminalAdapter, TerminalSubscription } from '../terminal/TerminalAdapter';
 import type { ConnectionStatus } from '../settings/types';
 import { NasshCommandBridge } from './NasshCommandBridge';
 import type { AttachTerminalOptions } from './HtermIoBridge';
@@ -26,6 +26,8 @@ export class NasshSession {
   private bridge: NasshCommandBridge | null = null;
   private useBridge = false;
   private echoHandler: ((data: string) => void) | null = null;
+  private inputSubscription: TerminalSubscription | null = null;
+  private resizeSubscription: TerminalSubscription | null = null;
   private onOutput: ((data: string | Uint8Array) => void) | null = null;
   private disposed = false;
 
@@ -34,9 +36,11 @@ export class NasshSession {
   attachTerminal(adapter: TerminalAdapter, options?: AttachTerminalOptions): void {
     this.adapter = adapter;
     this.onOutput = options?.onOutput ?? null;
+    this.inputSubscription?.dispose();
+    this.resizeSubscription?.dispose();
     this.bridge?.attachTerminal(adapter, options);
-    adapter.onInput((data) => this.handleInput(data));
-    adapter.onResize((cols, rows) => this.handleResize(cols, rows));
+    this.inputSubscription = adapter.onInput((data) => this.handleInput(data));
+    this.resizeSubscription = adapter.onResize((cols, rows) => this.handleResize(cols, rows));
   }
 
   async connect(): Promise<void> {
@@ -56,6 +60,7 @@ export class NasshSession {
         this.bridge?.dispose();
         this.bridge = null;
         this.useBridge = false;
+        this.reattachTerminalHandlers();
       }
     }
 
@@ -79,6 +84,10 @@ export class NasshSession {
   dispose(): void {
     this.disposed = true;
     this.echoHandler = null;
+    this.inputSubscription?.dispose();
+    this.resizeSubscription?.dispose();
+    this.inputSubscription = null;
+    this.resizeSubscription = null;
     this.bridge?.dispose();
     this.bridge = null;
     this.adapter = null;
@@ -86,6 +95,14 @@ export class NasshSession {
 
   getStatus(): ConnectionStatus {
     return this.status;
+  }
+
+  private reattachTerminalHandlers(): void {
+    if (!this.adapter) return;
+    this.inputSubscription?.dispose();
+    this.resizeSubscription?.dispose();
+    this.inputSubscription = this.adapter.onInput((data) => this.handleInput(data));
+    this.resizeSubscription = this.adapter.onResize((cols, rows) => this.handleResize(cols, rows));
   }
 
   private async connectViaBridge(): Promise<void> {

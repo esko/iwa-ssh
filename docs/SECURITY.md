@@ -7,22 +7,26 @@ iwa-ssh is a **high-trust IWA** — packaged, signed, isolated. Security choices
 | Rule | Implementation |
 |------|----------------|
 | **No plaintext passwords** | Key-based auth only; no password field in profiles or storage |
-| **Encrypted private keys** | `Identity.encryptedPrivateKey` as `ArrayBuffer`; decrypt only in-memory with user passphrase via WebCrypto |
+| **Encrypted private keys** | **Not yet implemented** — see `privateKeyPemBytesDevOnly` below |
 | **No silent auth** | Connecting requires explicit user action (connect button / profile select) |
 
 Passphrase is never written to IndexedDB or export JSON.
 
 ### Implemented (MVP)
 
-- **Key import UI** (`app/src/ssh/KeyImport.ts`): OpenSSH private key PEM via file or paste; public key extracted and stored; raw PEM bytes kept in `encryptedPrivateKey`.
+- **Key import UI** (`app/src/ssh/KeyImport.ts`): OpenSSH private key PEM via file or paste; public key extracted and stored.
 - **Identity picker** on connect and profile editor with import button.
 - **No password fields** anywhere in the UI or storage layer.
 
+### Dev-only / not production-ready
+
+- **`Identity.privateKeyPemBytesDevOnly`**: raw PEM bytes at rest (misleading name avoided on purpose). Field name signals that WebCrypto encryption is not implemented.
+- **Passphrase prompt at connect** for encrypted PEM keys (import accepts bcrypt-protected keys but SSH auth cannot use them yet).
+
 ### Deferred
 
-- **WebCrypto passphrase encryption** of private keys at rest (import stores raw PEM bytes today; see `TODO(security)` in `KeyImport.ts`).
-- **Passphrase prompt at connect** for encrypted PEM keys (import accepts bcrypt-protected keys but SSH auth cannot use them yet).
-- **SSH auth wiring** — identities are stored but not passed to wassh until phase 1.
+- **WebCrypto passphrase encryption** of private keys at rest.
+- **SSH auth wiring** — identities stage into nassh FS when upstream assets are present; encrypted-at-rest keys pending.
 
 ## Host trust
 
@@ -34,14 +38,18 @@ Passphrase is never written to IndexedDB or export JSON.
 
 ### Implemented (MVP)
 
-- **Trust modal** (`app/src/ssh/KnownHostPrompt.ts`): unknown or changed host key shows host, port, key type, fingerprint with **Trust always**, **Trust once**, and **Cancel**.
-- **Connect gate** (`app/src/routes/connect.ts`): `ensureHostTrusted()` runs before navigating to a session; **Trust always** persists via `saveKnownHost()`.
-- **Changed-key warning** when stored fingerprint differs from the server offer.
-- **Dev inspector** (`/dev`, development only): host-trust probe and session launcher exercise the same modal and stub fingerprint path.
+- **Trust modal** (`app/src/ssh/KnownHostPrompt.ts`): UI for host trust decisions.
+- **Connect gate** (`app/src/routes/connect.ts`): `ensureHostTrusted()` runs before navigating to a session.
+- **Dev inspector** (`/debug`, development only): host-trust probe exercises the modal.
+
+### Dev-only / not production-ready
+
+- **Host key verification is stubbed** (`isHostKeyVerificationStubbed()`): fingerprints are placeholders (`SHA256:STUB-…`). The modal states this explicitly; **Trust always** is hidden and nothing is persisted while stubbed.
+- **Stub-era `knownHosts` records** (if any) used fake fingerprints and should be cleared before real verification lands.
 
 ### Deferred
 
-- **Live host key fingerprint** from wassh over Direct Sockets (stub `SHA256:STUB-<host>:<port>` until SSH is wired).
+- **Live host key fingerprint** from wassh over Direct Sockets.
 - **Session reconnect** does not re-prompt (trust is checked at connect-screen submit only).
 - **Removing or editing** known host entries in settings UI.
 
@@ -53,6 +61,8 @@ Passphrase is never written to IndexedDB or export JSON.
 | **User-initiated** | No connections without explicit connect action |
 | **SSH to declared host:port** | Profile stores target; no redirect to arbitrary endpoints |
 
+SSH traffic uses upstream wassh via nassh `CommandInstance` (`--field-trial-direct-sockets`). `DirectSocketProbe.ts` is for capability checks only (e.g. `/debug`).
+
 ## Content Security Policy
 
 IWA bundles enforce strict CSP (set via bundle `headerOverride` in `iwa/webbundle.config.ts`):
@@ -60,12 +70,13 @@ IWA bundles enforce strict CSP (set via bundle `headerOverride` in `iwa/webbundl
 ```text
 script-src 'self' 'wasm-unsafe-eval'
 connect-src 'self' https: wss: blob: data:
-require-trusted-types-for 'script'
 default-src 'self'
 object-src 'none'
 base-uri 'none'
 style-src 'self' 'unsafe-inline'
 ```
+
+`require-trusted-types-for 'script'` is **omitted during MVP** because the app shell renders via `innerHTML` without a Trusted Types policy yet.
 
 Cross-origin isolation headers:
 
@@ -81,7 +92,7 @@ Cross-Origin-Resource-Policy: same-origin
 |------|-------|
 | **No remote scripts** | All JS/WASM/CSS/fonts ship inside the signed `.swbn` |
 | **No CDN runtime deps** | xterm, app code bundled at build time |
-| **Signed updates** | Update manifest points to signed `.swbn` URLs only |
+| **Signed updates** | Optional; local-only installs use `.swbn` from disk without an update server |
 | **Stable identity** | Web Bundle ID derived from signing key — rotate key = new app |
 
 `'wasm-unsafe-eval'` is required for OpenSSH WASM (wassh). No `'unsafe-inline'` for scripts.
@@ -90,7 +101,7 @@ Cross-Origin-Resource-Policy: same-origin
 
 - IWA storage is separate from normal browser profile storage
 - Each Web Bundle ID gets its own `isolated-app://` origin
-- Export JSON omits private key bytes (`hasEncryptedPrivateKey` flag only)
+- Export JSON omits private key bytes (`hasPrivateKeyDevOnly` flag only)
 
 ## Dev mode caveats
 

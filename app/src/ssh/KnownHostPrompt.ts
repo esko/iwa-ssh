@@ -1,5 +1,4 @@
 import { getKnownHost, saveKnownHost } from '../storage/indexedDb';
-import type { KnownHost } from '../settings/types';
 
 export type HostTrustChoice = 'once' | 'always' | 'cancel';
 
@@ -12,11 +11,20 @@ export type KnownHostPromptOptions = {
   previousFingerprint?: string;
 };
 
+/** True until wassh supplies real server host keys over Direct Sockets. */
+export function isHostKeyVerificationStubbed(): boolean {
+  return true;
+}
+
 /**
  * Stub fingerprint until wassh provides the real server host key over Direct Sockets.
  */
 export function stubHostFingerprint(host: string, port: number): string {
   return `SHA256:STUB-${host}:${port}`;
+}
+
+export function isStubHostFingerprint(fingerprint: string): boolean {
+  return fingerprint.startsWith('SHA256:STUB-');
 }
 
 function formatTarget(host: string, port: number): string {
@@ -30,6 +38,7 @@ export function showKnownHostPrompt(options: KnownHostPromptOptions): Promise<Ho
   const { host, port, fingerprint, keyType = 'ssh-ed25519', previousFingerprint } = options;
   const target = formatTarget(host, port);
   const changed = Boolean(previousFingerprint);
+  const stubbed = isHostKeyVerificationStubbed();
 
   return new Promise((resolve) => {
     const backdrop = document.createElement('div');
@@ -42,10 +51,16 @@ export function showKnownHostPrompt(options: KnownHostPromptOptions): Promise<Ho
     dialog.setAttribute('aria-modal', 'true');
     dialog.setAttribute('aria-labelledby', 'known-host-title');
 
-    const title = changed ? 'Host key changed' : 'Unknown host';
-    const intro = changed
-      ? `The host key for <strong>${escapeHtml(target)}</strong> has changed. Connecting may be unsafe.`
-      : `The authenticity of <strong>${escapeHtml(target)}</strong> cannot be established.`;
+    const title = stubbed ? 'Host key check (UI stub)' : changed ? 'Host key changed' : 'Unknown host';
+    const intro = stubbed
+      ? `Host key verification is not wired yet. This trust prompt is a UI stub only — no real fingerprint was checked for <strong>${escapeHtml(target)}</strong>.`
+      : changed
+        ? `The host key for <strong>${escapeHtml(target)}</strong> has changed. Connecting may be unsafe.`
+        : `The authenticity of <strong>${escapeHtml(target)}</strong> cannot be established.`;
+
+    const stubWarning = stubbed
+      ? `<p class="modal-dialog__warning" role="note">Trust is not persisted. Real SSH host-key protection will arrive when wassh fingerprints are wired.</p>`
+      : '';
 
     dialog.innerHTML = `
       <header class="modal-dialog__header">
@@ -53,6 +68,7 @@ export function showKnownHostPrompt(options: KnownHostPromptOptions): Promise<Ho
       </header>
       <div class="modal-dialog__body">
         <p class="modal-dialog__intro">${intro}</p>
+        ${stubWarning}
         <dl class="known-host-details">
           <div class="known-host-details__row">
             <dt>Host</dt>
@@ -60,7 +76,7 @@ export function showKnownHostPrompt(options: KnownHostPromptOptions): Promise<Ho
           </div>
           <div class="known-host-details__row">
             <dt>Key type</dt>
-            <dd><code>${escapeHtml(keyType)}</code></dd>
+            <dd><code>${escapeHtml(keyType)}</code>${stubbed ? ' <span class="muted">(placeholder)</span>' : ''}</dd>
           </div>
           ${
             changed
@@ -73,13 +89,13 @@ export function showKnownHostPrompt(options: KnownHostPromptOptions): Promise<Ho
           }
           <div class="known-host-details__row">
             <dt>${changed ? 'New fingerprint' : 'Fingerprint'}</dt>
-            <dd><code class="known-host-fingerprint">${escapeHtml(fingerprint)}</code></dd>
+            <dd><code class="known-host-fingerprint">${escapeHtml(fingerprint)}</code>${stubbed ? ' <span class="muted">(stub)</span>' : ''}</dd>
           </div>
         </dl>
       </div>
       <footer class="modal-dialog__footer button-row">
-        <button type="button" class="btn primary" data-choice="always">Trust always</button>
-        <button type="button" class="btn" data-choice="once">Trust once</button>
+        <button type="button" class="btn primary" data-choice="once">${stubbed ? 'Continue anyway' : 'Trust once'}</button>
+        ${stubbed ? '' : '<button type="button" class="btn" data-choice="always">Trust always</button>'}
         <button type="button" class="btn" data-choice="cancel">Cancel</button>
       </footer>
     `;
@@ -131,6 +147,11 @@ export async function ensureHostTrusted(
   fingerprint = stubHostFingerprint(host, port),
   keyType = 'ssh-ed25519',
 ): Promise<boolean> {
+  if (isHostKeyVerificationStubbed()) {
+    const choice = await showKnownHostPrompt({ host, port, fingerprint, keyType });
+    return choice === 'once';
+  }
+
   const existing = await getKnownHost(host, port);
 
   if (existing && existing.fingerprint === fingerprint) {
@@ -148,14 +169,13 @@ export async function ensureHostTrusted(
   if (choice === 'cancel') return false;
 
   if (choice === 'always') {
-    const entry: KnownHost = {
+    await saveKnownHost({
       host,
       port,
       keyType,
       fingerprint,
       trustedAt: Date.now(),
-    };
-    await saveKnownHost(entry);
+    });
   }
 
   return true;

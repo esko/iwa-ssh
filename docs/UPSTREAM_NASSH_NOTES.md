@@ -41,7 +41,7 @@ upstream/libapps/
 | Upstream | This repo |
 |----------|-----------|
 | hterm terminal | `TerminalAdapter` + `Xterm6TerminalAdapter` |
-| `chrome.sockets` / relay | `DirectSocketTransport` (`TCPSocket`) |
+| `chrome.sockets` / relay | wassh `WebTcpSocket` via nassh `--field-trial-direct-sockets` |
 | Extension manifest | IWA signed web bundle + `manifest.webmanifest` |
 | `nassh` preferences UI | `/settings` route + IndexedDB |
 
@@ -81,7 +81,7 @@ nassh **0.78** (2026-06-04) enables Direct Sockets by default. Relevant paths:
 - `wassh/js/sockets.js` — `WebTcpSocket` backed by `TCPSocket`
 - `nassh/webapp_manifest.json` — `permissions_policy.direct-sockets`
 
-Our `DirectSocketTransport.ts` mirrors the browser API surface wassh expects.
+`DirectSocketProbe.ts` checks `TCPSocket` availability for dev diagnostics; wassh opens TCP internally.
 
 ## Building for this fork
 
@@ -173,7 +173,7 @@ If `bin/plugin` or the submodule is unavailable, `fetch-assets` writes a stub tr
 
 1. Build/copy `ssh_client` WASM plugin into a path Vite can import or serve from `app/public/`
 2. Bundle wassh JS modules (or pre-build with Rollup) alongside the Vite app
-3. Replace wassh socket backend registration with `DirectSocketTransport`
+3. Optionally bind a custom socket probe for diagnostics (`DirectSocketProbe.ts`); live SSH uses upstream wassh
 
 Short-term (Phase 0): verify upstream nassh connects over Direct Sockets when installed as upstream IWA/PWA before merging into this UI.
 

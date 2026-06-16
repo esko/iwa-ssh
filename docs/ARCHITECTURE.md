@@ -15,7 +15,7 @@ ChromeOS IWA SSH client. Keeps nassh/wassh for SSH; replaces hterm with an xterm
 ├──────────────┴──────────┬───────────┴───────────────────┤
 │  NasshSession           │  IndexedDB (settings, profiles)│
 ├─────────────────────────┴───────────────────────────────┤
-│  wassh (OpenSSH WASM) + DirectSocketTransport (TCPSocket)│
+│  wassh (OpenSSH WASM) via nassh CommandInstance (Direct Sockets) │
 └─────────────────────────┬───────────────────────────────┘
                           │ TCP :22
                           ▼
@@ -40,7 +40,7 @@ See [UPSTREAM_NASSH_NOTES.md](./UPSTREAM_NASSH_NOTES.md) for build and integrati
 
 ```text
 app/src/terminal/
-  TerminalAdapter.ts       # interface: open, write, onInput, onResize, focus, dispose
+  TerminalAdapter.ts       # interface: open, write, onInput/onResize (disposable), focus, dispose
   Xterm6TerminalAdapter.ts # @xterm/xterm 6 + fit, web-links, search, clipboard
 ```
 
@@ -62,7 +62,7 @@ app/src/ssh/
 | Direction | Path |
 |-----------|------|
 | SSH → screen | `stubTerminal.interpret` → `TerminalAdapter.write` → xterm |
-| keyboard → SSH | xterm `onData` → `io.sendString` → wassh stdin |
+| keyboard → SSH | xterm `onData` → `io.sendString` → wassh stdin (via disposable `onInput` subscriptions) |
 | resize | `adapter.onResize` → `screenSize` + `io.onTerminalResize_` → SIGWINCH |
 | passphrase | `CommandInstance.secureInput` → `prompt()` (MVP) |
 
@@ -70,12 +70,15 @@ Upstream JS is loaded at runtime from `app/public/upstream/` (`npm run fetch-ass
 
 If assets are missing, `NasshSession` keeps the Phase 0 local echo stub so the session UI remains usable.
 
-## Direct Sockets transport
+## Direct Sockets
 
-`DirectSocketTransport.ts` wraps the IWA `TCPSocket` API and exposes a read/write handle for wassh:
+SSH TCP is opened by upstream wassh inside nassh `CommandInstance` (`--field-trial-direct-sockets`).
 
-- `openDirectTcpSocket({ host, port, signal })` → `{ read, write, close }`
+`DirectSocketProbe.ts` is **not** the live transport — it exposes `isDirectSocketsAvailable()` and `openDirectTcpSocket()` for dev probes (e.g. `/debug`):
+
+- Manifest `permissions_policy` per [Direct Sockets (Chrome docs)](https://developer.chrome.com/docs/iwa/direct-sockets) and [IWA Kitchen Sink](https://github.com/chromeos/iwa-sink)
 - Requires IWA install with `direct-sockets` permission (ChromeOS 120+)
+- Reference terminal client: [GoogleChromeLabs/telnet-client](https://github.com/GoogleChromeLabs/telnet-client)
 - Upstream nassh 0.78+ enables Direct Sockets by default
 
 UDP/Mosh paths exist upstream but are deferred in this fork.
@@ -104,10 +107,10 @@ IndexedDB database `iwa-ssh` (`app/src/storage/indexedDb.ts`):
 |-------|----------|
 | `settings` | Single `AppSettings` record (`key: 'app'`) |
 | `profiles` | SSH profiles, indexed by `lastConnectedAt` |
-| `identities` | SSH keys (private key as encrypted `ArrayBuffer`) |
-| `knownHosts` | Host key fingerprints (`host:port` key) |
+| `identities` | SSH keys (`privateKeyPemBytesDevOnly` — raw PEM until WebCrypto) |
+| `knownHosts` | Host key fingerprints (`host:port` key); stub-era entries may be invalid |
 
-`exportData()` produces JSON for backup (private key material omitted; `hasEncryptedPrivateKey` flag only).
+`exportData()` produces JSON for backup (private key material omitted; `hasPrivateKeyDevOnly` flag only).
 
 ## Build output
 

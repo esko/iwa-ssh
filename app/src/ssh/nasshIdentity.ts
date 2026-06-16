@@ -44,7 +44,7 @@ export async function stageIdentityForNassh(identityId: string): Promise<string 
     return undefined;
   }
 
-  if (!identity.encryptedPrivateKey) {
+  if (!identity.privateKeyPemBytesDevOnly) {
     log.ssh.warn('identity has no private key material', { identityId, label: identity.label });
     return undefined;
   }
@@ -55,7 +55,7 @@ export async function stageIdentityForNassh(identityId: string): Promise<string 
 
   await fileSystem.createDirectory('/.ssh');
   await fileSystem.createDirectory('/.ssh/identity');
-  await fileSystem.writeFile(`/.ssh/identity/${filename}`, identity.encryptedPrivateKey);
+  await fileSystem.writeFile(`/.ssh/identity/${filename}`, identity.privateKeyPemBytesDevOnly);
 
   if (identity.publicKey) {
     const pubBytes = new TextEncoder().encode(`${identity.publicKey.trim()}\n`);

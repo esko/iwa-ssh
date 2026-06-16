@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "iwa-ssh",
   "short_name": "iwa-ssh",
   "description": "ChromeOS IWA SSH client",
@@ -9,6 +10,7 @@
   "display_override": ["tabbed"],
   "background_color": "#202124",
   "theme_color": "#202124",
+  "isolated_storage": true,
   "tab_strip": {
     "home_tab": {
       "scope_patterns": [{ "pathname": "/" }]
@@ -20,16 +22,19 @@
   "launch_handler": {
     "client_mode": "navigate-new"
   },
-  "permissions": ["direct-sockets"],
   "permissions_policy": {
-    "direct-sockets": ["self"]
+    "cross-origin-isolated": ["self"],
+    "direct-sockets": ["self"],
+    "direct-sockets-private": ["self"],
+    "local-network": ["self"],
+    "loopback-network": ["self"]
   },
   "icons": [
     {
       "src": "/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any"
+      "purpose": "any maskable"
     }
   ]
 }

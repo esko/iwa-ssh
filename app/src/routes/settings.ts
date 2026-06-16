@@ -55,6 +55,7 @@ function renderSettingsForm(settings: AppSettings, popup: boolean): string {
   ).join('');
 
   const body = `
+    <p class="muted settings-note">Changes apply to new terminal sessions only.</p>
     <form id="settings-form" class="form${popup ? ' form--compact' : ''}">
       <section class="panel settings-section">
         <h2>Appearance</h2>
@@ -80,8 +81,7 @@ function renderSettingsForm(settings: AppSettings, popup: boolean): string {
           <label for="bell">Bell</label>
           <select id="bell" name="bell">
             <option value="none"${appearance.bell === 'none' ? ' selected' : ''}>None</option>
-            <option value="visual"${appearance.bell === 'visual' ? ' selected' : ''}>Visual flash</option>
-            <option value="sound"${appearance.bell === 'sound' ? ' selected' : ''}>Sound</option>
+            <option value="visual"${appearance.bell === 'visual' || appearance.bell === 'sound' ? ' selected' : ''}>Visual flash</option>
           </select>
         </div>
       </section>
@@ -150,7 +150,10 @@ export async function renderSettings(root: HTMLElement, query: URLSearchParams):
         cursorStyle: String(data.get('cursorStyle') ?? settings.appearance.cursorStyle) as CursorStyle,
         cursorBlink: data.get('cursorBlink') === 'on',
         boldTextEnabled: data.get('boldTextEnabled') === 'on',
-        bell: String(data.get('bell') ?? settings.appearance.bell) as AppSettings['appearance']['bell'],
+        bell: (() => {
+          const value = String(data.get('bell') ?? settings.appearance.bell);
+          return value === 'sound' ? 'visual' : value;
+        })() as AppSettings['appearance']['bell'],
       },
       keyboard: {
         ctrlShiftCopyPaste: data.get('ctrlShiftCopyPaste') === 'on',

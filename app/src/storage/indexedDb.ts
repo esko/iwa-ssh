@@ -76,7 +76,25 @@ export async function deleteProfile(id: string): Promise<void> {
 
 export async function listIdentities(): Promise<Identity[]> {
   const db = await getDb();
-  return db.getAll('identities');
+  const raw = await db.getAll('identities');
+  return raw.map(normalizeIdentity);
+}
+
+function normalizeIdentity(raw: Identity & { encryptedPrivateKey?: ArrayBuffer }): Identity {
+  if (raw.privateKeyPemBytesDevOnly) {
+    return raw;
+  }
+  if (raw.encryptedPrivateKey) {
+    const { encryptedPrivateKey, ...rest } = raw;
+    return { ...rest, privateKeyPemBytesDevOnly: encryptedPrivateKey };
+  }
+  return raw;
+}
+
+export async function getIdentity(id: string): Promise<Identity | undefined> {
+  const db = await getDb();
+  const raw = await db.get('identities', id);
+  return raw ? normalizeIdentity(raw) : undefined;
 }
 
 export async function saveIdentity(identity: Identity): Promise<void> {
@@ -122,9 +140,9 @@ export async function exportData(): Promise<string> {
       exportedAt: new Date().toISOString(),
       settings,
       profiles,
-      identities: identities.map(({ encryptedPrivateKey, ...rest }) => ({
+      identities: identities.map(({ privateKeyPemBytesDevOnly, ...rest }) => ({
         ...rest,
-        hasEncryptedPrivateKey: Boolean(encryptedPrivateKey),
+        hasPrivateKeyDevOnly: Boolean(privateKeyPemBytesDevOnly),
       })),
       knownHosts,
     },
