@@ -1,7 +1,8 @@
 # Local SSH server for smoke tests (issue #16).
 #
-#   cd tests/fixtures && docker compose up -d
-#   SSH_HOST=127.0.0.1 SSH_PORT=2222 SSH_USER=test SSH_PASS=test npm run smoke:e2e
+#   bash tests/fixtures/generate-keys.sh
+#   cd tests/fixtures && docker compose up -d --build
+#   npm run smoke:ssh
 #
 services:
   sshd:
@@ -12,12 +13,13 @@ services:
       PUID: 1000
       PGID: 1000
       TZ: UTC
-      PASSWORD_ACCESS: 'true'
+      PASSWORD_ACCESS: 'false'
       USER_NAME: test
-      USER_PASSWORD: test
       SUDO_ACCESS: 'false'
+      PUBLIC_KEY_FILE: /fixture-keys/smoke.pub
     volumes:
       - sshd_config:/config
+      - ./keys:/fixture-keys:ro
     healthcheck:
       test: ['CMD-SHELL', 'nc -z localhost 2222 || exit 1']
       interval: 5s

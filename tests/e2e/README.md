@@ -5,17 +5,19 @@
 | Script | What it checks |
 |--------|----------------|
 | `npm run smoke:echo` | CDP: Vite up, connect form loads (needs `npm run dev:chrome`) |
-| `npm run smoke:ssh` | SSH fixture: vim enter/exit, tmux session, fish shell (non-interactive) |
-| `npm run smoke:e2e` | All of the above orchestrated + IWA manual checklist reminder |
+| `npm run smoke:ssh` | SSH fixture: key auth + vim/tmux/fish over `ssh -tt` (PTY) |
+| `npm run smoke:e2e` | PTY checks + echo CDP + IWA manual checklist reminder |
 
 ### SSH fixture (optional)
 
 ```bash
+bash tests/fixtures/generate-keys.sh
 cd tests/fixtures && docker compose up -d --build
-export SSH_HOST=127.0.0.1 SSH_PORT=2222 SSH_USER=test SSH_PASS=test
-npm run smoke:ssh    # automated vim/tmux/fish against fixture
+npm run smoke:ssh    # key auth + PTY vim/tmux/fish
 npm run smoke:e2e    # full orchestrator
 ```
+
+Default key: `tests/fixtures/keys/smoke` (override with `SSH_KEY`).
 
 See [tests/fixtures/README.md](../fixtures/README.md).
 

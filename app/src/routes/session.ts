@@ -186,12 +186,15 @@ export async function renderSession(root: HTMLElement, sessionId: string, query 
 
   const reconnect = async () => {
     isReconnecting = true;
-    clearAutoReconnect();
-    if (overlay) overlay.hidden = true;
-    adapter.write('\x1b[2J\x1b[H');
-    await session.disconnect({ reason: 'reconnect' }).catch(() => undefined);
-    await session.connect();
-    isReconnecting = false;
+    try {
+      clearAutoReconnect();
+      if (overlay) overlay.hidden = true;
+      adapter.write('\x1b[2J\x1b[H');
+      await session.disconnect({ reason: 'reconnect' }).catch(() => undefined);
+      await session.connect();
+    } finally {
+      isReconnecting = false;
+    }
   };
 
   reconnectBtn?.addEventListener('click', () => void reconnect());
