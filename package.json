@@ -13,10 +13,13 @@
     "fetch-assets": "node scripts/fetch-upstream-assets.mjs",
     "bundle:iwa": "node --experimental-strip-types iwa/build-bundle.mjs",
     "bundle:iwa:unsigned": "node --experimental-strip-types iwa/build-bundle.mjs --unsigned-only",
+    "bundle:iwa:info": "node --experimental-strip-types iwa/bundle-info.mjs",
     "smoke:e2e": "node scripts/smoke-terminal.mjs",
+    "smoke:ssh": "node scripts/smoke-ssh-interactive.mjs",
     "smoke:echo": "node scripts/smoke-echo.mjs",
     "check:regression": "node --experimental-strip-types scripts/check-storage-regression.mjs",
-    "iwa:keygen": "bash scripts/generate-iwa-signing-key.sh"
+    "iwa:keygen": "bash scripts/generate-iwa-signing-key.sh",
+    "iwa:update-id": "node --experimental-strip-types scripts/update-webbundle-id.mjs"
   },
   "dependencies": {
     "@xterm/addon-clipboard": "^0.3.0-beta.287",

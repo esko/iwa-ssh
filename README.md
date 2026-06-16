@@ -68,6 +68,8 @@ git submodule update --init --depth 1 upstream/libapps
 
 Track work on the [issue tracker](https://github.com/esko/iwa-ssh/issues).
 
+Security model and threat assumptions: [docs/SECURITY.md](docs/SECURITY.md).
+
 ## License
 
 Upstream libapps is Chromium-licensed. See submodule tree for details.

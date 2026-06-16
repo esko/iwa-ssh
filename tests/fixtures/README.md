@@ -1,12 +1,12 @@
 # SSH test fixture
 
-Dockerized OpenSSH server for local smoke tests.
+Dockerized OpenSSH server with **vim**, **tmux**, and **fish** for local smoke tests.
 
 ## Start
 
 ```bash
 cd tests/fixtures
-docker compose up -d
+docker compose up -d --build
 ```
 
 Wait until healthy (`docker compose ps`). Default credentials:
@@ -18,16 +18,19 @@ Wait until healthy (`docker compose ps`). Default credentials:
 | User | `test` |
 | Password | `test` |
 
+The image extends `linuxserver/openssh-server` and installs interactive tools via `Dockerfile`.
+
 ## Run smoke checks
 
 From repo root:
 
 ```bash
 export SSH_HOST=127.0.0.1 SSH_PORT=2222 SSH_USER=test SSH_PASS=test
-npm run smoke:e2e
+npm run smoke:ssh      # vim / tmux / fish only
+npm run smoke:e2e      # SSH interactive + echo CDP + IWA checklist reminder
 ```
 
-The runner verifies TCP reachability and prints the manual vim/tmux/fish checklist from `tests/e2e/smoke-terminal.spec.md`.
+`npm run smoke:ssh` skips gracefully when the fixture is offline; it exits non-zero when the fixture is reachable but a test fails.
 
 ## Stop
 

@@ -5,14 +5,16 @@
 | Script | What it checks |
 |--------|----------------|
 | `npm run smoke:echo` | CDP: Vite up, connect form loads (needs `npm run dev:chrome`) |
-| `npm run smoke:e2e` | SSH fixture TCP/auth + echo CDP + manual checklist reminder |
+| `npm run smoke:ssh` | SSH fixture: vim enter/exit, tmux session, fish shell (non-interactive) |
+| `npm run smoke:e2e` | All of the above orchestrated + IWA manual checklist reminder |
 
 ### SSH fixture (optional)
 
 ```bash
-cd tests/fixtures && docker compose up -d
+cd tests/fixtures && docker compose up -d --build
 export SSH_HOST=127.0.0.1 SSH_PORT=2222 SSH_USER=test SSH_PASS=test
-npm run smoke:e2e
+npm run smoke:ssh    # automated vim/tmux/fish against fixture
+npm run smoke:e2e    # full orchestrator
 ```
 
 See [tests/fixtures/README.md](../fixtures/README.md).

@@ -174,23 +174,85 @@ Use this when you want a normal app-launcher icon without keeping `npm run dev` 
 
 Identity is stable when signed — tied to your Ed25519 key (Web Bundle ID).
 
-## Signing keys (first time)
+## Signing keys and first signed bundle
+
+Keys under `iwa/keys/*.pem` are **gitignored** — never commit private keys.
+
+### Dev vs release keys
+
+| Key | Purpose | Where to keep |
+|-----|---------|---------------|
+| **Dev key** | Personal Chromebook testing, frequent rebuilds | `iwa/keys/encrypted_key.pem` on your machine only |
+| **Release key** | Stable app identity for installs you care about long-term | Offline backup (password manager, encrypted USB) — **not** in the repo |
+
+Each key defines a unique **Web Bundle ID** (`isolated-app://…` origin). Reinstalling with the **same** key keeps the same app identity; a **new** key creates a different app in the launcher.
+
+Use a dev key while iterating. Switch to a release key only when you want a stable identity — generate it once, back it up, then run the workflow below.
+
+### Step-by-step: first signed bundle
+
+1. **Generate a dev signing key** (prompts for a PEM encryption passphrase):
+
+   ```bash
+   npm run iwa:keygen
+   ```
+
+   This creates `iwa/keys/encrypted_key.pem` and runs `npm run iwa:update-id` to patch `webBundleId` in `iwa/webbundle.config.ts`.
+
+2. **Set the signing passphrase** for non-interactive builds (same passphrase you chose during `pkcs8` encryption):
+
+   ```bash
+   export WEB_BUNDLE_SIGNING_PASSPHRASE='your-passphrase'
+   ```
+
+   Add to your shell profile only on machines you trust. Never commit this value.
+
+3. **Build and sign**:
+
+   ```bash
+   npm run bundle:iwa
+   ```
+
+   Output: `dist/iwa-ssh.swbn` (signed) and `dist/iwa-ssh.unsigned.wbn` (intermediate).
+
+4. **Verify bundle metadata** (optional):
+
+   ```bash
+   npm run bundle:iwa:info
+   ```
+
+5. **Install** — see [Install steps summary (.swbn)](#install-steps-summary-swbn) below.
+
+### Unsigned-only builds
+
+For CI or packaging without a key:
+
+```bash
+npm run bundle:iwa:unsigned
+```
+
+Uses a placeholder `isolated-app://` origin until `webBundleId` is set. Fine for checking the build; not installable as a real IWA until signed with a matching key and ID.
+
+### Manual key generation (alternative)
 
 ```bash
 mkdir -p iwa/keys
-
-# Ed25519 (recommended)
 openssl genpkey -algorithm Ed25519 -out iwa/keys/private_key.pem
 openssl pkcs8 -in iwa/keys/private_key.pem -topk8 -out iwa/keys/encrypted_key.pem
 rm iwa/keys/private_key.pem   # keep only encrypted key
-
-# Get Web Bundle ID before first bundle
-npx wbn-dump-id -iwa iwa/keys/encrypted_key.pem
+npm run iwa:update-id
+WEB_BUNDLE_SIGNING_PASSPHRASE='…' npm run bundle:iwa
 ```
 
-Put the passphrase in `WEB_BUNDLE_SIGNING_PASSPHRASE` when signing non-interactively.
+### `WEB_BUNDLE_SIGNING_PASSPHRASE`
 
-Keys under `iwa/keys/*.pem` are gitignored — never commit private keys.
+- Required for `npm run bundle:iwa` when `encrypted_key.pem` is passphrase-protected (default from `openssl pkcs8 -topk8`).
+- Passed to `wbn-sign` via `--password-env WEB_BUNDLE_SIGNING_PASSPHRASE`.
+- Omit only if your PEM is unencrypted (not recommended).
+
+### Bundle headers
+
+IWA-required COOP/COEP/CORP/CSP headers are embedded via `headerOverride` in `iwa/webbundle.config.ts` and passed to `wbn` during `bundle:iwa`. Keep CSP in sync with `docs/SECURITY.md`.
 
 ## Direct Sockets debugging
 
@@ -218,7 +280,9 @@ npm run dev          # dev server
 npm run build        # production dist/
 npm run bundle:iwa   # dist/ + .swbn packaging (signs if key present)
 npm run bundle:iwa:unsigned  # unsigned .wbn only
-npm run iwa:keygen   # generate Ed25519 signing key
+npm run bundle:iwa:info      # show signed bundle integrity block
+npm run iwa:keygen   # generate Ed25519 signing key + update webBundleId
+npm run iwa:update-id  # re-derive webBundleId from existing key
 npm run smoke:e2e    # SSH fixture + CDP echo checks
 npm run typecheck
 ```
@@ -226,12 +290,13 @@ npm run typecheck
 ## Install steps summary (.swbn)
 
 ```text
-1. Generate signing key → iwa/keys/encrypted_key.pem
-2. npm run bundle:iwa
-3. chrome://flags → enable IWA dev mode → restart
-4. chrome://web-app-internals → Install from Signed Web Bundle
-5. Select dist/iwa-ssh.swbn
-6. Launch from app launcher; open DevTools to debug
+1. npm run iwa:keygen          → iwa/keys/encrypted_key.pem + webBundleId
+2. export WEB_BUNDLE_SIGNING_PASSPHRASE='…'
+3. npm run bundle:iwa            → dist/iwa-ssh.swbn
+4. chrome://flags → enable IWA dev mode → restart
+5. chrome://web-app-internals → Install from Signed Web Bundle
+6. Select dist/iwa-ssh.swbn
+7. Launch from app launcher; npm run bundle:iwa:info to inspect
 ```
 
 ## Updates (local only)

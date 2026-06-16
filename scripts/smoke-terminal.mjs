@@ -12,6 +12,7 @@ import { createConnection } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runInteractiveSmokeTests } from './smoke-ssh-interactive.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -62,6 +63,7 @@ async function sshPasswordProbe() {
 
 async function main() {
   console.log('iwa-ssh smoke runner\n');
+  let exitCode = 0;
 
   console.log('── SSH fixture ──');
   const tcpOk = await tcpProbe(SSH_HOST, SSH_PORT);
@@ -78,6 +80,15 @@ async function main() {
     console.log(`  ⚠ SSH fixture not reachable at ${SSH_HOST}:${SSH_PORT}`);
     console.log('    Start: cd tests/fixtures && docker compose up -d');
     console.log('    Or set SSH_HOST / SSH_PORT for your test server');
+  }
+
+  console.log('\n── SSH interactive (vim / tmux / fish) ──');
+  const interactive = await runInteractiveSmokeTests();
+  if (interactive.skipped) {
+    console.log(`  ⚠ Skipped — fixture not reachable at ${SSH_HOST}:${SSH_PORT}`);
+  } else {
+    const failed = interactive.checks.filter((c) => !c.ok).length;
+    if (failed > 0) exitCode = 1;
   }
 
   console.log('\n── Echo-stub CDP (optional) ──');
@@ -101,7 +112,8 @@ async function main() {
   const preflight = lines.filter((l) => l.startsWith('- [ ]')).slice(0, 4);
   preflight.forEach((l) => console.log(`  ${l.replace('- [ ]', '□')}`));
 
-  console.log('\nDone.');
+  console.log(exitCode === 0 ? '\nDone.' : '\nDone (failures above).');
+  process.exit(exitCode);
 }
 
 main().catch((error) => {

@@ -15,7 +15,7 @@ export type WebBundleConfig = {
   appName: string;
   /**
    * Web Bundle ID (base32). Derived from signing public key.
-   * Run: npx wbn-dump-id -iwa iwa/keys/encrypted_key.pem
+   * Run: npm run iwa:update-id
    * Placeholder until first key is generated.
    */
   webBundleId: string;

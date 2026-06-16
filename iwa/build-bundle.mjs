@@ -11,8 +11,9 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -75,23 +76,40 @@ if (bundleConfig.webBundleId.startsWith('PLACEHOLDER')) {
   console.warn(
     '\n⚠ webBundleId is still a placeholder in iwa/webbundle.config.ts.',
   );
-  console.warn(
-    '  After generating a key, run: npx wbn-dump-id -iwa iwa/keys/encrypted_key.pem',
-  );
-  console.warn('  and update webBundleId + re-run bundle:iwa for a valid IWA origin.\n');
+  console.warn('  After generating a key, run: npm run iwa:update-id');
+  console.warn('  then re-run bundle:iwa for a valid IWA origin.\n');
 } else {
   baseURL = `isolated-app://${bundleConfig.webBundleId}/`;
 }
 
 console.log(`→ Creating unsigned web bundle → ${bundleConfig.unsignedBundle}`);
-npx('wbn', [
+
+const headerOverridePath = join(
+  tmpdir(),
+  `iwa-ssh-header-override-${process.pid}.json`,
+);
+writeFileSync(headerOverridePath, JSON.stringify(bundleConfig.headerOverride, null, 2));
+
+const wbnArgs = [
   '--dir',
   bundleConfig.distDir,
   '--baseURL',
   baseURL,
+  '--headerOverride',
+  headerOverridePath,
   '--output',
   bundleConfig.unsignedBundle,
-]);
+];
+
+try {
+  npx('wbn', wbnArgs);
+} finally {
+  try {
+    unlinkSync(headerOverridePath);
+  } catch {
+    // temp file already removed
+  }
+}
 
 if (unsignedOnly) {
   console.log(`
@@ -109,11 +127,8 @@ Unsigned bundle ready: ${bundleConfig.unsignedBundle}
 Signing key not found at ${bundleConfig.signingKeyPath}
 
 Next steps — generate key and sign:
-  mkdir -p iwa/keys
-  openssl genpkey -algorithm Ed25519 -out iwa/keys/private_key.pem
-  openssl pkcs8 -in iwa/keys/private_key.pem -topk8 -out iwa/keys/encrypted_key.pem
-  rm iwa/keys/private_key.pem
-  npx wbn-dump-id -iwa iwa/keys/encrypted_key.pem   # update webBundleId in webbundle.config.ts
+  npm run iwa:keygen
+  npm run iwa:update-id
   WEB_BUNDLE_SIGNING_PASSPHRASE='…' npm run bundle:iwa
 
 Install: chrome://web-app-internals → Install IWA from Signed Web Bundle
@@ -139,5 +154,5 @@ Install:
   3. Select ${bundleConfig.signedBundle}
 
 Show bundle info:
-  npx wbn-sign info ${bundleConfig.signedBundle}
+  npm run bundle:iwa:info
 `);

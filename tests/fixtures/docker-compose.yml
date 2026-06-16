@@ -5,7 +5,7 @@
 #
 services:
   sshd:
-    image: linuxserver/openssh-server:latest
+    build: .
     ports:
       - '2222:2222'
     environment:

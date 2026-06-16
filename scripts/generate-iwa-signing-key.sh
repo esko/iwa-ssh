@@ -8,18 +8,19 @@ mkdir -p "$KEY_DIR"
 
 if [[ -f "$KEY_DIR/encrypted_key.pem" ]]; then
   echo "Key already exists: $KEY_DIR/encrypted_key.pem"
-  echo "Run: npx wbn-dump-id -iwa $KEY_DIR/encrypted_key.pem"
+  echo "Dump ID:  npm run iwa:update-id"
+  echo "Sign:     WEB_BUNDLE_SIGNING_PASSPHRASE='…' npm run bundle:iwa"
   exit 0
 fi
 
+echo "Generating Ed25519 signing key…"
 openssl genpkey -algorithm Ed25519 -out "$KEY_DIR/private_key.pem"
 openssl pkcs8 -in "$KEY_DIR/private_key.pem" -topk8 -out "$KEY_DIR/encrypted_key.pem"
 rm -f "$KEY_DIR/private_key.pem"
 
 echo "Created $KEY_DIR/encrypted_key.pem"
 echo ""
-echo "Web Bundle ID:"
-npx --yes wbn-dump-id -iwa "$KEY_DIR/encrypted_key.pem"
+echo "Updating webBundleId in iwa/webbundle.config.ts…"
+node "$ROOT/scripts/update-webbundle-id.mjs"
 echo ""
-echo "Update iwa/webbundle.config.ts webBundleId with the value above."
 echo "Sign with: WEB_BUNDLE_SIGNING_PASSPHRASE='…' npm run bundle:iwa"
