@@ -10,21 +10,11 @@ export type LogEntry = {
 
 const MAX_ENTRIES = 500;
 const entries: LogEntry[] = [];
-const listeners = new Set<(entry: LogEntry) => void>();
 
 let verbose = false;
 
 export function setVerboseLogging(enabled: boolean): void {
   verbose = enabled;
-}
-
-export function isVerboseLogging(): boolean {
-  return verbose;
-}
-
-export function subscribeLogs(listener: (entry: LogEntry) => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
 }
 
 export function getRecentLogs(limit = 100): LogEntry[] {
@@ -35,7 +25,6 @@ function emit(level: LogLevel, namespace: string, message: string, data?: unknow
   const entry: LogEntry = { ts: Date.now(), level, namespace, message, data };
   entries.push(entry);
   if (entries.length > MAX_ENTRIES) entries.shift();
-  listeners.forEach((fn) => fn(entry));
 
   const prefix = `${namespace}:${message}`;
   const args = data === undefined ? [] : [data];
@@ -92,8 +81,4 @@ export function unregisterActiveSession(id: string): void {
 
 export function setLastSessionError(error: string | undefined): void {
   sessionDebug.lastError = error;
-}
-
-export function setLastSessionExit(code: number): void {
-  sessionDebug.lastExitCode = code;
 }

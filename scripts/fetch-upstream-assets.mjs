@@ -134,6 +134,7 @@ app/upstream/
   libdot/index.js
   hterm/index.js
   plugin/wasm/ssh.wasm
+  plugin/wasm/mosh-client.wasm
   plugin/wasm-openssh-8.6/ssh.wasm
   manifest.json
 \`\`\`
@@ -287,6 +288,55 @@ async function copyNasshBridgeModules() {
   return count;
 }
 
+async function copyNasshLocales() {
+  const src = path.join(LIBAPPS, 'nassh/_locales/en/messages.json');
+  if (!exists(src)) {
+    console.warn('nassh en locale missing — CONNECTING may show raw i18n keys');
+    return 0;
+  }
+  const dest = path.join(OUT_DIR, 'nassh/_locales/en/messages.json');
+  await copyFile(src, dest);
+  return 1;
+}
+
+async function patchWasshDirectSockets() {
+  const socketsPath = path.join(OUT_DIR, 'wassh/js/sockets.js');
+  let source = await fsp.readFile(socketsPath, 'utf8');
+
+  const connectBefore = `    await this.setTcpSocket_(new TCPSocket(address, port, options));
+    this.pollData_();
+
+    return WASI.errno.ESUCCESS;`;
+  const connectAfter = `    await this.setTcpSocket_(new TCPSocket(address, port, options));
+    if (this.directSocketsReader_ === null) {
+      return WASI.errno.ENETUNREACH;
+    }
+    this.pollData_();
+
+    return WASI.errno.ESUCCESS;`;
+  if (!source.includes(connectBefore)) {
+    throw new Error('wassh/js/sockets.js WebTcpSocket.connect pattern not found');
+  }
+  source = source.replace(connectBefore, connectAfter);
+
+  const pollBefore = `  async pollData_() {
+    while (true) {
+      const {value, done} = await this.directSocketsReader_.read();`;
+  const pollAfter = `  async pollData_() {
+    const reader = this.directSocketsReader_;
+    if (!reader) {
+      return;
+    }
+    while (true) {
+      const {value, done} = await reader.read();`;
+  if (!source.includes(pollBefore)) {
+    throw new Error('wassh/js/sockets.js WebTcpSocket.pollData_ pattern not found');
+  }
+  source = source.replaceAll(pollBefore, pollAfter);
+
+  await fsp.writeFile(socketsPath, source, 'utf8');
+}
+
 async function patchNasshRuntimeUrls() {
   const subprocPath = path.join(OUT_DIR, 'nassh/js/nassh_subproc_wasm.js');
   let source = await fsp.readFile(subprocPath, 'utf8');
@@ -346,6 +396,8 @@ async function main() {
   const wasiCount = await copyWasiBindings();
   const pluginCount = await copyPluginAssets();
   const nasshCount = await copyNasshBridgeModules();
+  await copyNasshLocales();
+  await patchWasshDirectSockets();
   await patchNasshRuntimeUrls();
 
   if (wasshCount === 0) {
@@ -358,9 +410,15 @@ async function main() {
     throw new Error('no plugin .wasm files copied — run upstream/libapps/nassh/bin/plugin');
   }
   const defaultWasmOut = path.join(OUT_DIR, 'plugin/wasm/ssh.wasm');
+  const moshWasmOut = path.join(OUT_DIR, 'plugin/wasm/mosh-client.wasm');
   if (!exists(defaultWasmOut)) {
     throw new Error(
       `missing ${path.relative(REPO_ROOT, defaultWasmOut)} — default client is plugin/wasm/, not wasm-openssh-* only`,
+    );
+  }
+  if (!exists(moshWasmOut)) {
+    throw new Error(
+      `missing ${path.relative(REPO_ROOT, moshWasmOut)} — Mosh reset support requires mosh-client.wasm`,
     );
   }
   if (nasshCount === 0) {
@@ -374,6 +432,7 @@ async function main() {
     workerUrl: '/upstream/wassh/js/worker.js',
     pluginBase: '/upstream/plugin',
     defaultSshWasm: '/upstream/plugin/wasm/ssh.wasm',
+    defaultMoshWasm: '/upstream/plugin/wasm/mosh-client.wasm',
     nasshCommandUrl: '/upstream/nassh/js/nassh_command_instance.js',
     files: manifest.map(({ dest, bytes, source }) => ({ dest, bytes, source })),
   };

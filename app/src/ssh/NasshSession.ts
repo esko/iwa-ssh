@@ -10,10 +10,12 @@ import type { AttachTerminalOptions } from './NasshIoShim';
 import { areUpstreamAssetsReady } from './upstreamAssets';
 
 export type NasshSessionOptions = {
+  protocol?: 'ssh' | 'mosh';
   host: string;
   port: number;
   username: string;
   identityId?: string;
+  connectionArgs?: string;
   startupCommand?: string;
   onStatus?: (status: ConnectionStatus, error?: string, meta?: SessionStatusMeta) => void;
 };
@@ -119,7 +121,9 @@ export class NasshSession {
       host: this.options.host,
       port: this.options.port,
       username: this.options.username,
+      protocol: this.options.protocol,
       identityId: this.options.identityId,
+      connectionArgs: this.options.connectionArgs,
       startupCommand: this.options.startupCommand,
       onStatus: (status, error, meta) => this.setStatus(status, error, meta),
     });

@@ -8,6 +8,7 @@ import type { KnownHost } from '../settings/types';
 import {
   fingerprintFromOpensshLine,
   formatKnownHostTarget,
+  knownHostLineMatchesTarget,
   knownHostLinesForTarget,
   parseKnownHostsLine,
 } from './knownHostFormat';
@@ -92,6 +93,42 @@ export async function syncKnownHostsFromNassh(host: string, port: number): Promi
     keyType: latest.keyType,
     fingerprint,
   });
+}
+
+/**
+ * Drop every known_hosts line that matches host:port from nassh FS.
+ *
+ * Used to clear a stale/offending key (e.g. after a fixture rebuild) so the next
+ * connect gets a fresh unknown-host prompt instead of OpenSSH's hard
+ * "REMOTE HOST IDENTIFICATION HAS CHANGED" failure. Returns the number of lines removed.
+ */
+export async function removeKnownHostLinesFromNassh(host: string, port: number): Promise<number> {
+  const existing = await readKnownHostsFile();
+  if (!existing.trim()) return 0;
+
+  const kept: string[] = [];
+  let removed = 0;
+  for (const line of existing.split(/\r?\n/)) {
+    const parsed = parseKnownHostsLine(line);
+    if (parsed && knownHostLineMatchesTarget(parsed, host, port)) {
+      removed += 1;
+      continue;
+    }
+    kept.push(line);
+  }
+
+  if (removed === 0) return 0;
+
+  const body = kept.join('\n').replace(/\n+$/, '');
+  const content = body ? `${body}\n` : '';
+  const fs = await loadNasshFs();
+  await fs.createDirectory('/.ssh');
+  await fs.writeFile(KNOWN_HOSTS_PATH, new TextEncoder().encode(content).buffer);
+  log.knownHosts.info('removed stale known_hosts lines from nassh', {
+    target: formatKnownHostTarget(host, port),
+    removed,
+  });
+  return removed;
 }
 
 /** Merge a newly trusted line into nassh FS (append if missing). */

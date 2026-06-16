@@ -38,7 +38,6 @@ export function createApp(root: HTMLElement): Router {
   if (import.meta.env.DEV) {
     const renderDebugPage = async () => leaveSession(() => renderDebug(root));
     router.on('/debug', 'debug', renderDebugPage);
-    router.on('/dev', 'dev', renderDebugPage);
   }
 
   router

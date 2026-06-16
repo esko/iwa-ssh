@@ -127,8 +127,9 @@ export function parseOpenSshPrivateKeyPem(pem: string, labelHint?: string): Pars
     comment = parsedComment || comment;
   }
 
+  // Keep a trailing newline: OpenSSH rejects a private key file without one.
   const encoder = new TextEncoder();
-  const privateKeyBytes = encoder.encode(trimmed).buffer;
+  const privateKeyBytes = encoder.encode(`${trimmed}\n`).buffer;
 
   return {
     ok: true,

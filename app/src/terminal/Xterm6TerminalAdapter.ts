@@ -5,13 +5,15 @@ import { SearchAddon } from '@xterm/addon-search';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import type { TerminalAdapter, TerminalSubscription } from './TerminalAdapter';
 import { applyKeyboardBindings, type KeyboardBindingsHandle } from './keyboardBindings';
-import type { KeyboardSettings, TerminalAppearance } from '../settings/types';
+import { createXtermConstructorOptions } from './xtermOptions';
+import type { KeyboardSettings, TerminalAppearance, TerminalPerformance } from '../settings/types';
 
 import '@xterm/xterm/css/xterm.css';
 
 export type Xterm6TerminalAdapterOptions = {
   appearance: TerminalAppearance;
   keyboard?: KeyboardSettings;
+  performance?: TerminalPerformance;
   onBell?: () => void;
 };
 
@@ -21,7 +23,7 @@ export class Xterm6TerminalAdapter implements TerminalAdapter {
   private readonly searchAddon: SearchAddon;
   private resizeObserver: ResizeObserver | null = null;
   private fitDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly fitDebounceMs = 100;
+  private readonly fitDebounceMs: number;
   private readonly inputListeners = new Set<(data: string) => void>();
   private readonly resizeListeners = new Set<(cols: number, rows: number) => void>();
   private container: HTMLElement | null = null;
@@ -31,25 +33,8 @@ export class Xterm6TerminalAdapter implements TerminalAdapter {
   constructor(options: Xterm6TerminalAdapterOptions) {
     const { appearance } = options;
     this.keyboard = options.keyboard;
-    const fontWeight = appearance.boldTextEnabled ? 'normal' : 'normal';
-    const fontWeightBold = appearance.boldTextEnabled ? 'bold' : fontWeight;
-
-    this.terminal = new Terminal({
-      fontFamily: appearance.fontFamily,
-      fontSize: appearance.fontSize,
-      lineHeight: appearance.lineHeight,
-      letterSpacing: appearance.letterSpacing,
-      cursorStyle: appearance.cursorStyle,
-      cursorBlink: appearance.cursorBlink,
-      fontWeight,
-      fontWeightBold,
-      scrollback: appearance.scrollbackLines,
-      theme: appearance.theme,
-      vtExtensions: {
-        kittyKeyboard: this.keyboard?.kittyKeyboardProtocol ?? false,
-      },
-      allowProposedApi: true,
-    });
+    this.fitDebounceMs = options.performance?.resizeDebounceMs ?? 100;
+    this.terminal = new Terminal(createXtermConstructorOptions(appearance, this.keyboard));
 
     this.fitAddon = new FitAddon();
     this.searchAddon = new SearchAddon();
@@ -123,6 +108,20 @@ export class Xterm6TerminalAdapter implements TerminalAdapter {
 
   getSize(): { cols: number; rows: number } {
     return { cols: this.terminal.cols, rows: this.terminal.rows };
+  }
+
+  updateAppearance(appearance: TerminalAppearance): void {
+    this.terminal.options.fontFamily = appearance.fontFamily;
+    this.terminal.options.fontSize = appearance.fontSize;
+    this.terminal.options.lineHeight = appearance.lineHeight;
+    this.terminal.options.letterSpacing = appearance.letterSpacing;
+    this.terminal.options.cursorStyle = appearance.cursorStyle;
+    this.terminal.options.cursorBlink = appearance.cursorBlink;
+    this.terminal.options.fontWeight = 'normal';
+    this.terminal.options.fontWeightBold = appearance.boldTextEnabled ? 'bold' : 'normal';
+    this.terminal.options.scrollback = appearance.scrollbackLines;
+    this.terminal.options.theme = appearance.theme;
+    this.scheduleFit();
   }
 
   dispose(): void {

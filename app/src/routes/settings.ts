@@ -13,7 +13,10 @@ import {
 } from '../storage/indexedDb';
 import type { AppSettings, CursorStyle, Identity, KnownHost, ThemePresetId } from '../settings/types';
 import { THEME_PRESETS } from '../settings/themes';
-import { resolveTheme } from '../settings/themes';
+import { resolveTheme, themeToJson, validateThemeJson } from '../settings/themes';
+import { SCROLLBACK_MAX, SCROLLBACK_MIN, clampScrollback } from '../settings/defaults';
+import { publishSettingsChanged } from '../settings/settingsBroadcast';
+import { createTerminalSettingsModel } from '../terminal-shell';
 import { escapeHtml, shell } from './shared';
 
 const CURSOR_STYLES: CursorStyle[] = ['block', 'bar', 'underline'];
@@ -134,7 +137,7 @@ function renderSettingsForm(
   knownHosts: KnownHost[],
   identities: Identity[],
 ): string {
-  const { appearance, keyboard, behavior } = settings;
+  const { appearance, keyboard, behavior, performance } = settings;
 
   const themeOptions = THEME_PRESETS_LIST.map(
     (preset) =>
@@ -145,9 +148,10 @@ function renderSettingsForm(
     (style) =>
       `<option value="${style}"${appearance.cursorStyle === style ? ' selected' : ''}>${escapeHtml(style)}</option>`,
   ).join('');
+  const customThemeJson = themeToJson(appearance.customTheme ?? appearance.theme);
 
   const formHtml = `
-    <p class="muted settings-note">Changes apply to new terminal sessions only.</p>
+    <p class="muted settings-note">Font, theme, and scrollback changes apply to open terminal sessions when possible.</p>
     <form id="settings-form" class="form${popup ? ' form--compact' : ''}">
       <section class="panel settings-section">
         <h2>Appearance</h2>
@@ -156,13 +160,17 @@ function renderSettingsForm(
           <select id="themePreset" name="themePreset">${themeOptions}</select>
         </div>
         <div class="form-row">
+          <label for="customThemeJson">Theme JSON</label>
+          <textarea id="customThemeJson" name="customThemeJson" rows="8" spellcheck="false">${escapeHtml(customThemeJson)}</textarea>
+        </div>
+        <div class="form-row">
           <label for="fontFamily">Font family</label>
           <input id="fontFamily" name="fontFamily" type="text" value="${escapeHtml(appearance.fontFamily)}" />
         </div>
         ${numberField('fontSize', 'Font size', appearance.fontSize, 8, 32)}
         ${numberField('lineHeight', 'Line height', appearance.lineHeight, 1, 2, 0.05)}
         ${numberField('letterSpacing', 'Letter spacing', appearance.letterSpacing, -2, 8, 0.5)}
-        ${numberField('scrollbackLines', 'Scrollback lines', appearance.scrollbackLines, 100, 50000, 100)}
+        ${numberField('scrollbackLines', 'Scrollback lines', appearance.scrollbackLines, SCROLLBACK_MIN, SCROLLBACK_MAX, 100)}
         <div class="form-row">
           <label for="cursorStyle">Cursor style</label>
           <select id="cursorStyle" name="cursorStyle">${cursorOptions}</select>
@@ -202,6 +210,11 @@ function renderSettingsForm(
         ${checkbox('reconnectOnDisconnect', 'Auto-reconnect on disconnect', behavior.reconnectOnDisconnect, 'Retries the SSH connection when the remote session ends unexpectedly.')}
       </section>
 
+      <section class="panel settings-section">
+        <h2>Performance</h2>
+        ${numberField('resizeDebounceMs', 'Resize debounce (ms)', performance.resizeDebounceMs, 0, 1000, 10)}
+      </section>
+
       <div class="button-row settings-actions">
         <button type="submit" class="btn primary">Save settings</button>
         ${popup ? '' : '<button type="button" id="settings-cancel" class="btn">Cancel</button>'}
@@ -226,11 +239,12 @@ export async function renderSettings(root: HTMLElement, query: URLSearchParams):
     listKnownHosts(),
     listIdentities(),
   ]);
+  const model = createTerminalSettingsModel(settings, knownHosts, identities, popup);
 
-  root.classList.toggle('popup-root', popup);
-  root.innerHTML = renderSettingsForm(settings, popup, knownHosts, identities);
+  root.classList.toggle('popup-root', model.popup);
+  root.innerHTML = renderSettingsForm(model.settings, model.popup, model.knownHosts, model.identities);
 
-  if (!popup) {
+  if (!model.popup) {
     root.querySelector('#header-home')?.addEventListener('click', () => Router.go('/'));
     root.querySelector('#settings-cancel')?.addEventListener('click', () => Router.go('/'));
 
@@ -264,17 +278,32 @@ export async function renderSettings(root: HTMLElement, query: URLSearchParams):
     const data = new FormData(form);
 
     const themePreset = String(data.get('themePreset') ?? 'chromeos-dark') as ThemePresetId;
+    const customThemeJson = String(data.get('customThemeJson') ?? '').trim();
+    let customTheme = settings.appearance.customTheme;
+    if (themePreset === 'custom') {
+      try {
+        customTheme = validateThemeJson(customThemeJson);
+      } catch (error) {
+        const status = root.querySelector<HTMLElement>('#settings-status');
+        if (status) {
+          status.hidden = false;
+          status.textContent = error instanceof Error ? error.message : String(error);
+        }
+        return;
+      }
+    }
     const nextSettings: AppSettings = {
       ...settings,
       appearance: {
         ...settings.appearance,
         themePreset,
-        theme: resolveTheme(themePreset, settings.appearance.customTheme),
+        customTheme,
+        theme: resolveTheme(themePreset, customTheme),
         fontFamily: String(data.get('fontFamily') ?? settings.appearance.fontFamily),
         fontSize: Number(data.get('fontSize') ?? settings.appearance.fontSize),
         lineHeight: Number(data.get('lineHeight') ?? settings.appearance.lineHeight),
         letterSpacing: Number(data.get('letterSpacing') ?? settings.appearance.letterSpacing),
-        scrollbackLines: Number(data.get('scrollbackLines') ?? settings.appearance.scrollbackLines),
+        scrollbackLines: clampScrollback(Number(data.get('scrollbackLines') ?? settings.appearance.scrollbackLines)),
         cursorStyle: String(data.get('cursorStyle') ?? settings.appearance.cursorStyle) as CursorStyle,
         cursorBlink: data.get('cursorBlink') === 'on',
         boldTextEnabled: data.get('boldTextEnabled') === 'on',
@@ -303,9 +332,13 @@ export async function renderSettings(root: HTMLElement, query: URLSearchParams):
         confirmCloseTab: data.get('confirmCloseTab') === 'on',
         reconnectOnDisconnect: data.get('reconnectOnDisconnect') === 'on',
       },
+      performance: {
+        resizeDebounceMs: Number(data.get('resizeDebounceMs') ?? settings.performance.resizeDebounceMs),
+      },
     };
 
     await saveSettings(nextSettings);
+    publishSettingsChanged(nextSettings);
     await refreshSessionCloseSetting();
 
     const status = root.querySelector<HTMLElement>('#settings-status');

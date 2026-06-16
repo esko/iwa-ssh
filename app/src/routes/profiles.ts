@@ -5,11 +5,12 @@ import type { Profile } from '../settings/types';
 import { escapeHtml, shell } from './shared';
 
 function profileRow(profile: Profile): string {
+  const protocol = profile.protocol ?? 'ssh';
   return `
     <li class="profile-manage-row" data-profile-id="${escapeHtml(profile.id)}">
       <div class="profile-manage-row__info">
         <strong>${escapeHtml(profile.name)}</strong>
-        <span class="muted">${escapeHtml(profile.username)}@${escapeHtml(profile.host)}:${profile.port}</span>
+        <span class="muted">${escapeHtml(protocol)} ${escapeHtml(profile.username)}@${escapeHtml(profile.host)}:${profile.port}</span>
       </div>
       <div class="profile-manage-row__actions">
         <button type="button" class="btn" data-action="connect">Connect</button>
@@ -31,6 +32,13 @@ function renderEditor(profile: Profile | undefined, identityOptions: string): st
         <input id="profile-name" name="name" type="text" required value="${escapeHtml(profile?.name ?? '')}" />
       </div>
       <div class="form-row">
+        <label for="profile-protocol">Protocol</label>
+        <select id="profile-protocol" name="protocol">
+          <option value="ssh"${(profile?.protocol ?? 'ssh') === 'ssh' ? ' selected' : ''}>SSH</option>
+          <option value="mosh"${profile?.protocol === 'mosh' ? ' selected' : ''}>Mosh</option>
+        </select>
+      </div>
+      <div class="form-row">
         <label for="profile-host">Host</label>
         <input id="profile-host" name="host" type="text" required value="${escapeHtml(profile?.host ?? '')}" />
       </div>
@@ -50,6 +58,11 @@ function renderEditor(profile: Profile | undefined, identityOptions: string): st
           <select id="profile-identity" name="identity">${identityOptions}</select>
           <button type="button" id="profile-import-identity" class="btn">Import key</button>
         </div>
+      </div>
+      <div class="form-row">
+        <label for="profile-connection-args">SSH arguments</label>
+        <input id="profile-connection-args" name="connectionArgs" type="text"
+          value="${escapeHtml(profile?.connectionArgs ?? '')}" placeholder="-o ServerAliveInterval=30" />
       </div>
       <div class="form-row">
         <label for="profile-startup">Startup command</label>
@@ -107,10 +120,12 @@ export async function renderProfiles(root: HTMLElement): Promise<void> {
     const profile: Profile = {
       id: existingId || crypto.randomUUID(),
       name: String(data.get('name') ?? '').trim(),
+      protocol: String(data.get('protocol') ?? 'ssh') === 'mosh' ? 'mosh' : 'ssh',
       host: String(data.get('host') ?? '').trim(),
       port: Number(data.get('port') ?? 22),
       username: String(data.get('username') ?? '').trim(),
       identityId,
+      connectionArgs: String(data.get('connectionArgs') ?? '').trim() || undefined,
       startupCommand: String(data.get('startupCommand') ?? '').trim() || undefined,
       lastConnectedAt: editing?.lastConnectedAt,
     };

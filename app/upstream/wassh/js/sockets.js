@@ -1358,6 +1358,9 @@ export class WebTcpSocket extends StreamSocket {
     }
 
     await this.setTcpSocket_(new TCPSocket(address, port, options));
+    if (this.directSocketsReader_ === null) {
+      return WASI.errno.ENETUNREACH;
+    }
     this.pollData_();
 
     return WASI.errno.ESUCCESS;
@@ -1383,8 +1386,12 @@ export class WebTcpSocket extends StreamSocket {
    * Wait for data from the reader, then notify the socket upon receiving data.
    */
   async pollData_() {
+    const reader = this.directSocketsReader_;
+    if (!reader) {
+      return;
+    }
     while (true) {
-      const {value, done} = await this.directSocketsReader_.read();
+      const {value, done} = await reader.read();
       if (done) {
         break;
       }
@@ -1925,8 +1932,12 @@ export class WebUdpSocket extends DatagramSocket {
    * Wait for data from the reader, then notify the socket upon receiving data.
    */
   async pollData_() {
+    const reader = this.directSocketsReader_;
+    if (!reader) {
+      return;
+    }
     while (true) {
-      const {value, done} = await this.directSocketsReader_.read();
+      const {value, done} = await reader.read();
       if (done) {
         break;
       }

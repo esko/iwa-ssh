@@ -2,10 +2,8 @@ import './security/trustedTypes';
 import { installBootErrorHandler, showBootError } from './security/bootError';
 import { createApp } from './app-shell/createApp';
 import { initLaunchHandler } from './app-shell/launchHandler';
-import { initTabManager } from './app-shell/TabManager';
 import { initSessionCloseGuard } from './app-shell/sessionCloseGuard';
-import { Router } from './app-shell/router';
-import { usesSimulatedTabs } from './app-shell/tabMode';
+import { getRuntimeLabel } from './app-shell/tabMode';
 import { initDebugFlagsFromUrl } from './debug/flags';
 import { log } from './debug/logger';
 import './styles/app.css';
@@ -22,7 +20,7 @@ try {
   initSessionCloseGuard();
   initLaunchHandler();
   log.app.info('boot', {
-    tabMode: usesSimulatedTabs() ? 'simulated' : 'native',
+    runtime: getRuntimeLabel(),
     origin: window.location.origin,
   });
 
@@ -31,20 +29,9 @@ try {
   content.className = 'app-content';
   shell.appendChild(content);
 
-  const tabManager = initTabManager((path) => Router.go(path), shell);
-
-  Router.setNavigateHook((path) => {
-    tabManager?.syncFromPath(path);
-  });
-
   const router = createApp(content);
   router.start();
-
-  if (usesSimulatedTabs()) {
-    document.documentElement.dataset.tabMode = 'simulated';
-  } else {
-    document.documentElement.dataset.tabMode = 'native';
-  }
+  document.documentElement.dataset.tabMode = getRuntimeLabel();
 } catch (error) {
   const detail = error instanceof Error ? error.stack ?? error.message : String(error);
   showBootError(detail);

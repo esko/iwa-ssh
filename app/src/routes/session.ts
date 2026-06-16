@@ -1,15 +1,14 @@
 import { Router } from '../app-shell/router';
-import { getTabManager } from '../app-shell/TabManager';
-import { usesSimulatedTabs } from '../app-shell/tabMode';
 import { applyDebugFlags, getDebugFlags, parseDebugFlags } from '../debug/flags';
 import { log, registerActiveSession, setLastSessionError, unregisterActiveSession } from '../debug/logger';
 import { downloadTerminalCapture, recordTerminalOutput } from '../debug/terminalCapture';
 import { getProfile, loadSettings } from '../storage/indexedDb';
 import { mergeAppearance } from '../settings/defaults';
+import { subscribeSettingsChanged } from '../settings/settingsBroadcast';
 import type { ConnectionStatus, SessionStatusMeta } from '../settings/types';
-import { Xterm6TerminalAdapter } from '../terminal/Xterm6TerminalAdapter';
-import { NasshSession } from '../ssh/NasshSession';
-import { loadSessionParams, storeSessionParams } from './connect';
+import { TerminalEmulator } from '../terminal/TerminalEmulator';
+import { NasshRuntime } from '../ssh/NasshRuntime';
+import { loadSessionParams } from './connect';
 import { escapeHtml } from './shared';
 
 const STATUS_LABELS: Record<ConnectionStatus, string> = {
@@ -53,11 +52,8 @@ export async function renderSession(root: HTMLElement, sessionId: string, query 
   const profile = params.profileId ? await getProfile(params.profileId) : undefined;
   const appearance = mergeAppearance(settings.appearance, profile?.terminalOverrides);
 
-  const title = `${params.username}@${params.host}`;
-  getTabManager()?.setActiveTitle(title);
-  if (!usesSimulatedTabs()) {
-    document.title = `${title} — iwa-ssh`;
-  }
+  const title = `${params.protocol === 'mosh' ? 'mosh ' : ''}${params.username}@${params.host}`;
+  document.title = `${title} — iwa-ssh`;
   log.session.info('open', { sessionId, host: params.host, port: params.port });
 
   root.innerHTML = `
@@ -78,7 +74,6 @@ export async function renderSession(root: HTMLElement, sessionId: string, query 
         </div>
         <div class="session-toolbar__actions">
           <button type="button" id="session-reconnect" class="btn" disabled>Reconnect</button>
-          <button type="button" id="session-duplicate" class="btn">Duplicate tab</button>
           <button type="button" id="session-settings" class="btn">Settings</button>
         </div>
       </header>
@@ -111,6 +106,7 @@ export async function renderSession(root: HTMLElement, sessionId: string, query 
   let focusTerminal: (() => void) | null = null;
   let autoReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let userInitiatedDisconnect = false;
+  let settingsSubscription: { dispose(): void } | null = null;
 
   const clearAutoReconnect = () => {
     if (autoReconnectTimer) {
@@ -163,12 +159,18 @@ export async function renderSession(root: HTMLElement, sessionId: string, query 
     }
   };
 
-  const adapter = new Xterm6TerminalAdapter({ appearance, keyboard: settings.keyboard });
-  const session = new NasshSession({
+  const adapter = new TerminalEmulator({
+    appearance,
+    keyboard: settings.keyboard,
+    performance: settings.performance,
+  });
+  const session = new NasshRuntime({
+    protocol: params.protocol,
     host: params.host,
     port: params.port,
     username: params.username,
     identityId: params.identityId,
+    connectionArgs: params.connectionArgs,
     startupCommand: params.startupCommand,
     onStatus: (status, error, meta) => {
       if (error) setLastSessionError(error);
@@ -177,6 +179,10 @@ export async function renderSession(root: HTMLElement, sessionId: string, query 
   });
 
   adapter.open(terminalHost);
+  settingsSubscription = subscribeSettingsChanged((nextSettings) => {
+    const nextAppearance = mergeAppearance(nextSettings.appearance, profile?.terminalOverrides);
+    adapter.updateAppearance(nextAppearance);
+  });
   focusTerminal = () => adapter.focus();
   session.attachTerminal(adapter, {
     onOutput: (data) => {
@@ -208,11 +214,6 @@ export async function renderSession(root: HTMLElement, sessionId: string, query 
     if (overlay) overlay.hidden = true;
     focusTerminal?.();
   });
-  root.querySelector('#session-duplicate')?.addEventListener('click', () => {
-    const duplicateId = crypto.randomUUID();
-    storeSessionParams({ ...params, id: duplicateId });
-    Router.openTab(`/session/${encodeURIComponent(duplicateId)}`, title);
-  });
   root.querySelector('#session-settings')?.addEventListener('click', () => {
     Router.openTab('/settings?popup=1', 'Settings');
   });
@@ -226,6 +227,8 @@ export async function renderSession(root: HTMLElement, sessionId: string, query 
   const cleanup = () => {
     userInitiatedDisconnect = true;
     clearAutoReconnect();
+    settingsSubscription?.dispose();
+    settingsSubscription = null;
     window.removeEventListener('resize', onWindowResize);
     void session.disconnect({ reason: 'user' }).catch(() => undefined);
     session.dispose();

@@ -47,6 +47,7 @@ export type NasshConnectParams = {
   port?: number;
   username: string;
   command?: string;
+  argstr?: string;
   nasshOptions?: string;
   /** Basename under /.ssh/identity/ (not a full path). */
   identity?: string;
@@ -63,6 +64,7 @@ export type NasshCommandInstance = {
 export type NasshCommandInstanceCtor = new (argv: {
   io: HtermTerminalIo;
   syncStorage: unknown;
+  environment?: Record<string, string>;
   onExit?: (code: number) => void;
   terminalLocation?: { href: string; hash: string; replace: (url: string) => void };
 }) => NasshCommandInstance;

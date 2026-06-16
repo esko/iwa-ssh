@@ -23,6 +23,10 @@ export const REQUIRED_UPSTREAM_ASSET_PATHS = [
   `${UPSTREAM_BASE}/hterm/index.js`,
 ] as const;
 
+export const MOSH_UPSTREAM_ASSET_PATHS = [
+  `${PLUGIN_BASE}/wasm/mosh-client.wasm`,
+] as const;
+
 /** Public URL base for copied libapps assets (e.g. `/upstream`). */
 export function getPluginBase(): string {
   return PLUGIN_BASE;
@@ -55,4 +59,18 @@ export async function checkUpstreamAssets(): Promise<Array<{ path: string; ok: b
       ok: await assetExists(path),
     })),
   );
+}
+
+export async function checkMoshAssets(): Promise<Array<{ path: string; ok: boolean }>> {
+  return Promise.all(
+    MOSH_UPSTREAM_ASSET_PATHS.map(async (path) => ({
+      path,
+      ok: await assetExists(path),
+    })),
+  );
+}
+
+export async function areMoshAssetsReady(): Promise<boolean> {
+  const checks = await checkMoshAssets();
+  return checks.every((entry) => entry.ok);
 }

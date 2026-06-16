@@ -1,9 +1,10 @@
 {
-  "generatedAt": "2026-06-16T12:57:56.385Z",
+  "generatedAt": "2026-06-16T19:07:42.029Z",
   "upstreamBase": "/upstream",
   "workerUrl": "/upstream/wassh/js/worker.js",
   "pluginBase": "/upstream/plugin",
   "defaultSshWasm": "/upstream/plugin/wasm/ssh.wasm",
+  "defaultMoshWasm": "/upstream/plugin/wasm/mosh-client.wasm",
   "nasshCommandUrl": "/upstream/nassh/js/nassh_command_instance.js",
   "files": [
     {
@@ -1095,6 +1096,11 @@
       "dest": "nassh/wasi-js-bindings",
       "bytes": 0,
       "source": "symlink → ../wasi-js-bindings"
+    },
+    {
+      "dest": "nassh/_locales/en/messages.json",
+      "bytes": 153763,
+      "source": "upstream/libapps/nassh/_locales/en/messages.json"
     }
   ]
 }

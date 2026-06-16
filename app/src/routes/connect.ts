@@ -4,15 +4,19 @@ import { identitySelectMarkup, wireIdentityImportButton } from '../ssh/KeyImport
 import { areUpstreamAssetsReady } from '../ssh/upstreamAssets';
 import { getProfile, listIdentities, saveProfile } from '../storage/indexedDb';
 import type { Profile } from '../settings/types';
+import { createSshMoshDialogModel } from '../terminal-shell';
+import { parseTerminalConnectionCommand } from '../connections/sshCommandParser';
 import { escapeHtml, shell } from './shared';
 
 export type StoredSessionParams = {
   id: string;
   profileId?: string;
+  protocol?: 'ssh' | 'mosh';
   host: string;
   port: number;
   username: string;
   identityId?: string;
+  connectionArgs?: string;
   startupCommand?: string;
 };
 
@@ -38,27 +42,40 @@ export async function renderConnect(root: HTMLElement, query: URLSearchParams): 
   const profileId = query.get('profile') ?? undefined;
   const profile = profileId ? await getProfile(profileId) : undefined;
   const identities = await listIdentities();
+  const model = createSshMoshDialogModel(profile, identities);
 
-  const identityOptions = identitySelectMarkup(identities, profile?.identityId);
+  const identityOptions = identitySelectMarkup(model.identities, model.identityId);
 
   root.innerHTML = shell(
     'Connect',
     `
-      <form id="connect-form" class="form panel">
+      <form id="connect-form" class="form panel" novalidate>
+        <div class="form-row">
+          <label for="connection-command">SSH command</label>
+          <input id="connection-command" name="connectionCommand" type="text" autocomplete="off" spellcheck="false"
+            placeholder='ssh -p 2222 "user@host"' />
+        </div>
+        <div class="form-row">
+          <label for="protocol">Protocol</label>
+          <select id="protocol" name="protocol">
+            <option value="ssh"${model.protocol === 'ssh' ? ' selected' : ''}>SSH</option>
+            <option value="mosh"${model.protocol === 'mosh' ? ' selected' : ''}>Mosh</option>
+          </select>
+        </div>
         <div class="form-row">
           <label for="host">Host</label>
-          <input id="host" name="host" type="text" required autocomplete="off" spellcheck="false"
-            value="${escapeHtml(profile?.host ?? '')}" placeholder="example.com" />
+          <input id="host" name="host" type="text" autocomplete="off" spellcheck="false"
+            value="${escapeHtml(model.host)}" placeholder="example.com" />
         </div>
         <div class="form-row">
           <label for="port">Port</label>
-          <input id="port" name="port" type="number" required min="1" max="65535"
-            value="${profile?.port ?? 22}" />
+          <input id="port" name="port" type="number" min="1" max="65535"
+            value="${model.port}" />
         </div>
         <div class="form-row">
           <label for="username">Username</label>
-          <input id="username" name="username" type="text" required autocomplete="username" spellcheck="false"
-            value="${escapeHtml(profile?.username ?? '')}" placeholder="user" />
+          <input id="username" name="username" type="text" autocomplete="username" spellcheck="false"
+            value="${escapeHtml(model.username)}" placeholder="user" />
         </div>
         <div class="form-row">
           <label for="identity">Identity</label>
@@ -70,18 +87,18 @@ export async function renderConnect(root: HTMLElement, query: URLSearchParams): 
         <div class="form-row">
           <label for="startup-command">Startup command</label>
           <input id="startup-command" name="startupCommand" type="text" autocomplete="off" spellcheck="false"
-            value="${escapeHtml(profile?.startupCommand ?? '')}" placeholder="Optional command to run after login" />
+            value="${escapeHtml(model.startupCommand)}" placeholder="Optional command to run after login" />
         </div>
         <fieldset class="form-fieldset">
           <legend>Save profile</legend>
           <label class="checkbox-row">
-            <input id="save-profile" name="saveProfile" type="checkbox" ${profile ? 'checked' : ''} />
+            <input id="save-profile" name="saveProfile" type="checkbox" ${model.saveProfile ? 'checked' : ''} />
             <span>Save connection as profile</span>
           </label>
           <div class="form-row" id="profile-name-row">
             <label for="profile-name">Profile name</label>
             <input id="profile-name" name="profileName" type="text" spellcheck="false"
-              value="${escapeHtml(profile?.name ?? '')}" placeholder="My server" />
+              value="${escapeHtml(model.profileName)}" placeholder="My server" />
           </div>
         </fieldset>
         <div class="button-row">
@@ -112,10 +129,14 @@ export async function renderConnect(root: HTMLElement, query: URLSearchParams): 
     const form = event.target as HTMLFormElement;
     const data = new FormData(form);
 
-    const host = String(data.get('host') ?? '').trim();
-    const port = Number(data.get('port') ?? 22);
-    const username = String(data.get('username') ?? '').trim();
+    const command = String(data.get('connectionCommand') ?? '').trim();
+    const parsedCommand = command ? parseTerminalConnectionCommand(command) : null;
+    const protocol = parsedCommand?.protocol ?? (String(data.get('protocol') ?? 'ssh') === 'mosh' ? 'mosh' : 'ssh');
+    const host = parsedCommand?.hostname ?? String(data.get('host') ?? '').trim();
+    const port = parsedCommand?.port ?? Number(data.get('port') ?? 22);
+    const username = parsedCommand?.username ?? String(data.get('username') ?? '').trim();
     const identityId = String(data.get('identity') ?? '') || undefined;
+    const connectionArgs = parsedCommand?.argstr;
     const startupCommand = String(data.get('startupCommand') ?? '').trim() || undefined;
     const shouldSave = data.get('saveProfile') === 'on';
     const profileName = String(data.get('profileName') ?? '').trim();
@@ -137,10 +158,12 @@ export async function renderConnect(root: HTMLElement, query: URLSearchParams): 
       const nextProfile: Profile = {
         id: profile?.id ?? crypto.randomUUID(),
         name,
+        protocol,
         host,
         port,
         username,
         identityId,
+        connectionArgs,
         startupCommand,
         lastConnectedAt: Date.now(),
       };
@@ -154,13 +177,15 @@ export async function renderConnect(root: HTMLElement, query: URLSearchParams): 
     storeSessionParams({
       id: sessionId,
       profileId: savedProfileId,
+      protocol,
       host,
       port,
       username,
       identityId,
+      connectionArgs,
       startupCommand,
     });
 
-    Router.openTab(`/session/${encodeURIComponent(sessionId)}`, `${username}@${host}`);
+    Router.openTab(`/session/${encodeURIComponent(sessionId)}`, `${protocol} ${username}@${host}`);
   });
 }

@@ -4,6 +4,7 @@
  */
 
 import { log } from '../debug/logger';
+import { isNasshBootstrapOutput } from './nasshBootstrap';
 import type { TerminalAdapter, TerminalSubscription } from '../terminal/TerminalAdapter';
 import type { HtermStubTerminal, HtermTerminalIo } from './upstreamTypes';
 
@@ -95,7 +96,9 @@ class NasshTerminalIo implements HtermTerminalIo {
 
   writeUTF8(buffer: ArrayBuffer | ArrayLike<number>): void {
     const u8 = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-    const string = this.textDecoder_.decode(u8, { stream: true });
+    // Each wassh Tty write is a complete chunk; stream:true can hold bytes back
+    // indefinitely and stall host-key prompts / shell output in the IWA shim.
+    const string = this.textDecoder_.decode(u8);
     this.print(string);
   }
 
@@ -105,11 +108,9 @@ class NasshTerminalIo implements HtermTerminalIo {
   }
 
   print(string: string): void {
-    const active = this.terminal_.io as NasshTerminalIo;
-    if (active !== this) {
-      this.buffered_ += string;
-      return;
-    }
+    // Always deliver — xterm is the only UI. When nassh pushes a transient IO layer
+    // (username prompt, etc.) that never pops in IWA, the old buffer-until-pop path
+    // hid all remote shell output. Bootstrap status is filtered in interpret().
     this.terminal_.interpret(string);
   }
 
@@ -167,7 +168,9 @@ export class NasshIoShim {
 
     this.stubTerminal = {
       interpret: (message) => {
-        this.adapter.write(message);
+        if (!isNasshBootstrapOutput(message)) {
+          this.adapter.write(message);
+        }
         this.options.onOutput?.(message);
       },
       clearHome: () => {
@@ -191,8 +194,20 @@ export class NasshIoShim {
   bindInput(): void {
     if (this.inputSubscription) return;
     this.inputSubscription = this.adapter.onInput((data) => {
-      this.io.sendString(data);
+      // wassh wires sendString on the root IO at Tty init; the active stack top
+      // may be a pushed overlay layer with a no-op handler.
+      const root = this.io as HtermTerminalIo;
+      root.sendString(data);
+      if (root.onVTKeystroke !== root.sendString) {
+        root.onVTKeystroke(data);
+      }
     });
+  }
+
+  /** Send to the root nassh IO layer (host-key yes/no, etc.). */
+  sendKeystroke(data: string): void {
+    const root = this.io as HtermTerminalIo;
+    root.sendString(data);
   }
 
   resize(cols: number, rows: number): void {

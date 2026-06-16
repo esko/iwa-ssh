@@ -1,4 +1,3 @@
-import { getTabManager } from './TabManager';
 import { showBootError } from '../security/bootError';
 
 export type RouteMatch = {
@@ -34,12 +33,6 @@ function compilePath(pathPattern: string): { pattern: RegExp; paramNames: string
 export class Router {
   private readonly routes: RouteDef[] = [];
   private notFoundHandler: RouteHandler = () => undefined;
-  private static onNavigate: ((path: string) => void) | null = null;
-
-  /** Called after each successful route render to sync simulated tab strip. */
-  static setNavigateHook(hook: (path: string) => void): void {
-    Router.onNavigate = hook;
-  }
 
   on(pathPattern: string, name: string, handler: RouteHandler): this {
     const { pattern, paramNames } = compilePath(pathPattern);
@@ -64,7 +57,6 @@ export class Router {
       });
 
       await route.handler({ name: route.name, params, query });
-      Router.onNavigate?.(path + (query.toString() ? `?${query}` : ''));
       return;
     }
 
@@ -94,11 +86,6 @@ export class Router {
 
   /** Open a new app tab (simulated strip in dev, browser tab in native IWA). */
   static openTab(path: string, title?: string): void {
-    const tabs = getTabManager();
-    if (tabs) {
-      tabs.openTab(path, title);
-      return;
-    }
-    window.open(path, '_blank');
+    window.open(path, '_blank', title ? `noopener,noreferrer` : 'noopener,noreferrer');
   }
 }

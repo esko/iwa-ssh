@@ -1,5 +1,31 @@
 import type { ITheme, ThemePresetId } from './types';
 
+const THEME_COLOR_KEYS = [
+  'background',
+  'foreground',
+  'cursor',
+  'cursorAccent',
+  'selectionBackground',
+  'black',
+  'red',
+  'green',
+  'yellow',
+  'blue',
+  'magenta',
+  'cyan',
+  'white',
+  'brightBlack',
+  'brightRed',
+  'brightGreen',
+  'brightYellow',
+  'brightBlue',
+  'brightMagenta',
+  'brightCyan',
+  'brightWhite',
+] as const satisfies readonly (keyof ITheme)[];
+
+const CSS_COLOR_RE = /^(#[0-9a-f]{3,8}|rgb\([^)]+\)|rgba\([^)]+\)|hsl\([^)]+\)|hsla\([^)]+\)|[a-z]+)$/i;
+
 export const THEME_PRESETS: Record<Exclude<ThemePresetId, 'custom'>, ITheme> = {
   'chromeos-dark': {
     background: '#202124',
@@ -129,4 +155,37 @@ export function resolveTheme(
     return THEME_PRESETS[preset];
   }
   return THEME_PRESETS['chromeos-dark'];
+}
+
+export function validateThemeJson(json: string): ITheme {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid theme JSON: ${message}`);
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Theme JSON must be an object.');
+  }
+
+  const source = parsed as Record<string, unknown>;
+  const theme: ITheme = {};
+
+  for (const [key, value] of Object.entries(source)) {
+    if (!THEME_COLOR_KEYS.includes(key as keyof ITheme)) {
+      throw new Error(`Unsupported theme key: ${key}`);
+    }
+    if (typeof value !== 'string' || !CSS_COLOR_RE.test(value.trim())) {
+      throw new Error(`Theme key ${key} must be a CSS color string.`);
+    }
+    theme[key as keyof ITheme] = value.trim();
+  }
+
+  return theme;
+}
+
+export function themeToJson(theme: ITheme): string {
+  return `${JSON.stringify(theme, null, 2)}\n`;
 }

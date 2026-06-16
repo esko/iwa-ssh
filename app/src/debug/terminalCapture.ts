@@ -24,7 +24,7 @@ export function recordTerminalOutput(sessionId: string, data: string | Uint8Arra
   captures.set(key, list);
 }
 
-export function getTerminalCapture(sessionId: string): CaptureChunk[] {
+function getTerminalCapture(sessionId: string): CaptureChunk[] {
   return [...(captures.get(getKey(sessionId)) ?? [])];
 }
 
@@ -40,20 +40,4 @@ export function downloadTerminalCapture(sessionId: string): void {
   a.click();
   URL.revokeObjectURL(a.href);
   log.term.info('capture-download', { sessionId, chunks: chunks.length });
-}
-
-export async function replayTerminalCapture(
-  sessionId: string,
-  write: (data: string) => void,
-): Promise<void> {
-  const chunks = getTerminalCapture(sessionId).filter((c) => c.direction === 'out');
-  for (const chunk of chunks) {
-    write(chunk.data);
-    await new Promise((r) => window.setTimeout(r, 5));
-  }
-  log.term.info('capture-replay', { sessionId, chunks: chunks.length });
-}
-
-export function clearTerminalCapture(sessionId: string): void {
-  captures.delete(getKey(sessionId));
 }

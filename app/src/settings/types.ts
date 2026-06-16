@@ -70,19 +70,26 @@ export type TerminalBehavior = {
   reconnectOnDisconnect: boolean;
 };
 
+export type TerminalPerformance = {
+  resizeDebounceMs: number;
+};
+
 export type AppSettings = {
   appearance: TerminalAppearance;
   keyboard: KeyboardSettings;
   behavior: TerminalBehavior;
+  performance: TerminalPerformance;
 };
 
 export type Profile = {
   id: string;
   name: string;
+  protocol?: 'ssh' | 'mosh';
   host: string;
   port: number;
   username: string;
   identityId?: string;
+  connectionArgs?: string;
   startupCommand?: string;
   terminalOverrides?: Partial<TerminalAppearance>;
   lastConnectedAt?: number;

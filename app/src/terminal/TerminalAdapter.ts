@@ -1,3 +1,5 @@
+import type { TerminalAppearance } from '../settings/types';
+
 export type TerminalSubscription = {
   dispose(): void;
 };
@@ -10,5 +12,6 @@ export interface TerminalAdapter {
   focus(): void;
   dispose(): void;
   fit?(): void;
+  updateAppearance?(appearance: TerminalAppearance): void;
   getSize(): { cols: number; rows: number };
 }

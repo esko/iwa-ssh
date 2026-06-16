@@ -1,7 +1,7 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { AppSettings, Identity, KnownHost, Profile } from '../settings/types';
 import { DEFAULT_SETTINGS } from '../settings/defaults';
-import { identityExportFlags, normalizeIdentity } from './identityNormalize';
+import { normalizeIdentity } from './identityNormalize';
 
 interface IwaSshDb extends DBSchema {
   settings: {
@@ -61,6 +61,10 @@ export async function loadSettings(): Promise<AppSettings> {
     behavior: {
       ...DEFAULT_SETTINGS.behavior,
       ...stored.behavior,
+    },
+    performance: {
+      ...DEFAULT_SETTINGS.performance,
+      ...stored.performance,
     },
   };
 }
@@ -135,26 +139,4 @@ export async function listKnownHosts(): Promise<KnownHost[]> {
 export async function deleteKnownHost(host: string, port: number): Promise<void> {
   const db = await getDb();
   await db.delete('knownHosts', knownHostKey(host, port));
-}
-
-export async function exportData(): Promise<string> {
-  const [settings, profiles, identities, knownHosts] = await Promise.all([
-    loadSettings(),
-    listProfiles(),
-    listIdentities(),
-    listKnownHosts(),
-  ]);
-
-  return JSON.stringify(
-    {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      settings,
-      profiles,
-      identities: identities.map(identityExportFlags),
-      knownHosts,
-    },
-    null,
-    2,
-  );
 }

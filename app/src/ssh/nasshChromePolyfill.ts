@@ -7,6 +7,11 @@ type ChromeWindowsStub = {
   getCurrent: (callback: (win: { id: number; state: string }) => void) => void;
 };
 
+type ChromeTabsStub = {
+  getCurrent: (callback: (tab: { id: number }) => void) => void;
+  get: (id: number, callback: (tab: { id: number } | undefined) => void) => void;
+};
+
 type ChromeRuntimeStub = {
   getManifest?: () => { name: string; version: string; icons?: Record<string, string> };
   sendMessage?: (...args: unknown[]) => Promise<Record<string, never>> | void;
@@ -16,6 +21,7 @@ type ChromeRuntimeStub = {
 
 type ChromeStub = {
   windows?: ChromeWindowsStub;
+  tabs?: ChromeTabsStub;
   runtime?: ChromeRuntimeStub;
   sockets?: Record<string, unknown>;
 };
@@ -39,6 +45,21 @@ export function installNasshChromePolyfill(): void {
     chromeRef.windows = {
       getCurrent: (callback: (win: { id: number; state: string }) => void) => {
         callback({ id: 0, state: 'normal' });
+      },
+    };
+  }
+
+  // wassh's cleanupChromeSockets() calls chrome.tabs.getCurrent unconditionally on
+  // terminate (before its chrome.sockets isSupported guards), so disconnect crashes
+  // in an IWA without this stub. We never use chrome.sockets (Direct Sockets only),
+  // so the cleanup itself is a no-op once past getCurrent.
+  if (!chromeRef.tabs?.getCurrent) {
+    chromeRef.tabs = {
+      getCurrent: (callback: (tab: { id: number }) => void) => {
+        callback({ id: 0 });
+      },
+      get: (_id: number, callback: (tab: { id: number } | undefined) => void) => {
+        callback(undefined);
       },
     };
   }

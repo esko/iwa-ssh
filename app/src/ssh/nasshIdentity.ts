@@ -29,6 +29,23 @@ async function getIdentityById(identityId: string): Promise<Identity | undefined
   return identities.find((entry) => entry.id === identityId);
 }
 
+const NEWLINE = 0x0a;
+
+/**
+ * OpenSSH refuses to load a private key file that lacks a trailing newline
+ * ("invalid format" / "error in libcrypto"). Stored PEMs are trimmed, so re-add it.
+ */
+function ensureTrailingNewline(pem: ArrayBuffer): ArrayBuffer {
+  const bytes = new Uint8Array(pem);
+  if (bytes.length > 0 && bytes[bytes.length - 1] === NEWLINE) {
+    return pem;
+  }
+  const out = new Uint8Array(bytes.length + 1);
+  out.set(bytes, 0);
+  out[bytes.length] = NEWLINE;
+  return out.buffer;
+}
+
 /** Filename placed under /.ssh/identity/ for upstream ssh -i. */
 export function nasshIdentityFilename(identityId: string): string {
   return `iwa-ssh-${identityId}`;
@@ -70,7 +87,7 @@ export async function stageIdentityForNassh(identityId: string): Promise<string 
 
   await fileSystem.createDirectory('/.ssh');
   await fileSystem.createDirectory('/.ssh/identity');
-  await fileSystem.writeFile(`/.ssh/identity/${filename}`, pemBytes);
+  await fileSystem.writeFile(`/.ssh/identity/${filename}`, ensureTrailingNewline(pemBytes));
 
   if (identity.publicKey) {
     const pubBytes = new TextEncoder().encode(`${identity.publicKey.trim()}\n`);

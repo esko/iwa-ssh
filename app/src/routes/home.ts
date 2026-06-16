@@ -1,22 +1,23 @@
 import { Router } from '../app-shell/router';
 import { listProfiles } from '../storage/indexedDb';
+import { createTerminalHomeModel } from '../terminal-shell';
 import { escapeHtml, shell } from './shared';
 
 export async function renderHome(root: HTMLElement): Promise<void> {
   const profiles = await listProfiles();
-  const recent = profiles.slice(0, 8);
+  const model = createTerminalHomeModel(profiles, import.meta.env.DEV);
 
   const profileCards =
-    recent.length === 0
+    model.recentProfiles.length === 0
       ? `<p class="muted">No profiles yet. Create one to start connecting.</p>`
       : `<ul class="profile-list">
-          ${recent
+          ${model.recentProfiles
             .map(
               (p) => `
             <li class="profile-card">
               <button type="button" data-profile-id="${p.id}" class="profile-card__button">
-                <span class="profile-card__name">${escapeHtml(p.name)}</span>
-                <span class="profile-card__host">${escapeHtml(p.username)}@${escapeHtml(p.host)}:${p.port}</span>
+                <span class="profile-card__name">${escapeHtml(p.label)}</span>
+                <span class="profile-card__host">${escapeHtml(p.description)}</span>
               </button>
             </li>`,
             )
@@ -36,7 +37,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
           <button type="button" id="new-connection" class="btn primary">New connection</button>
           <button type="button" id="manage-profiles" class="btn">Manage profiles</button>
           <button type="button" id="open-settings" class="btn">Settings</button>
-          ${import.meta.env.DEV ? '<button type="button" id="open-dev" class="btn">Dev inspector</button>' : ''}
+          ${model.actions.includes('debug') ? '<button type="button" id="open-dev" class="btn">Dev inspector</button>' : ''}
         </div>
       </section>
     `,
@@ -47,7 +48,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
   root.querySelector('#header-connect')?.addEventListener('click', () => Router.openTab('/connect', 'Connect'));
   root.querySelector('#manage-profiles')?.addEventListener('click', () => Router.go('/profiles'));
   root.querySelector('#open-settings')?.addEventListener('click', () => Router.go('/settings'));
-  root.querySelector('#open-dev')?.addEventListener('click', () => Router.go('/dev'));
+  root.querySelector('#open-dev')?.addEventListener('click', () => Router.go('/debug'));
 
   root.querySelectorAll('[data-profile-id]').forEach((el) => {
     el.addEventListener('click', () => {
