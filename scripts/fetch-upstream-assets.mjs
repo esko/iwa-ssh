@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Phase 1: copy upstream libapps wassh runtime + OpenSSH WASM plugin into app/public/upstream/.
+ * Phase 1: copy upstream libapps wassh runtime + OpenSSH WASM plugin into app/upstream/.
  *
  * Preserves libapps-relative paths so ES module imports in worker.js resolve under /upstream/.
  */
@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 const LIBAPPS = path.join(REPO_ROOT, 'upstream/libapps');
-const OUT_DIR = path.join(REPO_ROOT, 'app/public/upstream');
+const OUT_DIR = path.join(REPO_ROOT, 'app/upstream');
 const PLUGIN_BIN = path.join(LIBAPPS, 'nassh/bin/plugin');
 const PLUGIN_SRC = path.join(LIBAPPS, 'nassh/plugin');
 
@@ -126,7 +126,7 @@ Phase 1 fetch did not complete. ${reason}
 Expected layout after a successful fetch:
 
 \`\`\`text
-app/public/upstream/
+app/upstream/
   wassh/js/worker.js
   wasi-js-bindings/index.js
   wasi-js-bindings/js/...

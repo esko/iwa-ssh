@@ -1,12 +1,12 @@
 /**
- * Phase 1 bridge: upstream CommandInstance + stub hterm.IO → TerminalAdapter / xterm.
+ * Phase 1 bridge: upstream CommandInstance + NasshIoShim → TerminalAdapter / xterm.
  */
 
 import { log } from '../debug/logger';
 import type { TerminalAdapter } from '../terminal/TerminalAdapter';
 import type { ConnectionStatus } from '../settings/types';
-import type { HtermIoBridgeOptions } from './HtermIoBridge';
-import { HtermIoBridge, loadHtermTerminalIo } from './HtermIoBridge';
+import type { NasshIoShimOptions } from './NasshIoShim';
+import { NasshIoShim } from './NasshIoShim';
 import { installNasshChromePolyfill } from './nasshChromePolyfill';
 import { stageIdentityForNassh } from './nasshIdentity';
 import { showSecureInputPrompt } from './SecureInputPrompt';
@@ -47,20 +47,20 @@ async function loadNasshModules(): Promise<NasshCommandModule & NasshJsModule> {
 
 export class NasshCommandBridge {
   private adapter: TerminalAdapter | null = null;
-  private htermBridge: HtermIoBridge | null = null;
+  private ioShim: NasshIoShim | null = null;
   private commandInstance: NasshCommandInstance | null = null;
-  private attachOptions: HtermIoBridgeOptions | undefined;
+  private attachOptions: NasshIoShimOptions | undefined;
   private disposed = false;
 
   constructor(private readonly options: NasshCommandBridgeOptions) {}
 
-  attachTerminal(adapter: TerminalAdapter, options?: HtermIoBridgeOptions): void {
+  attachTerminal(adapter: TerminalAdapter, options?: NasshIoShimOptions): void {
     this.adapter = adapter;
     this.attachOptions = options;
   }
 
   resize(cols: number, rows: number): void {
-    this.htermBridge?.resize(cols, rows);
+    this.ioShim?.resize(cols, rows);
   }
 
   async connect(): Promise<void> {
@@ -85,19 +85,16 @@ export class NasshCommandBridge {
       identityId: this.options.identityId,
     });
 
-    const [{ CommandInstance, getSyncStorage }, hterm] = await Promise.all([
-      loadNasshModules(),
-      loadHtermTerminalIo(),
-    ]);
+    const { CommandInstance, getSyncStorage } = await loadNasshModules();
 
     if (this.disposed) return;
 
-    this.htermBridge?.dispose();
-    this.htermBridge = new HtermIoBridge(this.adapter, hterm, {
+    this.ioShim?.dispose();
+    this.ioShim = new NasshIoShim(this.adapter, {
       onOutput: this.attachOptions?.onOutput,
     });
-    this.htermBridge.bindInput();
-    this.htermBridge.resize(this.adapter.getSize().cols, this.adapter.getSize().rows);
+    this.ioShim.bindInput();
+    this.ioShim.resize(this.adapter.getSize().cols, this.adapter.getSize().rows);
 
     const noopLocation = {
       href: globalThis.location?.href ?? '',
@@ -111,7 +108,7 @@ export class NasshCommandBridge {
     });
 
     const instance = new CommandInstance({
-      io: this.htermBridge.io,
+      io: this.ioShim.io,
       syncStorage,
       terminalLocation: noopLocation,
       onExit: (code) => {
@@ -180,8 +177,8 @@ export class NasshCommandBridge {
     this.options.onStatus?.('disconnecting');
     this.commandInstance?.terminateProgram_();
     this.commandInstance = null;
-    this.htermBridge?.dispose();
-    this.htermBridge = null;
+    this.ioShim?.dispose();
+    this.ioShim = null;
     this.options.onStatus?.('disconnected');
   }
 
@@ -189,8 +186,8 @@ export class NasshCommandBridge {
     this.disposed = true;
     this.commandInstance?.terminateProgram_();
     this.commandInstance = null;
-    this.htermBridge?.dispose();
-    this.htermBridge = null;
+    this.ioShim?.dispose();
+    this.ioShim = null;
     this.adapter = null;
   }
 }

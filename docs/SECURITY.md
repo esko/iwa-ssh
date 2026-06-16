@@ -74,9 +74,10 @@ default-src 'self'
 object-src 'none'
 base-uri 'none'
 style-src 'self' 'unsafe-inline'
+trusted-types default
 ```
 
-`require-trusted-types-for 'script'` is **omitted during MVP** because the app shell renders via `innerHTML` without a Trusted Types policy yet.
+Chrome enforces `require-trusted-types-for 'script'` on IWAs at runtime. The app registers a **default** Trusted Types policy in `app/src/security/trustedTypes.ts` before any `innerHTML` rendering so the shell can boot.
 
 Cross-origin isolation headers:
 

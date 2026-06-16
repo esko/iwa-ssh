@@ -1,5 +1,5 @@
 /**
- * Runtime helpers for Phase 1 upstream assets under /upstream (app/public/upstream/).
+ * Runtime helpers for Phase 1 upstream assets under /upstream (app/upstream/).
  */
 
 const UPSTREAM_BASE =
@@ -14,7 +14,7 @@ const PLUGIN_BASE =
   typeof __IWA_PLUGIN_BASE__ !== 'undefined' ? __IWA_PLUGIN_BASE__ : `${UPSTREAM_BASE}/plugin`;
 
 /** Minimum files required before NasshCommandBridge can load CommandInstance. */
-const REQUIRED_ASSET_PATHS = [
+export const REQUIRED_UPSTREAM_ASSET_PATHS = [
   `${UPSTREAM_BASE}/manifest.json`,
   WASSH_WORKER_URL,
   `${PLUGIN_BASE}/wasm/ssh.wasm`,
@@ -44,6 +44,15 @@ async function assetExists(url: string): Promise<boolean> {
 
 /** True when wassh worker, plugin WASM, and nassh bridge modules are all present. */
 export async function areUpstreamAssetsReady(): Promise<boolean> {
-  const checks = await Promise.all(REQUIRED_ASSET_PATHS.map(assetExists));
-  return checks.every(Boolean);
+  const checks = await checkUpstreamAssets();
+  return checks.every((entry) => entry.ok);
+}
+
+export async function checkUpstreamAssets(): Promise<Array<{ path: string; ok: boolean }>> {
+  return Promise.all(
+    REQUIRED_UPSTREAM_ASSET_PATHS.map(async (path) => ({
+      path,
+      ok: await assetExists(path),
+    })),
+  );
 }

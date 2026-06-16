@@ -39,12 +39,12 @@ export const IWA_CSP =
   "frame-src 'self' https: blob: data:; connect-src 'self' https: wss: blob: data:; " +
   "script-src 'self' 'wasm-unsafe-eval'; img-src 'self' https: blob: data:; " +
   "media-src 'self' https: blob: data:; font-src 'self' blob: data:; " +
-  "style-src 'self' 'unsafe-inline';";
+  "style-src 'self' 'unsafe-inline'; trusted-types default;";
 
 export const bundleConfig: WebBundleConfig = {
   appName: 'iwa-ssh',
   webBundleId: 'PLACEHOLDER_RUN_wbn-dump-id_AFTER_GENERATING_KEY',
-  version: '0.1.0',
+  version: '0.1.1',
   distDir: 'dist',
   unsignedBundle: 'dist/iwa-ssh.unsigned.wbn',
   signedBundle: 'dist/iwa-ssh.swbn',

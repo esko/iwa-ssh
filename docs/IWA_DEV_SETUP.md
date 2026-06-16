@@ -75,8 +75,20 @@ google-chrome --enable-features=IsolatedWebApps,IsolatedWebAppDevMode \
 
 ### After code changes
 
-- Save files; Vite hot-reloads. If the IWA window goes stale: **Web App Internals** → **Force update check**, or close and reopen the app.
-- Reinstall Dev Mode Proxy only if you changed the dev server port or the install is broken.
+Dev Mode Proxy serves your **live** Vite server — you usually do **not** need Force update check for JS/CSS edits:
+
+1. Keep `npm run dev` running
+2. Save files in the repo
+3. Close the iwa-ssh window and reopen it from the launcher (or hard-refresh if the window allows)
+
+**Force update check** only runs when `version` in `/.well-known/manifest.webmanifest` **increases** (e.g. `0.1.0` → `0.1.1`). If you see *“Installed app is already on version …”*, that is normal — the version did not change.
+
+| Situation | What to do |
+|-----------|------------|
+| Edited app code (routes, SSH, UI) | Save → close/reopen iwa-ssh (Vite must be running) |
+| Changed manifest, icons, or boot/trusted-types | Bump `version` in both manifest files, restart `npm run dev`, then **Force update check** |
+| Still broken / black screen | Web App Internals → remove dev install → **Install IWA with Dev Mode Proxy** again at `http://127.0.0.1:5173/` |
+| Changed dev server port | Reinstall Dev Mode Proxy with the new URL |
 
 ### Quick checks if SSH fails
 
@@ -232,7 +244,10 @@ For personal local use, **skip remote updates entirely**. When you change the ap
 
 | Symptom | Check |
 |---------|-------|
-| `TCPSocket` unavailable | IWA install path, not plain `localhost` tab; manifest needs `permissions_policy.direct-sockets` and `cross-origin-isolated` |
+| Install fails: icon downloading | Manifest icons must be **PNG** with explicit `sizes` (`192x192`, `512x512`); SVG-only fails |
+| Black screen after install | Trusted Types blocks `innerHTML` without a default policy — fixed in `app/src/security/trustedTypes.ts`. Restart `npm run dev`, close/reopen app, or reinstall Dev Mode Proxy |
+| Force update: “already on version …” | Expected when manifest `version` unchanged — close/reopen the app for code changes, or bump `version` then Force update, or reinstall |
+| `TCPSocket` unavailable | Installed via Dev Mode Proxy (not a browser tab); manifest needs full `permissions_policy` (see [Direct Sockets doc](https://developer.chrome.com/docs/iwa/direct-sockets)) |
 | Integrity Block V1 error | Re-sign with current `wbn-sign` (V2 required since M129) |
 | xterm blank/broken in prod build | Vite re-minifying xterm — see `vite.config.ts` `optimizeDeps.exclude` |
 | Different app after re-signing with new key | Web Bundle ID changes with key — expected |

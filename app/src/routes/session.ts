@@ -82,9 +82,11 @@ export async function renderSession(root: HTMLElement, sessionId: string, query 
         <div id="terminal-host" class="session-terminal" tabindex="0"></div>
         <div id="session-overlay" class="session-overlay" hidden>
           <div class="session-overlay__card">
-            <p id="session-overlay-message"></p>
+            <h2 class="session-overlay__title" id="session-overlay-title">Session disconnected</h2>
+            <p class="session-overlay__message" id="session-overlay-message"></p>
             <div class="button-row">
               <button type="button" id="session-overlay-reconnect" class="btn primary">Reconnect</button>
+              <button type="button" id="session-overlay-view-terminal" class="btn">View terminal</button>
               <button type="button" id="session-overlay-home" class="btn">Home</button>
             </div>
           </div>
@@ -96,6 +98,7 @@ export async function renderSession(root: HTMLElement, sessionId: string, query 
   const statusEl = root.querySelector<HTMLElement>('.session-status');
   const reconnectBtn = root.querySelector<HTMLButtonElement>('#session-reconnect');
   const overlay = root.querySelector<HTMLElement>('#session-overlay');
+  const overlayTitle = root.querySelector<HTMLElement>('#session-overlay-title');
   const overlayMessage = root.querySelector<HTMLElement>('#session-overlay-message');
   const terminalHost = root.querySelector<HTMLElement>('#terminal-host');
 
@@ -108,11 +111,18 @@ export async function renderSession(root: HTMLElement, sessionId: string, query 
 
     const showOverlay = status === 'disconnected' || status === 'error';
     if (overlay) overlay.hidden = !showOverlay;
-    if (overlayMessage && showOverlay) {
-      overlayMessage.textContent =
-        status === 'error'
-          ? (error ?? 'Connection failed.')
-          : 'Session disconnected.';
+    if (showOverlay) {
+      if (overlayTitle) {
+        overlayTitle.textContent = status === 'error' ? 'Connection failed' : 'Session disconnected';
+      }
+      if (overlayMessage) {
+        overlayMessage.textContent =
+          status === 'error'
+            ? (error ?? 'The connection could not be established.')
+            : error
+              ? `The SSH session ended: ${error}`
+              : 'The SSH connection closed. Use View terminal to read session output, or Reconnect to try again.';
+      }
     }
     if (reconnectBtn) reconnectBtn.disabled = status === 'connecting' || status === 'connected';
   };
@@ -145,6 +155,9 @@ export async function renderSession(root: HTMLElement, sessionId: string, query 
 
   reconnectBtn?.addEventListener('click', () => void reconnect());
   root.querySelector('#session-overlay-reconnect')?.addEventListener('click', () => void reconnect());
+  root.querySelector('#session-overlay-view-terminal')?.addEventListener('click', () => {
+    if (overlay) overlay.hidden = true;
+  });
   root.querySelector('#session-overlay-home')?.addEventListener('click', () => Router.go('/'));
   root.querySelector('#session-duplicate')?.addEventListener('click', () => {
     const duplicateId = crypto.randomUUID();

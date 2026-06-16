@@ -4,7 +4,7 @@ import { getDebugFlags } from '../debug/flags';
 import { getRecentLogs, getSessionDebugState } from '../debug/logger';
 import { isDirectSocketsAvailable } from '../ssh/DirectSocketProbe';
 import { ensureHostTrusted, stubHostFingerprint } from '../ssh/KnownHostPrompt';
-import { areUpstreamAssetsReady } from '../ssh/upstreamAssets';
+import { areUpstreamAssetsReady, checkUpstreamAssets } from '../ssh/upstreamAssets';
 import {
   exportData,
   listIdentities,
@@ -69,12 +69,14 @@ function renderLogs(): string {
 export async function renderDebug(root: HTMLElement): Promise<void> {
   patchConsole();
 
-  const [settings, profiles, identities, knownHosts, upstreamReady] = await Promise.all([
+  const [settings, profiles, identities, knownHosts, upstreamReady, upstreamChecks] =
+    await Promise.all([
     loadSettings(),
     listProfiles(),
     listIdentities(),
     listKnownHosts(),
     areUpstreamAssetsReady(),
+    checkUpstreamAssets(),
   ]);
 
   const sessionDbg = getSessionDebugState();
@@ -99,7 +101,7 @@ export async function renderDebug(root: HTMLElement): Promise<void> {
         <section class="panel dev-panel">
           <h2>Runtime</h2>
           <dl class="dev-dl">
-            <dt>App version</dt><dd><code>0.1.0</code></dd>
+            <dt>App version</dt><dd><code>0.1.1</code></dd>
             <dt>Runtime</dt><dd><code>${escapeHtml(getRuntimeLabel())}</code></dd>
             <dt>IWA origin</dt><dd><code>${isIwaOrigin() ? 'yes' : 'no'}</code></dd>
             <dt>Native app tabs</dt><dd><code>${usesNativeAppTabs() ? 'yes' : 'no'}</code></dd>
@@ -109,6 +111,19 @@ export async function renderDebug(root: HTMLElement): Promise<void> {
             <dt>Upstream assets</dt><dd><code>${upstreamReady ? 'ready' : 'missing'}</code></dd>
             <dt>Debug flags</dt><dd><code>debug=${flags.debug} sshLog=${flags.sshLogVerbose ? 'verbose' : 'off'} termTrace=${flags.termTrace}</code></dd>
           </dl>
+          ${
+            upstreamReady
+              ? ''
+              : `<ul class="dev-asset-list muted">
+            ${upstreamChecks
+              .map(
+                (entry) =>
+                  `<li><code>${escapeHtml(entry.path)}</code> — ${entry.ok ? 'ok' : '<strong>missing</strong>'}</li>`,
+              )
+              .join('')}
+          </ul>
+          <p class="muted">On the machine running <code>npm run dev</code>: <code>git submodule update --init upstream/libapps</code> then <code>npm run fetch-assets</code>, restart dev server.</p>`
+          }
         </section>
 
         <section class="panel dev-panel">
@@ -147,7 +162,7 @@ export async function renderDebug(root: HTMLElement): Promise<void> {
         <section class="panel dev-panel">
           <h2>Storage snapshot</h2>
           <dl class="dev-dl">
-            <dt>Profiles</dt><dd>${profiles.length}</dd>
+            <dt>Profiles</dt><dd id="dev-profiles-count">${profiles.length}</dd>
             <dt>Identities</dt><dd>${identities.length}</dd>
             <dt>Known hosts</dt><dd id="dev-known-hosts-count">${knownHosts.length}</dd>
             <dt>Theme</dt><dd><code>${escapeHtml(settings.appearance.themePreset)}</code></dd>
@@ -157,6 +172,7 @@ export async function renderDebug(root: HTMLElement): Promise<void> {
             <button type="button" id="dev-export" class="btn">Export JSON</button>
             <button type="button" id="dev-seed" class="btn">Seed test profile</button>
           </div>
+          <p class="muted dev-seed-status" id="dev-seed-status" hidden></p>
         </section>
 
         <section class="panel dev-panel">
@@ -316,17 +332,49 @@ export async function renderDebug(root: HTMLElement): Promise<void> {
   });
 
   root.querySelector('#dev-seed')?.addEventListener('click', async () => {
-    const id = crypto.randomUUID();
-    await saveProfile({
-      id,
-      name: 'Dev test host',
-      host: 'dev.local',
-      port: 22,
-      username: 'dev',
-      lastConnectedAt: Date.now(),
-    });
-    console.info('dev: seeded profile', id);
-    await renderDebug(root);
+    const button = root.querySelector<HTMLButtonElement>('#dev-seed');
+    const status = root.querySelector<HTMLElement>('#dev-seed-status');
+    if (!button) return;
+
+    button.disabled = true;
+    if (status) {
+      status.hidden = false;
+      status.textContent = 'Saving test profile…';
+    }
+
+    try {
+      const id = crypto.randomUUID();
+      const profile = {
+        id,
+        name: 'Dev test host',
+        host: 'dev.local',
+        port: 22,
+        username: 'dev',
+        lastConnectedAt: Date.now(),
+      };
+      await saveProfile(profile);
+      console.info('dev: seeded profile', id);
+
+      const countEl = root.querySelector('#dev-profiles-count');
+      if (countEl) {
+        const nextCount = (await listProfiles()).length;
+        countEl.textContent = String(nextCount);
+      }
+
+      if (status) {
+        status.textContent = `Created ${profile.username}@${profile.host}:${profile.port} — opening Connect…`;
+      }
+
+      Router.go(`/connect?profile=${encodeURIComponent(id)}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('dev: seed profile failed', err);
+      if (status) {
+        status.hidden = false;
+        status.textContent = `Failed to save profile: ${message}`;
+      }
+      button.disabled = false;
+    }
   });
 
   root.querySelector('#dev-log-test')?.addEventListener('click', () => {

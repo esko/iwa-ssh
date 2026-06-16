@@ -9,6 +9,7 @@ export type HtermStubTerminal = {
   screenSize: { width: number; height: number };
   showOverlay: (message: unknown, timeout?: number | null) => void;
   hideOverlay: () => void;
+  focus: () => void;
   io: HtermTerminalIo;
 };
 
@@ -20,14 +21,19 @@ export type HtermTerminalIo = {
   onTerminalResize: (width: number, height: number) => void;
   print: (data: string) => void;
   println: (data: string) => void;
+  writeUTF8?: (buffer: ArrayBuffer | ArrayLike<number>) => void;
+  writelnUTF8?: (buffer: ArrayBuffer | ArrayLike<number>) => void;
+  setTerminalProfile?: (profileName: string) => void;
   push: () => HtermTerminalIo;
   pop: () => void;
   showOverlay: (message: unknown, timeout?: number | null) => void;
   hideOverlay: () => void;
+  flush?: () => void;
 };
 
 export type HtermNamespace = {
   initPromise?: Promise<void>;
+  VERSION?: string;
   Terminal: {
     IO: new (terminal: HtermStubTerminal) => HtermTerminalIo;
     DEFAULT_PROFILE_ID: string;

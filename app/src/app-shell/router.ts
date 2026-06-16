@@ -1,4 +1,5 @@
 import { getTabManager } from './TabManager';
+import { showBootError } from '../security/bootError';
 
 export type RouteMatch = {
   name: string;
@@ -71,11 +72,19 @@ export class Router {
   }
 
   start(): void {
-    const run = () => {
-      void this.navigate(window.location.pathname, new URLSearchParams(window.location.search));
+    const run = async () => {
+      try {
+        await this.navigate(window.location.pathname, new URLSearchParams(window.location.search));
+      } catch (error) {
+        const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+        showBootError(detail);
+        console.error('Route navigation failed', error);
+      }
     };
-    window.addEventListener('popstate', run);
-    run();
+    window.addEventListener('popstate', () => {
+      void run();
+    });
+    void run();
   }
 
   static go(path: string): void {

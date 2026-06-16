@@ -6,7 +6,7 @@ import { log } from '../debug/logger';
 import type { TerminalAdapter, TerminalSubscription } from '../terminal/TerminalAdapter';
 import type { ConnectionStatus } from '../settings/types';
 import { NasshCommandBridge } from './NasshCommandBridge';
-import type { AttachTerminalOptions } from './HtermIoBridge';
+import type { AttachTerminalOptions } from './NasshIoShim';
 import { areUpstreamAssetsReady } from './upstreamAssets';
 
 export type NasshSessionOptions = {
@@ -18,7 +18,7 @@ export type NasshSessionOptions = {
   onStatus?: (status: ConnectionStatus, error?: string) => void;
 };
 
-export type { AttachTerminalOptions } from './HtermIoBridge';
+export type { AttachTerminalOptions } from './NasshIoShim';
 
 export class NasshSession {
   private adapter: TerminalAdapter | null = null;
@@ -55,12 +55,17 @@ export class NasshSession {
         return;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        log.session.warn('NasshCommandBridge unavailable, using echo stub', { message, error });
+        log.session.error('NasshCommandBridge failed', { message, error });
         await this.bridge?.disconnect().catch(() => undefined);
         this.bridge?.dispose();
         this.bridge = null;
         this.useBridge = false;
         this.reattachTerminalHandlers();
+        this.setStatus('error', message);
+        this.adapter?.write(
+          `\r\n\x1b[1;31mSSH bridge failed\x1b[0m: ${message.replaceAll('\r', '')}\r\n`,
+        );
+        return;
       }
     }
 

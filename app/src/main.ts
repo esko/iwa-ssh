@@ -1,3 +1,5 @@
+import './security/trustedTypes';
+import { installBootErrorHandler, showBootError } from './security/bootError';
 import { createApp } from './app-shell/createApp';
 import { initTabManager } from './app-shell/TabManager';
 import { Router } from './app-shell/router';
@@ -6,33 +8,41 @@ import { initDebugFlagsFromUrl } from './debug/flags';
 import { log } from './debug/logger';
 import './styles/app.css';
 
-const shell = document.getElementById('app');
-if (!shell) {
-  throw new Error('Missing #app root element');
-}
+installBootErrorHandler();
 
-initDebugFlagsFromUrl();
-log.app.info('boot', {
-  tabMode: usesSimulatedTabs() ? 'simulated' : 'native',
-  origin: window.location.origin,
-});
+try {
+  const shell = document.getElementById('app');
+  if (!shell) {
+    throw new Error('Missing #app root element');
+  }
 
-const content = document.createElement('div');
-content.id = 'app-content';
-content.className = 'app-content';
-shell.appendChild(content);
+  initDebugFlagsFromUrl();
+  log.app.info('boot', {
+    tabMode: usesSimulatedTabs() ? 'simulated' : 'native',
+    origin: window.location.origin,
+  });
 
-const tabManager = initTabManager((path) => Router.go(path), shell);
+  const content = document.createElement('div');
+  content.id = 'app-content';
+  content.className = 'app-content';
+  shell.appendChild(content);
 
-Router.setNavigateHook((path) => {
-  tabManager?.syncFromPath(path);
-});
+  const tabManager = initTabManager((path) => Router.go(path), shell);
 
-const router = createApp(content);
-router.start();
+  Router.setNavigateHook((path) => {
+    tabManager?.syncFromPath(path);
+  });
 
-if (usesSimulatedTabs()) {
-  document.documentElement.dataset.tabMode = 'simulated';
-} else {
-  document.documentElement.dataset.tabMode = 'native';
+  const router = createApp(content);
+  router.start();
+
+  if (usesSimulatedTabs()) {
+    document.documentElement.dataset.tabMode = 'simulated';
+  } else {
+    document.documentElement.dataset.tabMode = 'native';
+  }
+} catch (error) {
+  const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+  showBootError(detail);
+  console.error('Boot failed', error);
 }
