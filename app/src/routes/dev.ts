@@ -76,7 +76,7 @@ export async function renderDebug(root: HTMLElement): Promise<void> {
         <section class="panel dev-panel">
           <h2>Runtime</h2>
           <dl class="dev-dl">
-            <dt>App version</dt><dd><code>0.1.3</code></dd>
+            <dt>App version</dt><dd><code>0.1.4</code></dd>
             <dt>Runtime</dt><dd><code>${escapeHtml(getRuntimeLabel())}</code></dd>
             <dt>IWA origin</dt><dd><code>${isIwaOrigin() ? 'yes' : 'no'}</code></dd>
             <dt>Native app tabs</dt><dd><code>${usesNativeAppTabs() ? 'yes' : 'no'}</code></dd>
