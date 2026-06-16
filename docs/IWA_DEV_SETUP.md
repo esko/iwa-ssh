@@ -12,6 +12,7 @@ Use these before debugging iwa-ssh install or TCP issues:
 | [IWA Kitchen Sink](https://github.com/chromeos/iwa-sink) (`chromeos/iwa-sink`) | Reference app — Direct Sockets tab, manifest, signed-bundle releases |
 | [Telnet client](https://github.com/GoogleChromeLabs/telnet-client) | Minimal Direct Sockets terminal (closest analogue to SSH) |
 | [Direct Sockets (Chrome docs)](https://developer.chrome.com/docs/iwa/direct-sockets) | Required `permissions_policy`, `TCPSocket` usage, DevTools from Chrome 138+ |
+| [moshtty (legacy PWA)](https://github.com/esko/moshtty/tree/legacy-pwa) | Our earlier ChromeOS terminal with **working native tabbed mode** (`display_override: tabbed` + `tab_strip`) as a multi-page PWA. Tab-behavior precedent; PWA (not IWA), multi-page (not SPA) |
 
 iwa-ssh’s manifest `permissions_policy` matches Kitchen Sink / Telnet for TCP SSH targets:
 

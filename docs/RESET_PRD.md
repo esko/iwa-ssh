@@ -10,6 +10,10 @@ Primary upstream references:
 - nassh: https://chromium.googlesource.com/apps/libapps/+/HEAD/nassh/
 - wassh sockets: `upstream/libapps/wassh/js/sockets.js`
 
+Related prior work:
+
+- moshtty (legacy PWA): https://github.com/esko/moshtty/tree/legacy-pwa — our earlier ChromeOS terminal. Gets **working tabs from native PWA tabbed mode** (`display_override: ["tabbed"]` + `tab_strip`), as a **multi-page** app (separate `index.html` / `terminal.html`); PTY sessions are kept durable by a Crostini Go agent over WebSocket. Closest precedent for the tab behavior we want. Differences from iwa-ssh: it is a PWA (not IWA) and multi-page (not a single-page app). iwa-ssh already declares the same tab manifest keys, so the open question is why the IWA/SPA combination does not surface tabs.
+
 ## Approved Deltas
 
 Only these differences are in scope without a new ADR:
