@@ -63,6 +63,21 @@ export function upsertSettingsProfile(profile: SettingsProfile): void {
   saveSettingsProfiles(profiles);
 }
 
+export function renameSettingsProfile(id: string, name: string): void {
+  const profile = loadSettingsProfiles().find((item) => item.id === id);
+  if (!profile) return;
+  const next = name.trim();
+  if (next) upsertSettingsProfile({ ...profile, name: next });
+}
+
+/** Delete a settings profile. The default is protected; connections that
+ * referenced a deleted profile resolve back to the default. */
+export function deleteSettingsProfile(id: string): void {
+  if (id === DEFAULT_SETTINGS_PROFILE_ID) return;
+  const remaining = loadSettingsProfiles().filter((item) => item.id !== id);
+  if (remaining.length > 0) saveSettingsProfiles(remaining);
+}
+
 export function createSettingsProfile(name: string): SettingsProfile {
   const profile: SettingsProfile = {
     id: crypto.randomUUID(),

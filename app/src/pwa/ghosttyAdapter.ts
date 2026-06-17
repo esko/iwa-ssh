@@ -18,6 +18,7 @@ export class GhosttyTerminalAdapter implements TerminalAdapter {
   private readonly resizeListeners = new Set<(cols: number, rows: number) => void>();
   private resizeObserver: ResizeObserver | null = null;
   private cwd: string | null = null;
+  private oscBuffer = '';
   private readonly decoder = new TextDecoder();
 
   constructor(settings: PwaTerminalSettings) {
@@ -70,15 +71,22 @@ export class GhosttyTerminalAdapter implements TerminalAdapter {
     return this.cwd;
   }
 
-  // OSC 7: ESC ] 7 ; file://host/path  (BEL | ST). Shells emit this to report cwd.
+  // OSC 7: ESC ] 7 ; file://host/path  (BEL | ST). Shells emit this to report
+  // cwd; the sequence can straddle writes, so scan a rolling tail and keep the
+  // most recent match. (See docs/SHELL_INTEGRATION.md to enable it remotely.)
   private captureCwd(data: string): void {
-    const match = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*)(?:\x07|\x1b\\)/.exec(data);
-    if (!match) return;
+    this.oscBuffer = (this.oscBuffer + data).slice(-1024);
+    const re = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+    let match: RegExpExecArray | null;
+    let last: RegExpExecArray | null = null;
+    while ((match = re.exec(this.oscBuffer))) last = match;
+    if (!last) return;
     try {
-      this.cwd = decodeURIComponent(match[1]);
+      this.cwd = decodeURIComponent(last[1]);
     } catch {
-      this.cwd = match[1];
+      this.cwd = last[1];
     }
+    this.oscBuffer = this.oscBuffer.slice(re.lastIndex);
   }
 
   onInput(cb: (data: string) => void): TerminalSubscription {

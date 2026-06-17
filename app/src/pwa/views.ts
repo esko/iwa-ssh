@@ -10,9 +10,12 @@ import { getThemePalette, THEME_PRESETS } from './themes';
 import {
   loadSettingsProfiles,
   createSettingsProfile,
+  renameSettingsProfile,
+  deleteSettingsProfile,
   getSettingsProfile,
   upsertSettingsProfile,
   resolveSettings,
+  DEFAULT_SETTINGS_PROFILE_ID,
 } from './settingsProfiles';
 import { profileToSpec, recordConnection, specFromQuery, specToQuery } from './profileModel';
 import { shouldPassThroughSystemShortcut } from './shortcuts';
@@ -30,6 +33,28 @@ function elFromHTML(html: string): HTMLElement {
   const template = document.createElement('template');
   template.innerHTML = html.trim();
   return template.content.firstElementChild as HTMLElement;
+}
+
+/**
+ * True when the PEM is itself passphrase-protected — PKCS markers, or an
+ * OpenSSH key whose cipher is not `none`. Such keys need their own passphrase
+ * at SSH time (prompted by wassh), separate from the at-rest storage passphrase.
+ */
+function isPemEncrypted(pemText: string): boolean {
+  if (/Proc-Type:\s*4,ENCRYPTED/i.test(pemText) || /BEGIN ENCRYPTED PRIVATE KEY/.test(pemText)) return true;
+  const match = /-----BEGIN OPENSSH PRIVATE KEY-----([\s\S]*?)-----END OPENSSH PRIVATE KEY-----/.exec(pemText);
+  if (!match) return false;
+  try {
+    const bin = atob(match[1].replace(/\s+/g, ''));
+    const magic = 'openssh-key-v1\0';
+    if (!bin.startsWith(magic)) return false;
+    let offset = magic.length;
+    const len = (bin.charCodeAt(offset) << 24) | (bin.charCodeAt(offset + 1) << 16) | (bin.charCodeAt(offset + 2) << 8) | bin.charCodeAt(offset + 3);
+    offset += 4;
+    return bin.slice(offset, offset + len) !== 'none';
+  } catch {
+    return false;
+  }
 }
 
 function navigate(url: string): void {
@@ -208,9 +233,17 @@ function openConnectionForm(): void {
           return;
         }
         const pemBytes = file ? await file.arrayBuffer() : (new TextEncoder().encode(keyText).buffer as ArrayBuffer);
+        const pemText = file ? new TextDecoder().decode(pemBytes) : keyText;
         const encryptedPrivateKey = await encryptPrivateKey(pemBytes, passphrase);
         identityId = crypto.randomUUID();
-        await saveIdentity({ id: identityId, label: `${user}@${host}`, publicKey: '', encryptedPrivateKey, createdAt: Date.now() });
+        await saveIdentity({
+          id: identityId,
+          label: `${user}@${host}`,
+          publicKey: '',
+          encryptedPrivateKey,
+          opensshKeyEncrypted: isPemEncrypted(pemText),
+          createdAt: Date.now(),
+        });
         cacheIdentityPassphrase(identityId, passphrase);
       }
 
@@ -272,13 +305,42 @@ export function openSettings(initial: SettingsTab = 'appearance'): void {
         render();
       }),
     );
-    modal.querySelectorAll<HTMLButtonElement>('[data-pill]').forEach((b) =>
+    modal.querySelectorAll<HTMLButtonElement>('[data-pill]').forEach((b) => {
       b.addEventListener('click', () => {
         activeProfileId = b.dataset.pill ?? activeProfileId;
         modal.querySelectorAll<HTMLElement>('[data-pill]').forEach((p) => p.setAttribute('aria-selected', String(p === b)));
         render();
-      }),
-    );
+      });
+      b.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        const id = b.dataset.pill ?? '';
+        const isDefault = id === DEFAULT_SETTINGS_PROFILE_ID;
+        showContextMenu(event.clientX, event.clientY, [
+          {
+            type: 'item',
+            label: 'Rename',
+            onSelect: () => {
+              const name = window.prompt('Rename settings profile', b.textContent ?? '');
+              if (name) {
+                renameSettingsProfile(id, name);
+                close();
+                openSettings(activeTab);
+              }
+            },
+          },
+          {
+            type: 'item',
+            label: 'Delete',
+            disabled: isDefault,
+            onSelect: () => {
+              deleteSettingsProfile(id);
+              close();
+              openSettings(activeTab);
+            },
+          },
+        ]);
+      });
+    });
     modal.querySelector<HTMLButtonElement>('[data-close]')?.addEventListener('click', close);
     modal.querySelector<HTMLButtonElement>('[data-add-profile]')?.addEventListener('click', () => {
       const name = window.prompt('Name this settings profile', 'Work');
