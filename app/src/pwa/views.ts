@@ -1,5 +1,7 @@
 import type { Profile } from '../settings/types';
-import { deleteProfile, listProfiles, saveProfile } from '../storage/indexedDb';
+import { deleteProfile, listProfiles, saveIdentity, saveProfile } from '../storage/indexedDb';
+import { encryptPrivateKey } from '../security/KeyCrypto';
+import { cacheIdentityPassphrase } from '../ssh/IdentityPassphrase';
 import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
 import { GhosttyTerminalAdapter, ensureGhosttyReady } from './ghosttyAdapter';
@@ -161,8 +163,11 @@ function openConnectionForm(): void {
             <label class="field"><span>user</span><input name="user" placeholder="esko" autocomplete="off" spellcheck="false" required></label>
             <label class="field"><span>port</span><input name="port" type="number" min="1" max="65535" value="22"></label>
           </div>
-          <label class="field"><span>ssh key — optional</span><textarea name="key" placeholder="paste a private key, or choose a file" spellcheck="false"></textarea></label>
+          <label class="field"><span>ssh key — optional</span><textarea name="key" placeholder="paste a private key…" spellcheck="false"></textarea></label>
+          <label class="field"><span>or choose a key file</span><input type="file" name="keyfile" accept=".pem,.key,text/plain,application/octet-stream"></label>
+          <label class="field" data-pass hidden><span>key passphrase — encrypts the key on this device</span><input name="passphrase" type="password" autocomplete="off"></label>
           ${spField}
+          <p class="set-hint" data-err hidden style="color:#f0c5c5"></p>
           <div class="actions">
             <button type="button" class="btn-ghost" data-cancel>Cancel</button>
             <button type="submit" class="btn">Connect</button>
@@ -170,17 +175,46 @@ function openConnectionForm(): void {
         </form>
       </div>
     `);
+
+    const form = modal.querySelector<HTMLFormElement>('#connForm')!;
+    const passField = modal.querySelector<HTMLElement>('[data-pass]')!;
+    const errEl = modal.querySelector<HTMLElement>('[data-err]')!;
+    const keyArea = form.querySelector<HTMLTextAreaElement>('[name="key"]')!;
+    const keyFile = form.querySelector<HTMLInputElement>('[name="keyfile"]')!;
+    const revealPass = (): void => {
+      passField.hidden = !(keyArea.value.trim() || (keyFile.files?.length ?? 0) > 0);
+    };
+    keyArea.addEventListener('input', revealPass);
+    keyFile.addEventListener('change', revealPass);
+
     modal.querySelector<HTMLButtonElement>('[data-cancel]')?.addEventListener('click', close);
-    modal.querySelector<HTMLFormElement>('#connForm')?.addEventListener('submit', async (event) => {
+    form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const data = new FormData(event.currentTarget as HTMLFormElement);
+      const data = new FormData(form);
       const host = String(data.get('host') ?? '').trim();
       const user = String(data.get('user') ?? '').trim();
       const port = Number(data.get('port') ?? 22) || 22;
       if (!host || !user) return;
       const settingsProfileId = String(data.get('sp') ?? '').trim() || undefined;
-      // Persist as a connection profile (key handling wired in a follow-up).
-      const profile: Profile = { id: crypto.randomUUID(), name: `${user}@${host}`, protocol: 'ssh', host, port, username: user, settingsProfileId };
+
+      const keyText = String(data.get('key') ?? '').trim();
+      const file = keyFile.files?.[0];
+      let identityId: string | undefined;
+      if (keyText || file) {
+        const passphrase = String(data.get('passphrase') ?? '');
+        if (!passphrase) {
+          errEl.hidden = false;
+          errEl.textContent = 'Enter a passphrase to encrypt the key on this device.';
+          return;
+        }
+        const pemBytes = file ? await file.arrayBuffer() : (new TextEncoder().encode(keyText).buffer as ArrayBuffer);
+        const encryptedPrivateKey = await encryptPrivateKey(pemBytes, passphrase);
+        identityId = crypto.randomUUID();
+        await saveIdentity({ id: identityId, label: `${user}@${host}`, publicKey: '', encryptedPrivateKey, createdAt: Date.now() });
+        cacheIdentityPassphrase(identityId, passphrase);
+      }
+
+      const profile: Profile = { id: crypto.randomUUID(), name: `${user}@${host}`, protocol: 'ssh', host, port, username: user, identityId, settingsProfileId };
       await saveProfile(profile);
       navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
     });
