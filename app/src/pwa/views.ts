@@ -4,7 +4,7 @@ import { encryptPrivateKey } from '../security/KeyCrypto';
 import { cacheIdentityPassphrase } from '../ssh/IdentityPassphrase';
 import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
-import { GhosttyTerminalAdapter, ensureGhosttyReady } from './ghosttyAdapter';
+import { WtermTerminalAdapter } from './wtermAdapter';
 import { loadCustomFont, normalizePwaSettings, applyPwaAppearance } from './settings';
 import { getThemePalette, THEME_PRESETS } from './themes';
 import {
@@ -24,7 +24,7 @@ import { createTransport, type TerminalTransport } from './transport';
 import type { PwaConnectionSpec, TerminalTransportStatus } from './types';
 
 let activeTransport: TerminalTransport | null = null;
-let activeTerminal: GhosttyTerminalAdapter | null = null;
+let activeTerminal: WtermTerminalAdapter | null = null;
 let activeSpec: PwaConnectionSpec | null = null;
 let reconnecting = false;
 
@@ -467,7 +467,6 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
   const settings = resolveSettings(spec.settingsProfileId);
   applyPwaAppearance(settings);
   await loadCustomFont(settings);
-  await ensureGhosttyReady();
 
   const palette = getThemePalette(settings.theme);
   setThemeColor(palette.background);
@@ -501,8 +500,7 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
     lastState = state;
   };
 
-  activeTerminal = new GhosttyTerminalAdapter(settings);
-  activeTerminal.open(terminalRoot);
+  activeTerminal = await WtermTerminalAdapter.create(terminalRoot, settings);
   activeTerminal.onTitle((value) => {
     document.title = value.trim() || title;
   });

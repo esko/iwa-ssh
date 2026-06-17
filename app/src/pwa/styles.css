@@ -716,9 +716,16 @@ textarea {
 .term-full {
   width: 100vw;
   height: 100vh;
-  padding: var(--terminal-padding, 0);
   background: var(--term-bg, #000);
   overflow: hidden;
+}
+
+/* The wterm DOM renderer adds `.wterm` (padding/radius/shadow for an embedded
+   widget); flatten it to a full-bleed surface. */
+.term-full.wterm {
+  padding: var(--terminal-padding, 0);
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .term-status {

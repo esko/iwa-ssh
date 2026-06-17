@@ -12,8 +12,6 @@
     "test": "vitest run && node scripts/test-ssh-command-parser.mjs",
     "typecheck": "tsc -b --noEmit",
     "fetch-assets": "node scripts/fetch-upstream-assets.mjs",
-    "patch-ghostty-web": "node scripts/patch-ghostty-web.mjs",
-    "postinstall": "node scripts/patch-ghostty-web.mjs",
     "bump-version": "node scripts/bump-version.mjs",
     "bundle:iwa": "node --experimental-strip-types iwa/build-bundle.mjs",
     "bundle:iwa:unsigned": "node --experimental-strip-types iwa/build-bundle.mjs --unsigned-only",
@@ -26,7 +24,9 @@
     "iwa:update-id": "node --experimental-strip-types scripts/update-webbundle-id.mjs"
   },
   "dependencies": {
-    "ghostty-web": "github:rcarmo/ghostty-web#b6b243d7f380f8307e375719968f6046f1102c48",
+    "@wterm/core": "^0.3.0",
+    "@wterm/dom": "^0.3.0",
+    "@wterm/ghostty": "^0.3.0",
     "idb": "^8.0.3"
   },
   "devDependencies": {
