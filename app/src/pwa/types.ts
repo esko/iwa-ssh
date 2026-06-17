@@ -51,6 +51,7 @@ export type PwaConnectionSpec = {
   argstr?: string;
   profileId?: string;
   identityId?: string;
+  settingsProfileId?: string;
   startupCommand?: string;
   rawCommand?: string;
 };

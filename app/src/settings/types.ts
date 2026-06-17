@@ -92,6 +92,8 @@ export type Profile = {
   connectionArgs?: string;
   startupCommand?: string;
   terminalOverrides?: Partial<TerminalAppearance>;
+  /** Connection profiles use one settings profile (see pwa/settingsProfiles). */
+  settingsProfileId?: string;
   lastConnectedAt?: number;
 };
 

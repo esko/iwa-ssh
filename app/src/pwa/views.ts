@@ -1,116 +1,330 @@
-import { parseTerminalConnectionCommand } from '../connections/sshCommandParser';
 import type { Profile } from '../settings/types';
-import { deleteProfile, getProfile, listProfiles, saveProfile } from '../storage/indexedDb';
+import { deleteProfile, listProfiles, saveProfile } from '../storage/indexedDb';
 import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
 import { GhosttyTerminalAdapter, ensureGhosttyReady } from './ghosttyAdapter';
 import { loadCustomFont, loadPwaSettings, normalizePwaSettings, savePwaSettings, applyPwaAppearance } from './settings';
-import { loadRecentConnections, profileToSpec, recordConnection, specFromQuery, specTitle, specToQuery } from './profileModel';
+import { getThemePalette, THEME_PRESETS } from './themes';
+import { loadSettingsProfiles, createSettingsProfile } from './settingsProfiles';
+import { profileToSpec, recordConnection, specFromQuery, specToQuery } from './profileModel';
 import { shouldPassThroughSystemShortcut } from './shortcuts';
+import { showContextMenu, type ContextMenuItem } from './contextMenu';
 import { createTransport, type TerminalTransport } from './transport';
-import type { TerminalTransportStatus } from './types';
+import type { PwaConnectionSpec, TerminalTransportStatus } from './types';
 
 let activeTransport: TerminalTransport | null = null;
 let activeTerminal: GhosttyTerminalAdapter | null = null;
+let activeSpec: PwaConnectionSpec | null = null;
+
+// ----------------------------------------------------------------- helpers --
+
+function elFromHTML(html: string): HTMLElement {
+  const template = document.createElement('template');
+  template.innerHTML = html.trim();
+  return template.content.firstElementChild as HTMLElement;
+}
+
+function navigate(url: string): void {
+  window.location.assign(url);
+}
+
+function openWindow(url: string): void {
+  window.open(url, '_blank', 'noopener');
+}
+
+/** Drive the PWA/IWA toolbar color to match the active terminal background. */
+function setThemeColor(color: string): void {
+  let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (!meta) {
+    meta = document.createElement('meta');
+    meta.name = 'theme-color';
+    document.head.append(meta);
+  }
+  meta.content = color;
+}
+
+function connectionTarget(spec: PwaConnectionSpec): string {
+  const user = spec.username ? `${spec.username}@` : '';
+  const port = spec.port && spec.port !== 22 ? `:${spec.port}` : '';
+  return `${user}${spec.hostname}${port}`;
+}
+
+function openOverlay(build: (close: () => void) => HTMLElement): void {
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  const onKey = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') close();
+  };
+  function close(): void {
+    overlay.remove();
+    window.removeEventListener('keydown', onKey, true);
+  }
+  overlay.addEventListener('pointerdown', (event) => {
+    if (event.target === overlay) close();
+  });
+  window.addEventListener('keydown', onKey, true);
+  overlay.append(build(close));
+  document.body.append(overlay);
+}
+
+// -------------------------------------------------------------------- home --
 
 export async function renderHome(root: HTMLElement): Promise<void> {
-  const [profiles, diagnostics] = await Promise.all([listProfiles(), readDiagnostics()]);
-  const recents = loadRecentConnections();
+  setThemeColor('#000000');
+  document.title = 'iwa-ssh';
+  const profiles = await listProfiles();
+
   root.innerHTML = `
-    <header class="topbar">
-      <div class="brand">iwa-ssh</div>
-      <a class="toolbar-button" href="/terminal.html" target="_blank" rel="noopener" title="New terminal window" aria-label="New terminal window">+</a>
-    </header>
-    <main class="home-grid">
-      <section class="panel launcher-panel">
-        <div class="panel-heading">
-          <h1>Profiles</h1>
-          <button class="primary-button" id="newProfile" type="button">New profile</button>
+    <div class="home">
+      <div>
+        <div class="home-head"><span class="section-label">Connections</span></div>
+        <div class="conn-list">
+          ${profiles.map(profileRow).join('')}
+          <button class="conn-row conn-add" type="button" data-new>
+            <span class="conn-target"><span class="plus">+</span>New connection</span>
+          </button>
         </div>
-        <form id="quickConnect" class="quick-connect">
-          <input id="quickCommand" name="command" type="text" autocomplete="off" spellcheck="false" placeholder="ssh user@host -p 22" />
-          <button class="primary-button" type="submit">Connect</button>
-        </form>
-        <div class="profile-list">
-          ${
-            profiles.length
-              ? profiles.map(profileCard).join('')
-              : '<p class="muted">No profiles yet. Create one or use quick connect.</p>'
-          }
-        </div>
-      </section>
-      <section class="panel">
-        <h2>Recent</h2>
-        <div class="recent-list">
-          ${
-            recents.length
-              ? recents
-                  .map(
-                    (recent) => `
-                      <button class="recent-row" type="button" data-spec="${escapeHTML(specToQuery(recent))}">
-                        <span>${escapeHTML(recent.title)}</span>
-                        <small>${escapeHTML(formatTime(recent.connectedAt))}</small>
-                      </button>
-                    `,
-                  )
-                  .join('')
-              : '<p class="muted">Recent connections appear here after launch.</p>'
-          }
-        </div>
-      </section>
-      <section class="panel settings-panel">
-        ${settingsFormMarkup()}
-      </section>
-      <section class="panel diagnostics-panel">
-        <h2>IWA readiness</h2>
-        <dl class="diagnostic-list">
-          ${diagnosticRow('Cross-origin isolated', diagnostics.crossOriginIsolated)}
-          ${diagnosticRow('Direct Sockets', diagnostics.directSockets)}
-          ${diagnosticRow('Private/UDP sockets', diagnostics.directSocketsPrivate)}
-          ${diagnosticRow('nassh/wassh assets', diagnostics.upstreamAssets)}
-          ${diagnosticRow('Launch queue', diagnostics.launchQueue)}
-          ${diagnosticRow('Tabbed display mode', diagnostics.tabbedDisplayMode)}
-        </dl>
-      </section>
-    </main>
-    <dialog id="profileDialog" class="profile-dialog">
-      ${profileFormMarkup()}
-    </dialog>
+      </div>
+      <div class="home-foot">
+        <button class="link-quiet" type="button" data-settings>Settings</button>
+      </div>
+    </div>
   `;
 
-  requiredElement<HTMLFormElement>('#quickConnect', root).addEventListener('submit', (event) => {
-    event.preventDefault();
-    const input = requiredElement<HTMLInputElement>('#quickCommand', root).value;
-    const spec = parseTerminalConnectionCommand(input);
-    if (!spec) return;
-    openSession(`/terminal.html?${specToQuery(spec)}`);
-  });
-
-  root.querySelectorAll<HTMLElement>('[data-launch-id]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const profile = profiles.find((item) => item.id === button.dataset.launchId);
-      if (!profile) return;
-      openSession(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
+  root.querySelectorAll<HTMLElement>('[data-launch-id]').forEach((rowEl) => {
+    rowEl.addEventListener('click', () => {
+      const profile = profiles.find((item) => item.id === rowEl.dataset.launchId);
+      if (profile) navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
+    });
+    rowEl.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      const profile = profiles.find((item) => item.id === rowEl.dataset.launchId);
+      if (profile) showProfileMenu(event, profile, root);
     });
   });
 
-  root.querySelectorAll<HTMLElement>('[data-delete-id]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const profile = profiles.find((item) => item.id === button.dataset.deleteId);
-      if (!profile) return;
-      if (!window.confirm(`Delete profile "${profile.name}"?`)) return;
-      await deleteProfile(profile.id);
-      await renderHome(root);
-    });
-  });
-
-  root.querySelectorAll<HTMLElement>('[data-spec]').forEach((button) => {
-    button.addEventListener('click', () => openSession(`/terminal.html?${button.dataset.spec ?? ''}`));
-  });
-
-  wireSettingsForm(root);
-  wireProfileDialog(root);
+  requiredElement<HTMLButtonElement>('[data-new]', root).addEventListener('click', () => openConnectionForm());
+  requiredElement<HTMLButtonElement>('[data-settings]', root).addEventListener('click', () => openSettings());
 }
+
+function profileRow(profile: Profile): string {
+  const target = connectionTarget(profileToSpec(profile));
+  const meta = profile.lastConnectedAt ? formatTime(profile.lastConnectedAt) : 'ssh';
+  return `
+    <button class="conn-row" type="button" data-launch-id="${escapeHTML(profile.id)}">
+      <span class="conn-target">${escapeHTML(target)}</span>
+      <span class="conn-meta">${escapeHTML(meta)}</span>
+    </button>
+  `;
+}
+
+function showProfileMenu(event: MouseEvent, profile: Profile, root: HTMLElement): void {
+  const items: ContextMenuItem[] = [
+    { type: 'item', label: 'Open', onSelect: () => navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`) },
+    { type: 'item', label: 'Open in new window', onSelect: () => openWindow(`/terminal.html?${specToQuery(profileToSpec(profile))}`) },
+    { type: 'separator' },
+    {
+      type: 'item',
+      label: 'Delete',
+      onSelect: async () => {
+        await deleteProfile(profile.id);
+        await renderHome(root);
+      },
+    },
+  ];
+  showContextMenu(event.clientX, event.clientY, items);
+}
+
+// -------------------------------------------------------- connection form --
+
+function openConnectionForm(): void {
+  openOverlay((close) => {
+    const modal = elFromHTML(`
+      <div class="modal">
+        <h2>New connection</h2>
+        <form id="connForm">
+          <label class="field"><span>address</span><input name="host" placeholder="192.168.1.60" autocomplete="off" spellcheck="false" required></label>
+          <div class="field-row">
+            <label class="field"><span>user</span><input name="user" placeholder="esko" autocomplete="off" spellcheck="false" required></label>
+            <label class="field"><span>port</span><input name="port" type="number" min="1" max="65535" value="22"></label>
+          </div>
+          <label class="field"><span>ssh key — optional</span><textarea name="key" placeholder="paste a private key, or choose a file" spellcheck="false"></textarea></label>
+          <div class="actions">
+            <button type="button" class="btn-ghost" data-cancel>Cancel</button>
+            <button type="submit" class="btn">Connect</button>
+          </div>
+        </form>
+      </div>
+    `);
+    modal.querySelector<HTMLButtonElement>('[data-cancel]')?.addEventListener('click', close);
+    modal.querySelector<HTMLFormElement>('#connForm')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const data = new FormData(event.currentTarget as HTMLFormElement);
+      const host = String(data.get('host') ?? '').trim();
+      const user = String(data.get('user') ?? '').trim();
+      const port = Number(data.get('port') ?? 22) || 22;
+      if (!host || !user) return;
+      // Persist as a connection profile (key handling wired later).
+      const profile: Profile = { id: crypto.randomUUID(), name: `${user}@${host}`, protocol: 'ssh', host, port, username: user };
+      await saveProfile(profile);
+      navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
+    });
+    return modal;
+  });
+}
+
+// ------------------------------------------------------------- settings ----
+
+type SettingsTab = 'appearance' | 'keyboard' | 'behavior' | 'about';
+const TABS: { id: SettingsTab; label: string }[] = [
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'keyboard', label: 'Keyboard' },
+  { id: 'behavior', label: 'Behavior' },
+  { id: 'about', label: 'About' },
+];
+
+export function openSettings(initial: SettingsTab = 'appearance'): void {
+  openOverlay((close) => {
+    const profiles = loadSettingsProfiles();
+    const pills = profiles
+      .map((p, i) => `<button class="sp-pill" type="button" data-pill="${escapeHTML(p.id)}" aria-selected="${i === 0}">${escapeHTML(p.name)}</button>`)
+      .join('');
+
+    const modal = elFromHTML(`
+      <div class="modal modal-wide">
+        <div class="settings">
+          <aside class="settings-aside">
+            <h2 class="aside-title">Settings</h2>
+            <span class="aside-label">Profile</span>
+            ${pills}
+            <button class="sp-new" type="button" data-add-profile><span class="plus" style="width:20px;height:20px;border:1px solid var(--line-2);border-radius:5px;display:inline-grid;place-items:center">+</span>New profile</button>
+          </aside>
+          <div class="settings-main">
+            <button class="settings-close" type="button" data-close aria-label="Close settings">×</button>
+            <div class="tabs">
+              ${TABS.map((t) => `<button class="tab" type="button" role="tab" data-tab="${t.id}" aria-selected="${t.id === initial}">${t.label}</button>`).join('')}
+            </div>
+            <div class="settings-body" data-body></div>
+          </div>
+        </div>
+      </div>
+    `);
+
+    const body = modal.querySelector<HTMLElement>('[data-body]')!;
+    const select = (tab: SettingsTab): void => {
+      modal.querySelectorAll<HTMLElement>('[data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+      renderSettingsTab(body, tab);
+    };
+    modal.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((b) => b.addEventListener('click', () => select(b.dataset.tab as SettingsTab)));
+    modal.querySelectorAll<HTMLButtonElement>('[data-pill]').forEach((b) =>
+      b.addEventListener('click', () => {
+        modal.querySelectorAll<HTMLElement>('[data-pill]').forEach((p) => p.setAttribute('aria-selected', String(p === b)));
+      }),
+    );
+    modal.querySelector<HTMLButtonElement>('[data-close]')?.addEventListener('click', close);
+    modal.querySelector<HTMLButtonElement>('[data-add-profile]')?.addEventListener('click', () => {
+      const name = window.prompt('Name this settings profile', 'Work');
+      if (name) {
+        createSettingsProfile(name);
+        close();
+        openSettings(initial);
+      }
+    });
+    select(initial);
+    return modal;
+  });
+}
+
+function renderSettingsTab(body: HTMLElement, tab: SettingsTab): void {
+  if (tab === 'appearance') return renderAppearanceTab(body);
+  if (tab === 'about') return void renderAboutTab(body);
+  const note =
+    tab === 'keyboard'
+      ? 'Copy/paste, tab, and modifier behavior live here. The terminal already passes Ctrl+T and Ctrl+W through to ChromeOS.'
+      : 'Reconnect-on-disconnect and close confirmation live here.';
+  body.innerHTML = `<p class="placeholder-note">${note} Controls land with the settings-profile wiring.</p>`;
+}
+
+function setRow(label: string, control: string, hint?: string): string {
+  return `<div class="set-row">
+    <div><div class="set-label">${label}</div>${hint ? `<span class="set-hint">${hint}</span>` : ''}</div>
+    <div class="control">${control}</div>
+  </div>`;
+}
+
+function renderAppearanceTab(body: HTMLElement): void {
+  const s = loadPwaSettings();
+  const opts = (values: (string | number)[], current: string | number): string =>
+    values.map((v) => `<option value="${v}"${String(v) === String(current) ? ' selected' : ''}>${v}</option>`).join('');
+
+  const swatches = [...THEME_PRESETS.entries()]
+    .map(([id, p]) => {
+      // A tiny faux terminal so the palette previews the way it will actually read.
+      const chip = `<span class="theme-chip" style="background:${p.background};color:${p.foreground}"><span style="color:${p.green}">esko</span>@<span style="color:${p.blue}">host</span> $ ls
+<span style="color:${p.blue}">src</span>  <span style="color:${p.cyan}">dist</span>  <span style="color:${p.yellow}">build</span>
+README  <span style="color:${p.magenta}">.env</span></span>`;
+      return `<button class="theme-swatch" type="button" data-theme="${id}" aria-selected="${s.theme.preset === id}">
+        ${chip}
+        <span class="theme-name">${escapeHTML(p.name)}</span>
+      </button>`;
+    })
+    .join('');
+
+  body.innerHTML = `
+    <div class="group-title">Theme</div>
+    <div class="theme-grid">${swatches}</div>
+    <div class="group-title">Text</div>
+    ${setRow('Font family', `<input name="fontFamily" value="${escapeHTML(s.fontFamily)}">`)}
+    ${setRow('Size', `<select class="control-narrow" name="fontSize">${opts([11, 12, 13, 14, 15, 16, 18, 20, 22], s.fontSize)}</select>`)}
+    ${setRow('Cursor', `<select name="cursorStyle">${opts(['block', 'bar', 'underline'], s.cursorStyle)}</select>`)}
+    ${setRow('Cursor blink', `<select name="cursorBlink">${opts(['on', 'off'], s.cursorBlink ? 'on' : 'off')}</select>`)}
+    <div class="group-title">Window</div>
+    ${setRow('Padding', `<select class="control-narrow" name="terminalPadding">${opts([0, 4, 8, 12, 16, 24], s.terminalPadding)}</select>`, 'Space around the terminal canvas')}
+    ${setRow('Scrollback', `<select name="scrollback">${opts([1000, 5000, 10000, 20000], s.scrollback)}</select>`)}
+  `;
+
+  body.querySelectorAll<HTMLButtonElement>('[data-theme]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const preset = btn.dataset.theme!;
+      savePwaSettings(normalizePwaSettings({ ...loadPwaSettings(), theme: { preset } }));
+      body.querySelectorAll<HTMLElement>('[data-theme]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.theme === preset)));
+    }),
+  );
+  body.querySelectorAll<HTMLElement>('input, select').forEach((field) =>
+    field.addEventListener('change', () => {
+      const get = (n: string): string => body.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="${n}"]`)?.value ?? '';
+      savePwaSettings(
+        normalizePwaSettings({
+          ...loadPwaSettings(),
+          fontFamily: get('fontFamily'),
+          fontSize: Number(get('fontSize')),
+          cursorStyle: get('cursorStyle'),
+          cursorBlink: get('cursorBlink') === 'on',
+          terminalPadding: Number(get('terminalPadding')),
+          scrollback: Number(get('scrollback')),
+        }),
+      );
+    }),
+  );
+}
+
+async function renderAboutTab(body: HTMLElement): Promise<void> {
+  body.innerHTML = '<div class="group-title">Readiness</div><div data-diag></div>';
+  const diag = await readDiagnostics();
+  const rows: [string, boolean][] = [
+    ['Cross-origin isolated', diag.crossOriginIsolated],
+    ['Direct Sockets', diag.directSockets],
+    ['Private / UDP sockets', diag.directSocketsPrivate],
+    ['nassh / wassh assets', diag.upstreamAssets],
+    ['Tabbed display mode', diag.tabbedDisplayMode],
+  ];
+  const host = body.querySelector<HTMLElement>('[data-diag]')!;
+  host.innerHTML = rows
+    .map(([label, ok]) => `<div class="diag-row"><span>${label}</span><span class="${ok ? 'ok' : 'bad'}">${ok ? 'Ready' : 'Unavailable'}</span></div>`)
+    .join('');
+}
+
+// ---------------------------------------------------------------- terminal --
 
 export async function renderTerminal(root: HTMLElement): Promise<void> {
   const query = new URLSearchParams(window.location.search);
@@ -119,241 +333,128 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
     const profile = (await listProfiles()).find((item) => item.id === query.get('profile'));
     if (profile) spec = profileToSpec(profile);
   }
-
   if (!spec) {
     renderTerminalConnect(root);
     return;
   }
+  activeSpec = spec;
 
   const settings = loadPwaSettings();
   applyPwaAppearance(settings);
   await loadCustomFont(settings);
   await ensureGhosttyReady();
 
-  document.title = `${specTitle(spec)} - iwa-ssh`;
+  const palette = getThemePalette(settings.theme);
+  setThemeColor(palette.background);
+  document.documentElement.style.setProperty('--term-bg', palette.background);
+  document.title = connectionTarget(spec);
+
   root.innerHTML = `
-    <header class="topbar terminal-topbar">
-      <a class="brand" href="/">iwa-ssh</a>
-      <div class="terminal-title">${escapeHTML(specTitle(spec))}</div>
-      <div id="status" class="status" data-state="connecting">Connecting</div>
-      <button id="reconnect" class="toolbar-button" type="button" title="Reconnect" aria-label="Reconnect">r</button>
-    </header>
-    <main id="terminal" class="terminal-root" aria-label="Terminal"></main>
+    <main id="terminal" class="term-full" aria-label="Terminal"></main>
+    <div id="status" class="term-status" data-state="connecting" data-show="true">connecting…</div>
   `;
 
   const terminalRoot = requiredElement<HTMLElement>('#terminal', root);
   const status = requiredElement<HTMLElement>('#status', root);
-  const updateStatus = (state: TerminalTransportStatus, error?: string) => {
+  let hideTimer = 0;
+  const updateStatus = (state: TerminalTransportStatus, error?: string): void => {
     status.dataset.state = state;
     status.textContent = error ? `${state}: ${error}` : state;
+    status.dataset.show = state === 'connected' ? 'false' : 'true';
+    document.title = state === 'error' ? `✗ ${connectionTarget(spec!)}` : connectionTarget(spec!);
+    window.clearTimeout(hideTimer);
+    if (state === 'connected') hideTimer = window.setTimeout(() => (status.dataset.show = 'false'), 600);
   };
 
   activeTerminal = new GhosttyTerminalAdapter(settings);
   activeTerminal.open(terminalRoot);
   activeTransport = createTransport(spec, updateStatus);
   installShortcutPassThrough();
+  installTerminalContextMenu(terminalRoot);
   await recordConnection(spec);
   await activeTransport.connect(activeTerminal);
+}
 
-  requiredElement<HTMLButtonElement>('#reconnect', root).addEventListener('click', async () => {
-    activeTerminal?.write('\x1b[2J\x1b[H');
-    await activeTransport?.disconnect();
-    await activeTransport?.connect(activeTerminal!);
+function installTerminalContextMenu(terminalRoot: HTMLElement): void {
+  terminalRoot.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    const hasSelection = activeTerminal?.hasSelection() ?? false;
+    const items: ContextMenuItem[] = [
+      { type: 'item', label: 'Copy', key: '⌃⇧C', disabled: !hasSelection, onSelect: copySelection },
+      { type: 'item', label: 'Paste', key: '⌃⇧V', onSelect: pasteClipboard },
+      { type: 'item', label: 'Copy path', onSelect: copyPath },
+      { type: 'separator' },
+      { type: 'item', label: 'New window', onSelect: () => openWindow('/') },
+      { type: 'item', label: 'Duplicate session', onSelect: duplicateSession },
+      { type: 'item', label: 'Reconnect', onSelect: reconnect },
+      { type: 'separator' },
+      { type: 'item', label: 'Settings', onSelect: () => openSettings() },
+    ];
+    showContextMenu(event.clientX, event.clientY, items);
   });
+}
+
+function copySelection(): void {
+  const text = activeTerminal?.getSelection();
+  if (text) void navigator.clipboard.writeText(text).catch(() => undefined);
+}
+
+function pasteClipboard(): void {
+  void navigator.clipboard
+    .readText()
+    .then((text) => activeTerminal?.paste(text))
+    .catch(() => undefined);
+}
+
+function copyPath(): void {
+  const path = activeTerminal?.getCwd() ?? (activeSpec ? connectionTarget(activeSpec) : '');
+  if (path) void navigator.clipboard.writeText(path).catch(() => undefined);
+}
+
+function duplicateSession(): void {
+  if (activeSpec) openWindow(`/terminal.html?${specToQuery(activeSpec)}`);
+}
+
+async function reconnect(): Promise<void> {
+  if (!activeTransport || !activeTerminal) return;
+  activeTerminal.write('\x1b[2J\x1b[H');
+  await activeTransport.disconnect();
+  await activeTransport.connect(activeTerminal);
 }
 
 function renderTerminalConnect(root: HTMLElement): void {
+  setThemeColor('#000000');
+  document.title = 'iwa-ssh';
   root.innerHTML = `
-    <header class="topbar">
-      <a class="brand" href="/">iwa-ssh</a>
-      <div class="status" data-state="idle">No connection</div>
-    </header>
-    <main class="connect-page">
-      <form id="terminalConnect" class="panel quick-connect terminal-connect">
-        <h1>Connect</h1>
-        <input id="terminalCommand" name="command" type="text" autocomplete="off" spellcheck="false" placeholder="ssh user@host -p 22" autofocus />
-        <div class="button-row">
-          <button class="primary-button" type="submit">Connect</button>
-          <button class="secondary-button" type="button" id="echoSmoke">Echo smoke</button>
-        </div>
+    <div class="connect-page">
+      <form id="terminalConnect">
+        <div class="home-head"><span class="section-label">Connect</span></div>
+        <label class="field"><span>address</span><input id="terminalCommand" name="host" placeholder="user@192.168.1.60" autocomplete="off" spellcheck="false" autofocus></label>
+        <div class="actions"><button class="btn" type="submit">Connect</button></div>
       </form>
-    </main>
+    </div>
   `;
   requiredElement<HTMLFormElement>('#terminalConnect', root).addEventListener('submit', (event) => {
     event.preventDefault();
-    const input = requiredElement<HTMLInputElement>('#terminalCommand', root).value;
-    const spec = parseTerminalConnectionCommand(input);
-    if (!spec) return;
-    navigate(`/terminal.html?${specToQuery(spec)}`);
-  });
-  requiredElement<HTMLButtonElement>('#echoSmoke', root).addEventListener('click', () => {
-    navigate('/terminal.html?protocol=echo&host=local&username=smoke');
-  });
-}
-
-function profileCard(profile: Profile): string {
-  const spec = profileToSpec(profile);
-  return `
-    <div class="profile-card">
-      <button class="profile-card-launch" type="button" data-launch-id="${escapeHTML(profile.id)}">
-        <strong>${escapeHTML(profile.name)}</strong>
-        <span>${escapeHTML(specTitle(spec))}</span>
-        <small>${escapeHTML(formatTime(profile.lastConnectedAt))}</small>
-      </button>
-      <div class="profile-card-actions">
-        <button class="icon-button" type="button" data-edit-id="${escapeHTML(profile.id)}" title="Edit profile" aria-label="Edit profile">Edit</button>
-        <button class="icon-button" type="button" data-delete-id="${escapeHTML(profile.id)}" title="Delete profile" aria-label="Delete profile">Delete</button>
-      </div>
-    </div>
-  `;
-}
-
-function profileFormMarkup(profile?: Profile): string {
-  const value = (raw: string | undefined): string => (raw ? escapeHTML(raw) : '');
-  return `
-    <form id="profileForm" method="dialog">
-      <h2>${profile ? 'Edit profile' : 'New profile'}</h2>
-      <input type="hidden" name="id" value="${profile ? escapeHTML(profile.id) : ''}" />
-      <label>Name<input name="name" required value="${value(profile?.name)}" /></label>
-      <label>Protocol
-        <select name="protocol">
-          <option value="ssh"${profile?.protocol === 'mosh' ? '' : ' selected'}>SSH</option>
-          <option value="mosh"${profile?.protocol === 'mosh' ? ' selected' : ''}>Mosh</option>
-        </select>
-      </label>
-      <label>Host<input name="host" required value="${value(profile?.host)}" /></label>
-      <label>Port<input name="port" type="number" min="1" max="65535" value="${profile?.port ?? 22}" /></label>
-      <label>Username<input name="username" required value="${value(profile?.username)}" /></label>
-      <label>SSH arguments<input name="connectionArgs" placeholder="-o ServerAliveInterval=30" value="${value(profile?.connectionArgs)}" /></label>
-      <label>Startup command<input name="startupCommand" value="${value(profile?.startupCommand)}" /></label>
-      <div class="dialog-actions">
-        <button class="secondary-button" value="cancel">Cancel</button>
-        <button class="primary-button" value="save">Save</button>
-      </div>
-    </form>
-  `;
-}
-
-function settingsFormMarkup(): string {
-  const settings = loadPwaSettings();
-  return `
-    <form id="settingsForm">
-      <h2>Settings</h2>
-      <label>Font family<input name="fontFamily" value="${escapeHTML(settings.fontFamily)}" /></label>
-      <label>Custom font name<input name="customFontName" value="${escapeHTML(settings.customFontName)}" placeholder="JetBrainsMono Nerd Font" /></label>
-      <label>Custom font URL<input name="customFontUrl" value="${escapeHTML(settings.customFontUrl)}" placeholder="https://… .woff2" /></label>
-      <label>Font size<input name="fontSize" type="number" min="12" max="22" value="${settings.fontSize}" /></label>
-      <label>Scrollback
-        <select name="scrollback">
-          ${[1000, 5000, 10000, 20000].map((value) => `<option value="${value}"${settings.scrollback === value ? ' selected' : ''}>${value}</option>`).join('')}
-        </select>
-      </label>
-      <label>Theme
-        <select name="theme">
-          ${['dark', 'highContrast', 'soft', 'light', 'tokyoNight', 'dracula'].map((value) => `<option value="${value}"${settings.theme.preset === value ? ' selected' : ''}>${value}</option>`).join('')}
-        </select>
-      </label>
-      <label>Cursor style
-        <select name="cursorStyle">
-          ${['block', 'bar', 'underline'].map((value) => `<option value="${value}"${settings.cursorStyle === value ? ' selected' : ''}>${value}</option>`).join('')}
-        </select>
-      </label>
-      <label class="checkbox-label"><input type="checkbox" name="cursorBlink"${settings.cursorBlink ? ' checked' : ''} /> Cursor blink</label>
-      <label>Terminal padding<input name="terminalPadding" type="number" min="0" max="32" value="${settings.terminalPadding}" /></label>
-      <button class="secondary-button" type="submit">Save settings</button>
-    </form>
-  `;
-}
-
-function wireSettingsForm(root: HTMLElement): void {
-  requiredElement<HTMLFormElement>('#settingsForm', root).addEventListener('submit', (event) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget as HTMLFormElement);
-    const current = loadPwaSettings();
-    savePwaSettings(
-      normalizePwaSettings({
-        ...current,
-        fontFamily: String(data.get('fontFamily') ?? current.fontFamily),
-        fontSize: Number(data.get('fontSize') ?? current.fontSize),
-        scrollback: Number(data.get('scrollback') ?? current.scrollback),
-        theme: { preset: String(data.get('theme') ?? current.theme.preset) },
-        cursorStyle: String(data.get('cursorStyle') ?? current.cursorStyle),
-        cursorBlink: data.get('cursorBlink') != null,
-        customFontName: String(data.get('customFontName') ?? current.customFontName),
-        customFontUrl: String(data.get('customFontUrl') ?? current.customFontUrl),
-        terminalPadding: Number(data.get('terminalPadding') ?? current.terminalPadding),
-      }),
-    );
-    void renderHome(root);
+    const raw = requiredElement<HTMLInputElement>('#terminalCommand', root).value.trim();
+    if (!raw) return;
+    const at = raw.includes('@') ? raw.split('@') : [undefined, raw];
+    const params = new URLSearchParams({ protocol: 'ssh', host: at[1] ?? raw });
+    if (at[0]) params.set('username', at[0]);
+    navigate(`/terminal.html?${params.toString()}`);
   });
 }
 
-function wireProfileDialog(root: HTMLElement): void {
-  const dialog = requiredElement<HTMLDialogElement>('#profileDialog', root);
-  const openDialog = (profile?: Profile): void => {
-    dialog.innerHTML = profileFormMarkup(profile);
-    dialog.showModal();
-  };
-
-  requiredElement<HTMLButtonElement>('#newProfile', root).addEventListener('click', () => openDialog());
-
-  root.querySelectorAll<HTMLElement>('[data-edit-id]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const profile = await getProfile(button.dataset.editId ?? '');
-      if (profile) openDialog(profile);
-    });
-  });
-
-  dialog.addEventListener('close', async () => {
-    if (dialog.returnValue !== 'save') return;
-    const data = new FormData(requiredElement<HTMLFormElement>('#profileForm', dialog));
-    const id = String(data.get('id') ?? '').trim();
-    const existing = id ? await getProfile(id) : undefined;
-    const profile: Profile = {
-      ...existing,
-      id: id || crypto.randomUUID(),
-      name: String(data.get('name') ?? '').trim(),
-      protocol: String(data.get('protocol') ?? 'ssh') === 'mosh' ? 'mosh' : 'ssh',
-      host: String(data.get('host') ?? '').trim(),
-      port: Number(data.get('port') ?? 22),
-      username: String(data.get('username') ?? '').trim(),
-      connectionArgs: String(data.get('connectionArgs') ?? '').trim() || undefined,
-      startupCommand: String(data.get('startupCommand') ?? '').trim() || undefined,
-    };
-    if (!profile.name || !profile.host || !profile.username) return;
-    await saveProfile(profile);
-    await renderHome(root);
-  });
-}
-
-function diagnosticRow(label: string, ok: boolean): string {
-  return `<div><dt>${escapeHTML(label)}</dt><dd data-ok="${ok}">${ok ? 'ready' : 'missing'}</dd></div>`;
-}
+// ------------------------------------------------------------------- misc --
 
 function installShortcutPassThrough(): void {
   document.addEventListener(
     'keydown',
     (event) => {
-      if (shouldPassThroughSystemShortcut(event)) {
-        event.stopImmediatePropagation();
-      }
+      if (shouldPassThroughSystemShortcut(event)) event.stopImmediatePropagation();
     },
     { capture: true },
   );
-}
-
-function navigate(url: string): void {
-  // Multi-page IWA: each route is its own document, so navigate for real.
-  window.location.assign(url);
-}
-
-// Interim model while native ChromeOS tabs are unavailable for IWAs (see
-// docs/adr/0007-one-session-per-window.md): launching from the home/launcher
-// opens each session in its own window, so the launcher persists. The
-// multi-page `/terminal.html` document is reused unchanged — if native tabs
-// become available for IWAs, the OS new-tab button can target it directly.
-function openSession(url: string): void {
-  window.open(url, '_blank', 'noopener');
 }
 
 export function disposeTerminal(): void {
@@ -362,4 +463,5 @@ export function disposeTerminal(): void {
   activeTerminal?.dispose();
   activeTransport = null;
   activeTerminal = null;
+  activeSpec = null;
 }

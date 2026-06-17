@@ -17,6 +17,8 @@ export class GhosttyTerminalAdapter implements TerminalAdapter {
   private readonly inputListeners = new Set<(data: string) => void>();
   private readonly resizeListeners = new Set<(cols: number, rows: number) => void>();
   private resizeObserver: ResizeObserver | null = null;
+  private cwd: string | null = null;
+  private readonly decoder = new TextDecoder();
 
   constructor(settings: PwaTerminalSettings) {
     this.terminal = new Terminal({
@@ -47,7 +49,36 @@ export class GhosttyTerminalAdapter implements TerminalAdapter {
   }
 
   write(data: string | Uint8Array): void {
+    this.captureCwd(typeof data === 'string' ? data : this.decoder.decode(data, { stream: true }));
     this.terminal.write(data);
+  }
+
+  paste(data: string): void {
+    this.terminal.paste(data);
+  }
+
+  getSelection(): string {
+    return this.terminal.getSelection();
+  }
+
+  hasSelection(): boolean {
+    return this.terminal.hasSelection();
+  }
+
+  /** Remote working directory reported via OSC 7, if the shell emits it. */
+  getCwd(): string | null {
+    return this.cwd;
+  }
+
+  // OSC 7: ESC ] 7 ; file://host/path  (BEL | ST). Shells emit this to report cwd.
+  private captureCwd(data: string): void {
+    const match = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*)(?:\x07|\x1b\\)/.exec(data);
+    if (!match) return;
+    try {
+      this.cwd = decodeURIComponent(match[1]);
+    } catch {
+      this.cwd = match[1];
+    }
   }
 
   onInput(cb: (data: string) => void): TerminalSubscription {
