@@ -1,0 +1,51 @@
+{
+  "name": "@eslzzyl/restty",
+  "version": "0.1.37",
+  "description": "Browser terminal rendering library powered by WASM, WebGPU/WebGL2, and TypeScript text shaping.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/restty.js",
+      "default": "./dist/restty.js"
+    },
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "import": "./dist/internal.js",
+      "default": "./dist/internal.js"
+    },
+    "./xterm": {
+      "types": "./dist/xterm.d.ts",
+      "import": "./dist/xterm.js",
+      "default": "./dist/xterm.js"
+    },
+    "./esm": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/restty.esm.js",
+      "default": "./dist/restty.esm.js"
+    },
+    "./esm/internal": {
+      "types": "./dist/internal.d.ts",
+      "import": "./dist/internal.esm.js",
+      "default": "./dist/internal.esm.js"
+    },
+    "./esm/xterm": {
+      "types": "./dist/xterm.d.ts",
+      "import": "./dist/xterm.esm.js",
+      "default": "./dist/xterm.esm.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "text-shaper": "0.1.22"
+  },
+  "resttyVendor": {
+    "source": "@eslzzyl/restty@0.1.37",
+    "commit": "cb79ed540f76a3b38da05cf8dae8fc3d58ee67e0"
+  }
+}

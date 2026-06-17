@@ -5,6 +5,7 @@ import { cacheIdentityPassphrase } from '../ssh/IdentityPassphrase';
 import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
 import { WtermTerminalAdapter } from './wtermAdapter';
+import { ResttyTerminalAdapter } from './resttyAdapter';
 import { loadCustomFont, normalizePwaSettings, applyPwaAppearance } from './settings';
 import { getThemePalette, THEME_PRESETS } from './themes';
 import {
@@ -24,7 +25,7 @@ import { createTransport, type TerminalTransport } from './transport';
 import type { PwaConnectionSpec, TerminalTransportStatus } from './types';
 
 let activeTransport: TerminalTransport | null = null;
-let activeTerminal: WtermTerminalAdapter | null = null;
+let activeTerminal: WtermTerminalAdapter | ResttyTerminalAdapter | null = null;
 let activeSpec: PwaConnectionSpec | null = null;
 let reconnecting = false;
 
@@ -449,7 +450,15 @@ async function renderAboutTab(body: HTMLElement): Promise<void> {
     .join('');
 }
 
-// ---------------------------------------------------------------- terminal --
+function spikeUseRestty(query: URLSearchParams): boolean {
+  // SPIKE branch: restty is default; ?renderer=wterm opts back to wterm for comparison.
+  return query.get('renderer') !== 'wterm';
+}
+
+function appendSpikeRendererParams(params: URLSearchParams): void {
+  const renderer = new URLSearchParams(window.location.search).get('renderer');
+  if (renderer === 'wterm') params.set('renderer', 'wterm');
+}
 
 export async function renderTerminal(root: HTMLElement): Promise<void> {
   const query = new URLSearchParams(window.location.search);
@@ -481,6 +490,7 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
 
   const terminalRoot = requiredElement<HTMLElement>('#terminal', root);
   const status = requiredElement<HTMLElement>('#status', root);
+  if (query.get('debug') !== '0') installTerminalDebugHud(root, terminalRoot, status);
   let hideTimer = 0;
   let lastState: TerminalTransportStatus = 'idle';
   const updateStatus = (state: TerminalTransportStatus, error?: string): void => {
@@ -500,7 +510,12 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
     lastState = state;
   };
 
-  activeTerminal = await WtermTerminalAdapter.create(terminalRoot, settings);
+  // SPIKE: restty default on this branch; ?renderer=wterm forces wterm.
+  const useRestty = spikeUseRestty(query);
+  activeTerminal = useRestty
+    ? await ResttyTerminalAdapter.create(terminalRoot, settings)
+    : await WtermTerminalAdapter.create(terminalRoot, settings);
+  terminalRoot.dataset.renderer = useRestty ? 'restty' : 'wterm';
   activeTerminal.onTitle((value) => {
     document.title = value.trim() || title;
   });
@@ -509,6 +524,135 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
   installTerminalContextMenu(terminalRoot);
   await recordConnection(spec);
   await activeTransport.connect(activeTerminal);
+  activeTerminal.focus();
+  activeTerminal.fit();
+}
+
+function installTerminalDebugHud(
+  shell: HTMLElement,
+  terminalRoot: HTMLElement,
+  statusEl: HTMLElement,
+): void {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'term-debug-btn';
+  btn.textContent = 'dbg';
+  btn.setAttribute('aria-label', 'Toggle debug panel');
+  btn.setAttribute('aria-expanded', 'false');
+
+  const panel = document.createElement('div');
+  panel.className = 'term-debug-panel';
+  panel.hidden = true;
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 'term-debug-toolbar';
+
+  const refreshBtn = document.createElement('button');
+  refreshBtn.type = 'button';
+  refreshBtn.className = 'term-debug-action';
+  refreshBtn.textContent = 'Refresh';
+
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'term-debug-action';
+  copyBtn.textContent = 'Copy';
+
+  const probeBtn = document.createElement('button');
+  probeBtn.type = 'button';
+  probeBtn.className = 'term-debug-action';
+  probeBtn.textContent = 'DA probe';
+
+  const scrollBtn = document.createElement('button');
+  scrollBtn.type = 'button';
+  scrollBtn.className = 'term-debug-action';
+  scrollBtn.textContent = 'Scroll probe';
+
+  const body = document.createElement('pre');
+  body.className = 'term-debug-body';
+
+  toolbar.append(refreshBtn, probeBtn, scrollBtn, copyBtn);
+  panel.append(toolbar, body);
+  shell.append(btn, panel);
+
+  const renderBody = async (extra = ''): Promise<void> => {
+    try {
+      const diag = await readDiagnostics();
+      const canvas = terminalRoot.querySelector('canvas');
+      const size = activeTerminal?.getSize();
+      const win = window as unknown as {
+        __resttyBackend?: string;
+        __resttyPtyLog?: string[];
+        __resttyAdapter?: ResttyTerminalAdapter;
+        __resttyDebugLog?: { location: string; message: string; data: Record<string, unknown> }[];
+      };
+      const lines = [
+        `origin: ${location.origin}`,
+        `renderer: ${terminalRoot.dataset.renderer ?? '?'}`,
+        `backend: ${win.__resttyBackend ?? (terminalRoot.dataset.renderer === 'restty' ? 'pending' : 'n/a (wterm)')}`,
+        `canvas: ${canvas ? `${canvas.width}×${canvas.height} (client ${canvas.clientWidth}×${canvas.clientHeight})` : 'none'}`,
+        `wterm dom: ${terminalRoot.querySelector('.wterm') ? 'yes' : 'no'}`,
+        `term size: ${size ? `${size.cols}×${size.rows}` : '?'}`,
+        `transport: ${statusEl.dataset.state ?? '?'}`,
+        `crossOriginIsolated: ${diag.crossOriginIsolated}`,
+        `TCPSocket: ${diag.directSockets}`,
+        `upstream: ${diag.upstreamAssets}`,
+        `href: ${location.href}`,
+      ];
+      if (win.__resttyAdapter && terminalRoot.dataset.renderer === 'restty') {
+        lines.push(`restty debug: ${JSON.stringify(win.__resttyAdapter.getDebugSummary())}`);
+        const wheelLogs = (win.__resttyDebugLog ?? []).filter((e) => e.location.includes('wheel')).slice(-3);
+        if (wheelLogs.length) {
+          lines.push(`recent wheel: ${wheelLogs.map((e) => JSON.stringify(e.data)).join(' | ')}`);
+        }
+      }
+      if (extra) lines.push('', extra);
+      body.textContent = lines.join('\n');
+    } catch (error) {
+      body.textContent = `debug panel error: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  };
+
+  const probeDa = async (): Promise<string> => {
+    const win = window as unknown as {
+      __resttyAdapter?: ResttyTerminalAdapter;
+      __resttyPtyLog?: string[];
+    };
+    if (!win.__resttyAdapter) return 'DA probe: n/a (wterm or hook missing)';
+    const log: string[] = [];
+    const sub = win.__resttyAdapter.onInput((d) => log.push(d));
+    win.__resttyAdapter.write('\x1b[c');
+    win.__resttyAdapter.write('\x1b[6n');
+    await new Promise((r) => window.setTimeout(r, 400));
+    sub.dispose();
+    const merged = log.join('') + (win.__resttyPtyLog ?? []).join('');
+    const da = /\x1b\[\?[0-9;]*c/.test(merged);
+    const cpr = /\x1b\[[0-9]+;[0-9]+R/.test(merged);
+    return `DA probe: da=${da} cpr=${cpr}\n${JSON.stringify(merged)}`;
+  };
+
+  const setOpen = (open: boolean): void => {
+    panel.hidden = !open;
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) void renderBody();
+  };
+
+  btn.addEventListener('click', () => setOpen(panel.hidden));
+  refreshBtn.addEventListener('click', () => void renderBody());
+  copyBtn.addEventListener('click', () => {
+    const win = window as unknown as { __resttyDebugLog?: unknown[] };
+    const dbgLog = win.__resttyDebugLog?.length
+      ? `\n\n--- debug log ---\n${JSON.stringify(win.__resttyDebugLog, null, 2)}`
+      : '';
+    void navigator.clipboard.writeText((body.textContent ?? '') + dbgLog).catch(() => undefined);
+  });
+  probeBtn.addEventListener('click', () => {
+    void probeDa().then((result) => renderBody(result));
+  });
+  scrollBtn.addEventListener('click', () => {
+    const win = window as unknown as { __resttyAdapter?: ResttyTerminalAdapter };
+    win.__resttyAdapter?.probeScrollWheel();
+    void renderBody('Scroll probe: dispatched wheel on canvas after 80-line fill');
+  });
 }
 
 function installTerminalContextMenu(terminalRoot: HTMLElement): void {
@@ -549,7 +693,10 @@ function copyPath(): void {
 }
 
 function duplicateSession(): void {
-  if (activeSpec) openWindow(`/terminal.html?${specToQuery(activeSpec)}`);
+  if (!activeSpec) return;
+  const params = new URLSearchParams(specToQuery(activeSpec));
+  appendSpikeRendererParams(params);
+  openWindow(`/terminal.html?${params.toString()}`);
 }
 
 async function reconnect(): Promise<void> {
@@ -583,6 +730,7 @@ function renderTerminalConnect(root: HTMLElement): void {
     const at = raw.includes('@') ? raw.split('@') : [undefined, raw];
     const params = new URLSearchParams({ protocol: 'ssh', host: at[1] ?? raw });
     if (at[0]) params.set('username', at[0]);
+    appendSpikeRendererParams(params);
     navigate(`/terminal.html?${params.toString()}`);
   });
 }

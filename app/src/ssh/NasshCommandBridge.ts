@@ -3,7 +3,7 @@
  */
 
 import { log } from '../debug/logger';
-import type { TerminalAdapter } from '../terminal/TerminalAdapter';
+import type { TerminalAdapter, TerminalSubscription } from '../terminal/TerminalAdapter';
 import type { ConnectionStatus, SessionDisconnectReason, SessionStatusMeta } from '../settings/types';
 import type { NasshIoShimOptions } from './NasshIoShim';
 import { NasshIoShim } from './NasshIoShim';
@@ -61,6 +61,7 @@ async function loadNasshModules(): Promise<NasshCommandModule & NasshJsModule> {
 
 export class NasshCommandBridge {
   private adapter: TerminalAdapter | null = null;
+  private resizeSubscription: TerminalSubscription | null = null;
   private ioShim: NasshIoShim | null = null;
   private commandInstance: NasshCommandInstance | null = null;
   private attachOptions: NasshIoShimOptions | undefined;
@@ -74,8 +75,10 @@ export class NasshCommandBridge {
   constructor(private readonly options: NasshCommandBridgeOptions) {}
 
   attachTerminal(adapter: TerminalAdapter, options?: NasshIoShimOptions): void {
+    this.resizeSubscription?.dispose();
     this.adapter = adapter;
     this.attachOptions = options;
+    this.resizeSubscription = adapter.onResize((cols, rows) => this.resize(cols, rows));
   }
 
   resize(cols: number, rows: number): void {
@@ -314,6 +317,8 @@ export class NasshCommandBridge {
     this.commandInstance = null;
     this.ioShim?.dispose();
     this.ioShim = null;
+    this.resizeSubscription?.dispose();
+    this.resizeSubscription = null;
     this.hostKeyGuard?.reset();
     this.hostKeyGuard = null;
     this.options.onStatus?.('disconnected', undefined, {
@@ -327,6 +332,8 @@ export class NasshCommandBridge {
     this.commandInstance = null;
     this.ioShim?.dispose();
     this.ioShim = null;
+    this.resizeSubscription?.dispose();
+    this.resizeSubscription = null;
     this.hostKeyGuard = null;
     this.adapter = null;
   }
