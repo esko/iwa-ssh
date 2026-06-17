@@ -3,8 +3,11 @@ export type ContextMenuItem =
   | { type: 'separator' };
 
 let openMenu: HTMLElement | null = null;
+let cleanup: (() => void) | null = null;
 
 export function closeContextMenu(): void {
+  cleanup?.();
+  cleanup = null;
   openMenu?.remove();
   openMenu = null;
 }
@@ -41,8 +44,9 @@ export function showContextMenu(x: number, y: number, items: ContextMenuItem[]):
     }
     if (!item.disabled) {
       button.addEventListener('click', () => {
+        const run = item.onSelect;
         closeContextMenu();
-        item.onSelect();
+        run();
       });
     }
     menu.append(button);
@@ -54,23 +58,29 @@ export function showContextMenu(x: number, y: number, items: ContextMenuItem[]):
   menu.style.visibility = 'hidden';
   document.body.append(menu);
   const rect = menu.getBoundingClientRect();
-  menu.style.left = `${Math.min(x, window.innerWidth - rect.width - 6)}px`;
-  menu.style.top = `${Math.min(y, window.innerHeight - rect.height - 6)}px`;
+  menu.style.left = `${Math.max(6, Math.min(x, window.innerWidth - rect.width - 6))}px`;
+  menu.style.top = `${Math.max(6, Math.min(y, window.innerHeight - rect.height - 6))}px`;
   menu.style.visibility = 'visible';
   openMenu = menu;
 
-  const dismiss = (event: Event): void => {
-    if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
-    if (event.type === 'pointerdown' && menu.contains(event.target as Node)) return;
-    closeContextMenu();
-    window.removeEventListener('pointerdown', dismiss, true);
-    window.removeEventListener('keydown', dismiss, true);
-    window.removeEventListener('blur', dismiss, true);
+  // Dismiss on an outside press / Escape / blur. Capture-phase mousedown with a
+  // contains() guard keeps the menu alive long enough for an item's own click
+  // (mousedown inside → kept; mouseup → click → onSelect) while still closing
+  // when the press lands elsewhere.
+  const onMouseDown = (event: MouseEvent): void => {
+    if (!menu.contains(event.target as Node)) closeContextMenu();
   };
-  // Defer so the opening click doesn't immediately dismiss.
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') closeContextMenu();
+  };
+  cleanup = () => {
+    document.removeEventListener('mousedown', onMouseDown, true);
+    document.removeEventListener('keydown', onKeyDown, true);
+    window.removeEventListener('blur', closeContextMenu);
+  };
   setTimeout(() => {
-    window.addEventListener('pointerdown', dismiss, true);
-    window.addEventListener('keydown', dismiss, true);
-    window.addEventListener('blur', dismiss, true);
+    document.addEventListener('mousedown', onMouseDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('blur', closeContextMenu);
   });
 }

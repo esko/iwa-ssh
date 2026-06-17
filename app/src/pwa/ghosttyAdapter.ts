@@ -58,6 +58,12 @@ export class GhosttyTerminalAdapter implements TerminalAdapter {
     this.terminal.paste(data);
   }
 
+  /** Title set by the remote program via OSC 0/2 (e.g. "user@host: ~"). */
+  onTitle(cb: (title: string) => void): TerminalSubscription {
+    const sub = this.terminal.onTitleChange((title: string) => cb(title));
+    return { dispose: () => sub.dispose() };
+  }
+
   getSelection(): string {
     return this.terminal.getSelection();
   }

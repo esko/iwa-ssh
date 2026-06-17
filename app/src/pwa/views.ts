@@ -26,8 +26,11 @@ import type { PwaConnectionSpec, TerminalTransportStatus } from './types';
 let activeTransport: TerminalTransport | null = null;
 let activeTerminal: GhosttyTerminalAdapter | null = null;
 let activeSpec: PwaConnectionSpec | null = null;
+let reconnecting = false;
 
 // ----------------------------------------------------------------- helpers --
+
+const GEAR_SVG = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
 
 function elFromHTML(html: string): HTMLElement {
   const template = document.createElement('template');
@@ -110,16 +113,16 @@ export async function renderHome(root: HTMLElement): Promise<void> {
   root.innerHTML = `
     <div class="home">
       <div>
-        <div class="home-head"><span class="section-label">Connections</span></div>
+        <div class="home-head">
+          <span class="section-label">Connections</span>
+          <button class="icon-btn" type="button" data-settings aria-label="Settings" title="Settings">${GEAR_SVG}</button>
+        </div>
         <div class="conn-list">
           ${profiles.map(profileRow).join('')}
           <button class="conn-row conn-add" type="button" data-new>
             <span class="conn-target"><span class="plus">+</span>New connection</span>
           </button>
         </div>
-      </div>
-      <div class="home-foot">
-        <button class="link-quiet" type="button" data-settings>Settings</button>
       </div>
     </div>
   `;
@@ -280,12 +283,13 @@ export function openSettings(initial: SettingsTab = 'appearance'): void {
             <span class="aside-label">Profile</span>
             ${pills}
             <button class="sp-new" type="button" data-add-profile><span class="plus" style="width:20px;height:20px;border:1px solid var(--line-2);border-radius:5px;display:inline-grid;place-items:center">+</span>New profile</button>
+            <div class="aside-sep"></div>
+            <nav class="aside-nav">
+              ${TABS.map((t) => `<button class="nav-item" type="button" role="tab" data-tab="${t.id}" aria-selected="${t.id === initial}">${t.label}</button>`).join('')}
+            </nav>
           </aside>
           <div class="settings-main">
             <button class="settings-close" type="button" data-close aria-label="Close settings">×</button>
-            <div class="tabs">
-              ${TABS.map((t) => `<button class="tab" type="button" role="tab" data-tab="${t.id}" aria-selected="${t.id === initial}">${t.label}</button>`).join('')}
-            </div>
             <div class="settings-body" data-body></div>
           </div>
         </div>
@@ -468,27 +472,40 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
   const palette = getThemePalette(settings.theme);
   setThemeColor(palette.background);
   document.documentElement.style.setProperty('--term-bg', palette.background);
-  document.title = connectionTarget(spec);
+  const title = connectionTarget(spec);
+  document.title = title;
 
   root.innerHTML = `
     <main id="terminal" class="term-full" aria-label="Terminal"></main>
-    <div id="status" class="term-status" data-state="connecting" data-show="true">connecting…</div>
+    <div id="status" class="term-status" data-state="connecting" data-show="true"><span class="status-state">connecting</span></div>
   `;
 
   const terminalRoot = requiredElement<HTMLElement>('#terminal', root);
   const status = requiredElement<HTMLElement>('#status', root);
   let hideTimer = 0;
+  let lastState: TerminalTransportStatus = 'idle';
   const updateStatus = (state: TerminalTransportStatus, error?: string): void => {
     status.dataset.state = state;
-    status.textContent = error ? `${state}: ${error}` : state;
     status.dataset.show = state === 'connected' ? 'false' : 'true';
-    document.title = state === 'error' ? `✗ ${connectionTarget(spec!)}` : connectionTarget(spec!);
+    status.innerHTML = `<span class="status-state">${state}</span>${error ? `<span class="status-detail">${escapeHTML(error)}</span>` : ''}`;
+    document.title = state === 'error' ? `${title} — error` : title;
     window.clearTimeout(hideTimer);
-    if (state === 'connected') hideTimer = window.setTimeout(() => (status.dataset.show = 'false'), 600);
+    if (state === 'connected') hideTimer = window.setTimeout(() => (status.dataset.show = 'false'), 700);
+    // Session ended — return to the launcher. Stay put on errors (so they can be
+    // read) and during reconnect's own disconnect/connect cycle.
+    if (state === 'disconnected' && !reconnecting && lastState !== 'error') {
+      window.setTimeout(() => {
+        if (!reconnecting) navigate('/');
+      }, 700);
+    }
+    lastState = state;
   };
 
   activeTerminal = new GhosttyTerminalAdapter(settings);
   activeTerminal.open(terminalRoot);
+  activeTerminal.onTitle((value) => {
+    document.title = value.trim() || title;
+  });
   activeTransport = createTransport(spec, updateStatus);
   installShortcutPassThrough();
   installTerminalContextMenu(terminalRoot);
@@ -508,6 +525,7 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
       { type: 'item', label: 'New window', onSelect: () => openWindow('/') },
       { type: 'item', label: 'Duplicate session', onSelect: duplicateSession },
       { type: 'item', label: 'Reconnect', onSelect: reconnect },
+      { type: 'item', label: 'Back to menu', onSelect: () => navigate('/') },
       { type: 'separator' },
       { type: 'item', label: 'Settings', onSelect: () => openSettings() },
     ];
@@ -538,9 +556,14 @@ function duplicateSession(): void {
 
 async function reconnect(): Promise<void> {
   if (!activeTransport || !activeTerminal) return;
-  activeTerminal.write('\x1b[2J\x1b[H');
-  await activeTransport.disconnect();
-  await activeTransport.connect(activeTerminal);
+  reconnecting = true;
+  try {
+    activeTerminal.write('\x1b[2J\x1b[H');
+    await activeTransport.disconnect();
+    await activeTransport.connect(activeTerminal);
+  } finally {
+    reconnecting = false;
+  }
 }
 
 function renderTerminalConnect(root: HTMLElement): void {
