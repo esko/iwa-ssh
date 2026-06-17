@@ -5,6 +5,7 @@
 ## What landed on this branch
 
 - Vendored `@eslzzyl/restty@0.1.37` (`vendor/restty/`, pin `cb79ed5`) — same as `/home/esko/github/restty`
+- **Note:** `vendor/restty/dist/` is gitignored (`dist/` rule). After clone run `node scripts/build-restty.mjs` (or `npm install` in a tree that already has dist) before `npm run dev`.
 - `ResttyTerminalAdapter` (`app/src/pwa/resttyAdapter.ts`) — default renderer on this branch; `?renderer=wterm` opts back
 - Loopback `ptyTransport` so DA/DSR replies reach SSH `onInput` (xterm shim routes PTY bytes only through transport when `isConnected()`)
 - Removed duplicate `term.onData` wiring (fixed doubled keypresses)
