@@ -110,7 +110,6 @@ function copyUpstreamDist(): Plugin {
   };
 }
 
-// xterm 6 is pre-minified; re-minifying breaks the bundle (xtermjs/xterm.js#5800).
 export default defineConfig({
   root: 'app',
   publicDir: 'public',
@@ -139,17 +138,7 @@ export default defineConfig({
         terminal: resolve(__dirname, 'app/terminal.html'),
       },
       external: (id) => id.startsWith('/upstream/'),
-      output: {
-        manualChunks(id) {
-          if (id.includes('@xterm/')) {
-            return 'xterm';
-          }
-        },
-      },
     },
-  },
-  optimizeDeps: {
-    exclude: ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links', '@xterm/addon-search', '@xterm/addon-clipboard'],
   },
   server: {
     host: DEV_HOST,

@@ -26,11 +26,6 @@
     "iwa:update-id": "node --experimental-strip-types scripts/update-webbundle-id.mjs"
   },
   "dependencies": {
-    "@xterm/addon-clipboard": "^0.3.0-beta.287",
-    "@xterm/addon-fit": "^0.12.0-beta.287",
-    "@xterm/addon-search": "^0.17.0-beta.287",
-    "@xterm/addon-web-links": "^0.13.0-beta.287",
-    "@xterm/xterm": "^6.1.0-beta.287",
     "ghostty-web": "github:rcarmo/ghostty-web#b6b243d7f380f8307e375719968f6046f1102c48",
     "idb": "^8.0.3"
   },

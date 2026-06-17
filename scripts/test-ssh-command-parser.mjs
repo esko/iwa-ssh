@@ -32,7 +32,6 @@ async function transpile(sourcePath, destName) {
 try {
   await transpile('app/src/connections/TerminalConnectionSpec.ts', 'TerminalConnectionSpec.mjs');
   await transpile('app/src/connections/sshCommandParser.ts', 'sshCommandParser.mjs');
-  await transpile('app/src/terminal/xtermOptions.ts', 'xtermOptions.mjs');
   await transpile('app/src/settings/themes.ts', 'themes.mjs');
   await transpile('app/src/settings/defaults.ts', 'defaults.mjs');
   await transpile('app/src/ssh/upstreamAssets.ts', 'upstreamAssets.mjs');
@@ -54,9 +53,6 @@ try {
     SCROLLBACK_MAX,
     SCROLLBACK_DEFAULT,
   } = await import(path.join(tempDir, 'defaults.mjs'));
-  const {
-    createXtermConstructorOptions,
-  } = await import(path.join(tempDir, 'xtermOptions.mjs'));
   const {
     themeToJson,
     validateThemeJson,
@@ -212,43 +208,6 @@ try {
   // Non-finite input (NaN/Infinity) falls back to the default.
   assert.equal(clampScrollback(NaN), SCROLLBACK_DEFAULT);
   assert.equal(clampScrollback(Infinity), SCROLLBACK_DEFAULT);
-
-  const appearance = {
-    fontFamily: '"JetBrainsMono Nerd Font", "Noto Sans Mono", monospace',
-    fontSize: 15,
-    lineHeight: 1.25,
-    letterSpacing: 0,
-    cursorStyle: 'bar',
-    cursorBlink: true,
-    boldTextEnabled: true,
-    bell: 'visual',
-    scrollbackLines: 50000,
-    themePreset: 'custom',
-    theme: {
-      background: '#000000',
-      foreground: '#ffffff',
-    },
-  };
-
-  assert.deepEqual(createXtermConstructorOptions(appearance, { kittyKeyboardProtocol: true }), {
-    fontFamily: '"JetBrainsMono Nerd Font", "Noto Sans Mono", monospace',
-    fontSize: 15,
-    lineHeight: 1.25,
-    letterSpacing: 0,
-    cursorStyle: 'bar',
-    cursorBlink: true,
-    fontWeight: 'normal',
-    fontWeightBold: 'bold',
-    scrollback: 50000,
-    theme: {
-      background: '#000000',
-      foreground: '#ffffff',
-    },
-    vtExtensions: {
-      kittyKeyboard: true,
-    },
-    allowProposedApi: true,
-  });
 
   const themeJson = themeToJson({
     background: '#000000',

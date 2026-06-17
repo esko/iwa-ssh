@@ -54,11 +54,6 @@ const targets = [
   { path: 'package.json', find: `"version": "${current}"`, replace: `"version": "${next}"` },
   { path: 'app/public/manifest.webmanifest', find: `"version": "${current}"`, replace: `"version": "${next}"` },
   { path: 'app/public/.well-known/manifest.webmanifest', find: `"version": "${current}"`, replace: `"version": "${next}"` },
-  {
-    path: 'app/src/routes/dev.ts',
-    find: `<dt>App version</dt><dd><code>${current}</code></dd>`,
-    replace: `<dt>App version</dt><dd><code>${next}</code></dd>`,
-  },
 ];
 
 console.log(`Bump ${current} -> ${next}${dryRun ? ' (dry run)' : ''}\n`);

@@ -1,5 +1,7 @@
 # Terminal Deltas
 
+> **Superseded (2026-06-17).** This describes the earlier near-upstream xterm/app-shell frontend, which has been **removed**. The active frontend is the legacy-PWA/Ghostty multi-page app under `app/src/pwa/` — see [LEGACY_PWA_PIVOT_PRD.md](LEGACY_PWA_PIVOT_PRD.md) and [adr/0007-one-session-per-window.md](adr/0007-one-session-per-window.md). Kept for historical context only; do not implement it as active work.
+
 These are the only terminal behavior differences allowed by the reset without a new ADR.
 
 ## xterm.js Beta And Kitty Keyboard

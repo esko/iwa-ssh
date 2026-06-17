@@ -11,7 +11,5 @@ declare module '*.css' {
   export default css;
 }
 
-declare module '@xterm/xterm/css/xterm.css';
-
 /** Runtime ES modules under app/public/upstream/ (loaded via @vite-ignore, not bundled). */
 declare module '/upstream/*';
