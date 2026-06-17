@@ -1,10 +1,10 @@
 import { parseTerminalConnectionCommand } from '../connections/sshCommandParser';
 import type { Profile } from '../settings/types';
-import { listProfiles, saveProfile } from '../storage/indexedDb';
+import { deleteProfile, getProfile, listProfiles, saveProfile } from '../storage/indexedDb';
 import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
 import { GhosttyTerminalAdapter, ensureGhosttyReady } from './ghosttyAdapter';
-import { loadCustomFont, loadPwaSettings, savePwaSettings, applyPwaAppearance } from './settings';
+import { loadCustomFont, loadPwaSettings, normalizePwaSettings, savePwaSettings, applyPwaAppearance } from './settings';
 import { loadRecentConnections, profileToSpec, recordConnection, specFromQuery, specTitle, specToQuery } from './profileModel';
 import { shouldPassThroughSystemShortcut } from './shortcuts';
 import { createTransport, type TerminalTransport } from './transport';
@@ -13,23 +13,13 @@ import type { TerminalTransportStatus } from './types';
 let activeTransport: TerminalTransport | null = null;
 let activeTerminal: GhosttyTerminalAdapter | null = null;
 
-export async function renderApp(root: HTMLElement): Promise<void> {
-  disposeTerminal();
-  const path = window.location.pathname;
-  if (path === '/terminal') {
-    await renderTerminal(root);
-  } else {
-    await renderHome(root);
-  }
-}
-
-async function renderHome(root: HTMLElement): Promise<void> {
+export async function renderHome(root: HTMLElement): Promise<void> {
   const [profiles, diagnostics] = await Promise.all([listProfiles(), readDiagnostics()]);
   const recents = loadRecentConnections();
   root.innerHTML = `
     <header class="topbar">
       <div class="brand">iwa-ssh</div>
-      <a class="toolbar-button" href="/terminal" title="New terminal" aria-label="New terminal">+</a>
+      <a class="toolbar-button" href="/terminal.html" target="_blank" rel="noopener" title="New terminal window" aria-label="New terminal window">+</a>
     </header>
     <main class="home-grid">
       <section class="panel launcher-panel">
@@ -79,6 +69,7 @@ async function renderHome(root: HTMLElement): Promise<void> {
           ${diagnosticRow('Private/UDP sockets', diagnostics.directSocketsPrivate)}
           ${diagnosticRow('nassh/wassh assets', diagnostics.upstreamAssets)}
           ${diagnosticRow('Launch queue', diagnostics.launchQueue)}
+          ${diagnosticRow('Tabbed display mode', diagnostics.tabbedDisplayMode)}
         </dl>
       </section>
     </main>
@@ -92,26 +83,36 @@ async function renderHome(root: HTMLElement): Promise<void> {
     const input = requiredElement<HTMLInputElement>('#quickCommand', root).value;
     const spec = parseTerminalConnectionCommand(input);
     if (!spec) return;
-    navigate(`/terminal?${specToQuery(spec)}`);
+    openSession(`/terminal.html?${specToQuery(spec)}`);
   });
 
-  root.querySelectorAll<HTMLElement>('[data-profile-id]').forEach((button) => {
+  root.querySelectorAll<HTMLElement>('[data-launch-id]').forEach((button) => {
     button.addEventListener('click', () => {
-      const profile = profiles.find((item) => item.id === button.dataset.profileId);
+      const profile = profiles.find((item) => item.id === button.dataset.launchId);
       if (!profile) return;
-      navigate(`/terminal?${specToQuery(profileToSpec(profile))}`);
+      openSession(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>('[data-delete-id]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const profile = profiles.find((item) => item.id === button.dataset.deleteId);
+      if (!profile) return;
+      if (!window.confirm(`Delete profile "${profile.name}"?`)) return;
+      await deleteProfile(profile.id);
+      await renderHome(root);
     });
   });
 
   root.querySelectorAll<HTMLElement>('[data-spec]').forEach((button) => {
-    button.addEventListener('click', () => navigate(`/terminal?${button.dataset.spec ?? ''}`));
+    button.addEventListener('click', () => openSession(`/terminal.html?${button.dataset.spec ?? ''}`));
   });
 
   wireSettingsForm(root);
   wireProfileDialog(root);
 }
 
-async function renderTerminal(root: HTMLElement): Promise<void> {
+export async function renderTerminal(root: HTMLElement): Promise<void> {
   const query = new URLSearchParams(window.location.search);
   let spec = specFromQuery(query);
   if (query.get('profile')) {
@@ -183,40 +184,48 @@ function renderTerminalConnect(root: HTMLElement): void {
     const input = requiredElement<HTMLInputElement>('#terminalCommand', root).value;
     const spec = parseTerminalConnectionCommand(input);
     if (!spec) return;
-    navigate(`/terminal?${specToQuery(spec)}`);
+    navigate(`/terminal.html?${specToQuery(spec)}`);
   });
   requiredElement<HTMLButtonElement>('#echoSmoke', root).addEventListener('click', () => {
-    navigate('/terminal?protocol=echo&host=local&username=smoke');
+    navigate('/terminal.html?protocol=echo&host=local&username=smoke');
   });
 }
 
 function profileCard(profile: Profile): string {
   const spec = profileToSpec(profile);
   return `
-    <button class="profile-card" type="button" data-profile-id="${escapeHTML(profile.id)}">
-      <strong>${escapeHTML(profile.name)}</strong>
-      <span>${escapeHTML(specTitle(spec))}</span>
-      <small>${escapeHTML(formatTime(profile.lastConnectedAt))}</small>
-    </button>
+    <div class="profile-card">
+      <button class="profile-card-launch" type="button" data-launch-id="${escapeHTML(profile.id)}">
+        <strong>${escapeHTML(profile.name)}</strong>
+        <span>${escapeHTML(specTitle(spec))}</span>
+        <small>${escapeHTML(formatTime(profile.lastConnectedAt))}</small>
+      </button>
+      <div class="profile-card-actions">
+        <button class="icon-button" type="button" data-edit-id="${escapeHTML(profile.id)}" title="Edit profile" aria-label="Edit profile">Edit</button>
+        <button class="icon-button" type="button" data-delete-id="${escapeHTML(profile.id)}" title="Delete profile" aria-label="Delete profile">Delete</button>
+      </div>
+    </div>
   `;
 }
 
-function profileFormMarkup(): string {
+function profileFormMarkup(profile?: Profile): string {
+  const value = (raw: string | undefined): string => (raw ? escapeHTML(raw) : '');
   return `
     <form id="profileForm" method="dialog">
-      <h2>New profile</h2>
-      <label>Name<input name="name" required /></label>
+      <h2>${profile ? 'Edit profile' : 'New profile'}</h2>
+      <input type="hidden" name="id" value="${profile ? escapeHTML(profile.id) : ''}" />
+      <label>Name<input name="name" required value="${value(profile?.name)}" /></label>
       <label>Protocol
         <select name="protocol">
-          <option value="ssh">SSH</option>
-          <option value="mosh">Mosh</option>
+          <option value="ssh"${profile?.protocol === 'mosh' ? '' : ' selected'}>SSH</option>
+          <option value="mosh"${profile?.protocol === 'mosh' ? ' selected' : ''}>Mosh</option>
         </select>
       </label>
-      <label>Host<input name="host" required /></label>
-      <label>Port<input name="port" type="number" min="1" max="65535" value="22" /></label>
-      <label>Username<input name="username" required /></label>
-      <label>SSH arguments<input name="connectionArgs" placeholder="-o ServerAliveInterval=30" /></label>
-      <label>Startup command<input name="startupCommand" /></label>
+      <label>Host<input name="host" required value="${value(profile?.host)}" /></label>
+      <label>Port<input name="port" type="number" min="1" max="65535" value="${profile?.port ?? 22}" /></label>
+      <label>Username<input name="username" required value="${value(profile?.username)}" /></label>
+      <label>SSH arguments<input name="connectionArgs" placeholder="-o ServerAliveInterval=30" value="${value(profile?.connectionArgs)}" /></label>
+      <label>Startup command<input name="startupCommand" value="${value(profile?.startupCommand)}" /></label>
       <div class="dialog-actions">
         <button class="secondary-button" value="cancel">Cancel</button>
         <button class="primary-button" value="save">Save</button>
@@ -231,6 +240,8 @@ function settingsFormMarkup(): string {
     <form id="settingsForm">
       <h2>Settings</h2>
       <label>Font family<input name="fontFamily" value="${escapeHTML(settings.fontFamily)}" /></label>
+      <label>Custom font name<input name="customFontName" value="${escapeHTML(settings.customFontName)}" placeholder="JetBrainsMono Nerd Font" /></label>
+      <label>Custom font URL<input name="customFontUrl" value="${escapeHTML(settings.customFontUrl)}" placeholder="https://… .woff2" /></label>
       <label>Font size<input name="fontSize" type="number" min="12" max="22" value="${settings.fontSize}" /></label>
       <label>Scrollback
         <select name="scrollback">
@@ -242,6 +253,13 @@ function settingsFormMarkup(): string {
           ${['dark', 'highContrast', 'soft', 'light', 'tokyoNight', 'dracula'].map((value) => `<option value="${value}"${settings.theme.preset === value ? ' selected' : ''}>${value}</option>`).join('')}
         </select>
       </label>
+      <label>Cursor style
+        <select name="cursorStyle">
+          ${['block', 'bar', 'underline'].map((value) => `<option value="${value}"${settings.cursorStyle === value ? ' selected' : ''}>${value}</option>`).join('')}
+        </select>
+      </label>
+      <label class="checkbox-label"><input type="checkbox" name="cursorBlink"${settings.cursorBlink ? ' checked' : ''} /> Cursor blink</label>
+      <label>Terminal padding<input name="terminalPadding" type="number" min="0" max="32" value="${settings.terminalPadding}" /></label>
       <button class="secondary-button" type="submit">Save settings</button>
     </form>
   `;
@@ -252,25 +270,48 @@ function wireSettingsForm(root: HTMLElement): void {
     event.preventDefault();
     const data = new FormData(event.currentTarget as HTMLFormElement);
     const current = loadPwaSettings();
-    savePwaSettings({
-      ...current,
-      fontFamily: String(data.get('fontFamily') ?? current.fontFamily),
-      fontSize: Number(data.get('fontSize') ?? current.fontSize),
-      scrollback: Number(data.get('scrollback') ?? current.scrollback),
-      theme: { preset: String(data.get('theme') ?? current.theme.preset) },
-    });
+    savePwaSettings(
+      normalizePwaSettings({
+        ...current,
+        fontFamily: String(data.get('fontFamily') ?? current.fontFamily),
+        fontSize: Number(data.get('fontSize') ?? current.fontSize),
+        scrollback: Number(data.get('scrollback') ?? current.scrollback),
+        theme: { preset: String(data.get('theme') ?? current.theme.preset) },
+        cursorStyle: String(data.get('cursorStyle') ?? current.cursorStyle),
+        cursorBlink: data.get('cursorBlink') != null,
+        customFontName: String(data.get('customFontName') ?? current.customFontName),
+        customFontUrl: String(data.get('customFontUrl') ?? current.customFontUrl),
+        terminalPadding: Number(data.get('terminalPadding') ?? current.terminalPadding),
+      }),
+    );
     void renderHome(root);
   });
 }
 
 function wireProfileDialog(root: HTMLElement): void {
   const dialog = requiredElement<HTMLDialogElement>('#profileDialog', root);
-  requiredElement<HTMLButtonElement>('#newProfile', root).addEventListener('click', () => dialog.showModal());
+  const openDialog = (profile?: Profile): void => {
+    dialog.innerHTML = profileFormMarkup(profile);
+    dialog.showModal();
+  };
+
+  requiredElement<HTMLButtonElement>('#newProfile', root).addEventListener('click', () => openDialog());
+
+  root.querySelectorAll<HTMLElement>('[data-edit-id]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const profile = await getProfile(button.dataset.editId ?? '');
+      if (profile) openDialog(profile);
+    });
+  });
+
   dialog.addEventListener('close', async () => {
     if (dialog.returnValue !== 'save') return;
     const data = new FormData(requiredElement<HTMLFormElement>('#profileForm', dialog));
+    const id = String(data.get('id') ?? '').trim();
+    const existing = id ? await getProfile(id) : undefined;
     const profile: Profile = {
-      id: crypto.randomUUID(),
+      ...existing,
+      id: id || crypto.randomUUID(),
       name: String(data.get('name') ?? '').trim(),
       protocol: String(data.get('protocol') ?? 'ssh') === 'mosh' ? 'mosh' : 'ssh',
       host: String(data.get('host') ?? '').trim(),
@@ -302,11 +343,20 @@ function installShortcutPassThrough(): void {
 }
 
 function navigate(url: string): void {
-  history.pushState(null, '', url);
-  void renderApp(requiredElement<HTMLElement>('#app'));
+  // Multi-page IWA: each route is its own document, so navigate for real.
+  window.location.assign(url);
 }
 
-function disposeTerminal(): void {
+// Interim model while native ChromeOS tabs are unavailable for IWAs (see
+// docs/adr/0007-one-session-per-window.md): launching from the home/launcher
+// opens each session in its own window, so the launcher persists. The
+// multi-page `/terminal.html` document is reused unchanged — if native tabs
+// become available for IWAs, the OS new-tab button can target it directly.
+function openSession(url: string): void {
+  window.open(url, '_blank', 'noopener');
+}
+
+export function disposeTerminal(): void {
   void activeTransport?.disconnect().catch(() => undefined);
   activeTransport?.dispose();
   activeTerminal?.dispose();

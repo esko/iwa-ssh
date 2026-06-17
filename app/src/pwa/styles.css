@@ -136,21 +136,64 @@ select {
   gap: 8px;
 }
 
-.profile-card,
+.profile-card {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0b151c;
+  overflow: hidden;
+}
+
+.profile-card-launch,
 .recent-row {
   display: grid;
   gap: 4px;
   width: 100%;
   text-align: left;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 8px;
   padding: 10px;
-  background: #0b151c;
+  background: transparent;
   color: var(--text);
   cursor: pointer;
 }
 
-.profile-card span,
+.recent-row {
+  border: 1px solid var(--border);
+  background: #0b151c;
+}
+
+.profile-card-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+}
+
+.icon-button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.icon-button:hover {
+  color: var(--text);
+}
+
+.checkbox-label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-card-launch span,
 .recent-row small,
 .muted {
   color: var(--muted);

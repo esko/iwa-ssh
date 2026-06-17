@@ -7,7 +7,7 @@ Use Moshtty `legacy-pwa:web/` as the frontend base and plug IWA/Direct Sockets c
 ## Target Routes
 
 - `/`: pinned native home/menu tab with profiles, recents, settings, and IWA readiness diagnostics.
-- `/terminal`: native new-tab target with connect form when no connection spec exists, otherwise one Ghostty terminal and one transport.
+- `/terminal.html`: native new-tab target with connect form when no connection spec exists, otherwise one Ghostty terminal and one transport.
 
 ## Data Model
 
@@ -15,7 +15,7 @@ Use `iwa-ssh` profiles as the primary saved connection model:
 
 - Profiles replace legacy PWA workspaces/spaces/sessions.
 - Recents are a lightweight launch aid, not durable sessions.
-- One profile or quick-connect command opens one native app tab.
+- One profile or quick-connect command opens one session window (native tabs deferred — ADR 0007 / #45).
 
 ## Transport Boundary
 
@@ -44,7 +44,7 @@ Parent PRD: [#38](https://github.com/esko/iwa-ssh/issues/38)
 | Unit behavior | `npm test` | N/A |
 | Production bundle | `npm run build` | bundle/install smoke |
 | Home route | browser smoke `/` | installed IWA home tab |
-| Terminal route | echo smoke `/terminal?protocol=echo` and canvas pixel check | native app tab opens `/terminal` |
+| Terminal route | echo smoke `/terminal.html?protocol=echo` and canvas pixel check | native app tab opens `/terminal.html` |
 | Shortcuts | unit tests for pass-through | `Ctrl+T` and `Ctrl+W` stay with ChromeOS |
 | SSH | mock/echo plus runtime tests where possible | interactive shell over Direct Sockets |
 | Mosh | deferred | deferred |

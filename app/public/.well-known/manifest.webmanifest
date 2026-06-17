@@ -3,7 +3,7 @@
   "name": "iwa-ssh",
   "short_name": "iwa-ssh",
   "description": "ChromeOS IWA SSH client",
-  "version": "0.1.4",
+  "version": "0.1.8",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -13,10 +13,10 @@
   "isolated_storage": true,
   "tab_strip": {
     "home_tab": {
-      "scope_patterns": [{ "pathname": "/" }]
+      "scope_patterns": [{ "pathname": "/" }, { "pathname": "/index.html" }]
     },
     "new_tab_button": {
-      "url": "/terminal"
+      "url": "/terminal.html"
     }
   },
   "launch_handler": {

@@ -1,0 +1,67 @@
+import { describe, expect, it } from 'vitest';
+import { profileToSpec, specToQuery, specFromQuery, specTitle } from './profileModel';
+import type { Profile } from '../settings/types';
+
+describe('profile to terminal query mapping', () => {
+  it('round-trips a fully-populated SSH profile through profileToSpec -> specToQuery -> specFromQuery', () => {
+    const profile: Profile = {
+      id: 'test-profile-id',
+      name: 'My SSH Host',
+      protocol: 'ssh',
+      host: 'example.com',
+      port: 2222,
+      username: 'alice',
+      identityId: 'test-identity-id',
+      connectionArgs: '-o ServerAliveInterval=30',
+      startupCommand: 'cd /home/alice',
+    };
+
+    // profileToSpec converts Profile to PwaConnectionSpec
+    const spec = profileToSpec(profile);
+    expect(spec.protocol).toBe('ssh');
+    expect(spec.username).toBe('alice');
+    expect(spec.hostname).toBe('example.com');
+    expect(spec.port).toBe(2222);
+    expect(spec.argstr).toBe('-o ServerAliveInterval=30');
+    expect(spec.profileId).toBe('test-profile-id');
+    expect(spec.identityId).toBe('test-identity-id');
+    expect(spec.startupCommand).toBe('cd /home/alice');
+
+    // specToQuery serializes to URL query string
+    const queryString = specToQuery(spec);
+    const searchParams = new URLSearchParams(queryString);
+
+    // specFromQuery parses back to spec
+    const parsedSpec = specFromQuery(searchParams);
+    expect(parsedSpec).not.toBeNull();
+    expect(parsedSpec!.protocol).toBe('ssh');
+    expect(parsedSpec!.username).toBe('alice');
+    expect(parsedSpec!.hostname).toBe('example.com');
+    expect(parsedSpec!.port).toBe(2222);
+    expect(parsedSpec!.argstr).toBe('-o ServerAliveInterval=30');
+    expect(parsedSpec!.profileId).toBe('test-profile-id');
+    expect(parsedSpec!.identityId).toBe('test-identity-id');
+    expect(parsedSpec!.startupCommand).toBe('cd /home/alice');
+  });
+
+  it('specFromQuery with no port defaults to 22 and specTitle formats correctly', () => {
+    const query = new URLSearchParams('protocol=ssh&host=h&username=u');
+    const spec = specFromQuery(query);
+
+    expect(spec).not.toBeNull();
+    expect(spec!.protocol).toBe('ssh');
+    expect(spec!.hostname).toBe('h');
+    expect(spec!.username).toBe('u');
+    expect(spec!.port).toBe(22);
+
+    const title = specTitle(spec!);
+    expect(title).toBe('ssh u@h');
+  });
+
+  it('specFromQuery with only protocol=ssh (no host) returns null', () => {
+    const query = new URLSearchParams('protocol=ssh');
+    const spec = specFromQuery(query);
+
+    expect(spec).toBeNull();
+  });
+});

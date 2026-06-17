@@ -132,6 +132,12 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: true,
     rollupOptions: {
+      // Multi-page IWA: `/` (home) and `/terminal.html` are separate documents
+      // so ChromeOS can drive them as native tabs.
+      input: {
+        main: resolve(__dirname, 'app/index.html'),
+        terminal: resolve(__dirname, 'app/terminal.html'),
+      },
       external: (id) => id.startsWith('/upstream/'),
       output: {
         manualChunks(id) {

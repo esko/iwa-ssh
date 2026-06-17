@@ -6,9 +6,10 @@ This repo has pivoted from a near-upstream Google Terminal UI reset to a Moshtty
 
 - Base frontend work on Moshtty `legacy-pwa`, pruned for IWA.
 - Use Ghostty-web for the terminal renderer and terminal canvas/layout behavior.
-- Use ChromeOS/IWA native app tabs: `/` is the pinned home/menu tab, `/terminal` is the native new-tab target.
+- One terminal session per window (interim): `/` (index.html) is the home/launcher and launching opens `/terminal.html` in its own window. Native ChromeOS app tabs are unavailable for IWAs for now and are deferred — keep the multi-page structure and manifest `tab_strip`/`display_override` config for re-enabling later. See `docs/adr/0007-one-session-per-window.md` and #45.
 - Use `iwa-ssh` profiles as the launcher/session model, replacing legacy PWA workspaces, spaces, internal tabs, panes, splits, and durable Go-agent sessions.
 - Plug IWA Direct Sockets SSH transport into the frontend through a small transport boundary.
+- Match the ChromeOS Terminal design/functionality north star in `docs/references/chromeos-terminal/` (profile-first launcher home, native tabs, tabbed Appearance/Keyboard/Behavior settings).
 
 Do not reuse old `iwa-ssh` app-shell routes, xterm terminal UI, upstream Terminal-shaped settings screens, session route UI, simulated tabs, dashboard, or debug-first frontend surfaces. Keep code under `app/src/ssh`, `app/upstream`, IWA manifests, and scripts only when it is low-level IWA/runtime infrastructure.
 

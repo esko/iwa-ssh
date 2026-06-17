@@ -7,6 +7,7 @@ This is a single-context repo. Before changing product direction, frontend archi
 - `docs/RESET_PRD.md`
 - `docs/ARCHITECTURE.md`
 - `docs/UPSTREAM_SYNC.md`
+- `docs/references/chromeos-terminal/README.md` (design/functionality north star)
 - relevant ADRs in `docs/adr/`
 
 ## Vocabulary

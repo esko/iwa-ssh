@@ -76,8 +76,8 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
 
 export async function listProfiles(): Promise<Profile[]> {
   const db = await getDb();
-  const profiles = await db.getAllFromIndex('profiles', 'by-last-connected');
-  return profiles.reverse();
+  const profiles = await db.getAll('profiles');
+  return profiles.sort((a, b) => (b.lastConnectedAt ?? 0) - (a.lastConnectedAt ?? 0));
 }
 
 export async function getProfile(id: string): Promise<Profile | undefined> {

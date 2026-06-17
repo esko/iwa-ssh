@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /**
- * CDP smoke test for echo-stub session (no SSH required).
+ * CDP smoke test for /terminal echo-stub session with Ghostty canvas rendering.
+ * Exercises the new legacy-PWA frontend routes, verifies Ghostty canvas, and checks
+ * echo transport connection state. No SSH required.
  * Requires: npm run dev:chrome (or Vite on 5173 + Chrome with --remote-debugging-port=9222)
  */
 
@@ -134,7 +136,7 @@ function fail(name, detail) {
 }
 
 async function main() {
-  console.log('Echo-stub CDP smoke\n');
+  console.log('Echo-stub CDP smoke — /terminal route with Ghostty canvas\n');
 
   try {
     await waitForPort(APP_PORT);
@@ -163,23 +165,88 @@ async function main() {
     process.exit(1);
   }
 
+  // Navigate to /terminal (no query) — should show connect form
   try {
     await client.send('Page.enable');
-    await client.send('Page.navigate', { url: `${BASE}/connect` });
-    pass('Navigate to /connect');
+    await client.send('Page.navigate', { url: `${BASE}/terminal.html` });
   } catch (error) {
-    fail('Navigate to /connect', error.message);
+    fail('Navigate to /terminal', error.message);
   }
 
-  // The SPA router renders the connect form asynchronously after navigation
-  // commits, so poll for #host rather than checking once immediately.
-  const found = await waitForSelector(client, '#host', 8000);
-  if (found) {
-    pass('Connect form present');
+  const connectFormFound = await waitForSelector(client, '#terminalConnect', 8000);
+  if (connectFormFound) {
+    pass('Connect form present on /terminal');
   } else {
-    fail('Connect form present', 'missing #host after 8s — connect route did not render');
+    fail('Connect form present on /terminal', 'missing #terminalConnect after 8s');
     const diag = await pageDiagnostics(client);
     console.error('    diagnostics:', JSON.stringify(diag, null, 2).replace(/\n/g, '\n    '));
+  }
+
+  // Navigate to /terminal with echo transport params
+  try {
+    await client.send('Page.navigate', { url: `${BASE}/terminal.html?protocol=echo&host=local&username=smoke` });
+  } catch (error) {
+    fail('Navigate to /terminal with echo params', error.message);
+  }
+
+  const canvasFound = await waitForSelector(client, '#terminal canvas', 10000);
+  if (canvasFound) {
+    pass('Ghostty terminal canvas present');
+  } else {
+    fail('Ghostty terminal canvas present', 'missing #terminal canvas after 10s');
+    const diag = await pageDiagnostics(client);
+    console.error('    diagnostics:', JSON.stringify(diag, null, 2).replace(/\n/g, '\n    '));
+  }
+
+  // Poll for echo transport to reach connected state
+  const deadline = Date.now() + 8000;
+  let connected = false;
+  while (Date.now() < deadline) {
+    try {
+      const state = await evaluate(client, `document.querySelector('#status')?.dataset.state`);
+      if (state === 'connected') {
+        connected = true;
+        break;
+      }
+    } catch {
+      // Evaluation error — keep polling
+    }
+    await sleep(150);
+  }
+  if (connected) {
+    pass('Echo transport connected');
+  } else {
+    fail('Echo transport connected', 'status did not reach connected after 8s');
+  }
+
+  // Check canvas has nonblank pixels
+  const canvasCheckExpr = `(() => {
+  const c = document.querySelector('#terminal canvas');
+  if (!c || !c.width || !c.height) return JSON.stringify({ ok: false, reason: 'no canvas dimensions' });
+  const off = document.createElement('canvas');
+  off.width = c.width; off.height = c.height;
+  const ctx = off.getContext('2d');
+  ctx.drawImage(c, 0, 0);
+  const { data } = ctx.getImageData(0, 0, c.width, c.height);
+  let min = 255, max = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const lum = (data[i] + data[i + 1] + data[i + 2]) / 3;
+    if (lum < min) min = lum;
+    if (lum > max) max = lum;
+  }
+  return JSON.stringify({ ok: (max - min) > 8, spread: max - min, width: c.width, height: c.height });
+})()`;
+
+  try {
+    const resultStr = await evaluate(client, canvasCheckExpr);
+    const result = JSON.parse(resultStr);
+    if (result.ok) {
+      pass('Ghostty canvas renders nonblank output');
+    } else {
+      fail('Ghostty canvas renders nonblank output', 'canvas appears blank (spread <= 8)');
+    }
+  } catch (error) {
+    fail('Ghostty canvas renders nonblank output', `evaluation error: ${error.message}`);
   }
 
   client.close();

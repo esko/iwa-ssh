@@ -9,6 +9,6 @@ describe('IWA native tab manifest', () => {
     ) as { tab_strip?: { home_tab?: unknown; new_tab_button?: { url?: string } } };
 
     expect(manifest.tab_strip?.home_tab).toBeDefined();
-    expect(manifest.tab_strip?.new_tab_button?.url).toBe('/terminal');
+    expect(manifest.tab_strip?.new_tab_button?.url).toBe('/terminal.html');
   });
 });
