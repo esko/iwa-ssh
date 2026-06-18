@@ -74,13 +74,20 @@ export function installWindowControls(): void {
   bar.id = TITLEBAR_ID;
   bar.className = 'titlebar';
   bar.innerHTML = `
-    <div class="titlebar-drag"></div>
+    <div class="titlebar-drag"><span class="titlebar-title"></span></div>
     <div class="win-controls">
       <button class="win-btn" type="button" data-act="minimize" aria-label="Minimize">${ICONS.minimize}</button>
       <button class="win-btn" type="button" data-act="maximize" aria-label="Maximize">${ICONS.maximize}</button>
       <button class="win-btn win-close" type="button" data-act="close" aria-label="Close">${ICONS.close}</button>
     </div>`;
   document.body.prepend(bar);
+
+  // Mirror the document title into the caption (ChromeOS shows the window title).
+  const titleEl = bar.querySelector<HTMLElement>('.titlebar-title')!;
+  const syncTitle = (): void => { titleEl.textContent = document.title; };
+  syncTitle();
+  const titleNode = document.querySelector('title');
+  if (titleNode) new MutationObserver(syncTitle).observe(titleNode, { childList: true });
 
   const maxBtn = bar.querySelector<HTMLButtonElement>('[data-act="maximize"]')!;
   const syncMaxIcon = (): void => {
