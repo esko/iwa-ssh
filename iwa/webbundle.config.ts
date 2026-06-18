@@ -36,17 +36,26 @@ export type WebBundleConfig = {
 /**
  * Standard IWA CSP — keep in sync with docs/SECURITY.md.
  *
- * Mirrors Chrome's required IWA baseline. Trusted Types must be turned on with
- * `require-trusted-types-for 'script'` (the directive Chrome enforces on IWAs);
- * `trusted-types default` only allowlists policy names and does NOT enable
- * enforcement on its own. The app registers the `default` policy in
- * app/src/security/trustedTypes.ts.
+ * This MUST mirror Chrome's required IWA baseline verbatim (see the WICG
+ * Isolated Web Apps explainer). Chrome *injects* the required CSP onto every
+ * resource served from the bundle, and any CSP we declare here is enforced in
+ * addition (policies combine as an intersection — the most restrictive wins).
+ * So this header cannot relax the baseline; it can only match it or add
+ * restrictions. Notably `font-src` is `'self' blob: data:` with NO `https:`:
+ * remote web fonts cannot load in an IWA regardless of what we declare, so the
+ * bundled same-origin terminal font (loaded by restty via fetch → connect-src
+ * 'self') and data:/same-origin custom fonts are the only options.
+ *
+ * Trusted Types must be turned on with `require-trusted-types-for 'script'`
+ * (the directive Chrome enforces on IWAs); `trusted-types default` only
+ * allowlists policy names and does NOT enable enforcement on its own. The app
+ * registers the `default` policy in app/src/security/trustedTypes.ts.
  */
 export const IWA_CSP =
   "base-uri 'none'; default-src 'self'; object-src 'none'; " +
   "frame-src 'self' https: blob: data:; connect-src 'self' https: wss: blob: data:; " +
   "script-src 'self' 'wasm-unsafe-eval'; img-src 'self' https: blob: data:; " +
-  "media-src 'self' https: blob: data:; font-src 'self' https: blob: data:; " +
+  "media-src 'self' https: blob: data:; font-src 'self' blob: data:; " +
   "style-src 'self' 'unsafe-inline'; require-trusted-types-for 'script'; trusted-types default;";
 
 export const bundleConfig: WebBundleConfig = {
