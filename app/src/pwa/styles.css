@@ -731,11 +731,20 @@ textarea {
   box-shadow: none;
 }
 
-/* restty mounts a pane root + canvas inside #terminal; fill the viewport. */
+/* restty mounts a pane root + canvas inside #terminal; fill the viewport.
+   restty injects a `.restty-pane-root { height: 100% }` stylesheet at mount,
+   which (equal specificity, injected later) overrides `.term-full`'s 100vh.
+   With no definite ancestor height, `height: 100%` collapses to auto and the
+   canvas falls back to its intrinsic square pixel size, overflowing below the
+   viewport — which breaks viewport sizing and trackpad scrollback. Pin a
+   definite viewport height here at higher (id+attr) specificity so it wins. */
 #terminal[data-renderer='restty'].restty-pane-root,
 #terminal[data-renderer='restty'] {
   display: block;
   position: relative;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
 }
 
 #terminal[data-renderer='restty'] .restty-pane-root,

@@ -4,7 +4,29 @@
 
 ## Scroll fix (root cause + resolution)
 
-**Root cause: no font ever loaded, so `cellH` stayed 0 and restty's wheel handler bailed.**
+**Primary root cause: the terminal canvas was sized square and overflowed the
+viewport, so the live area / new output fell below the fold and trackpad scroll
+over it didn't behave.**
+
+restty injects a stylesheet at mount (`data-restty-pane-styles`) containing
+`.restty-pane-root { height: 100% }`. `#terminal` carries both `.term-full`
+(our `height: 100vh`) and `.restty-pane-root`; equal specificity means the
+later-injected restty rule wins, so the fixed `100vh` became `height: 100%`.
+With no definite ancestor height, `height: 100%` resolves to `auto`, so
+`#terminal` collapsed onto the canvas's intrinsic **square** pixel size
+(e.g. 1280×1280 in an 800px-tall viewport) and overflowed below the fold. This
+matches the device reports: text renders, "new output draws below visible area",
+and scroll "works over the debug panel" (a separate `overflow:auto` element)
+but not over the terminal.
+
+**Fix:** pin a definite viewport height on `#terminal[data-renderer='restty']`
+(id+attr specificity beats `.restty-pane-root`) in `styles.css`. Verified
+headless (1280×800 device metrics + `maxTouchPoints` override): canvas now
+sizes to the viewport (1280×800, not square), `onGridSize` reports a sane grid,
+dispatched wheels report `defaultPrevented === true`, and the canvas visibly
+changes on scroll (screenshot diff).
+
+**Secondary hardening: bundle the terminal font (cellH guarantee).**
 
 - On touch devices (`navigator.maxTouchPoints > 0`) restty installs **no native
   scroll host** (`scrollbar-runtime.ts` L52–69) — scrollback relies entirely on
