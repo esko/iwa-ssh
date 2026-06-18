@@ -905,3 +905,111 @@ textarea {
 .connect-page form {
   width: min(420px, 100%);
 }
+
+/* ----------------------------------------------- window chrome (unframed) -- */
+/*
+ * Custom caption bar for the borderless/unframed IWA window. Geometry matches
+ * ChromeOS: 36px-wide caption buttons with a 28px circular ink-drop highlight
+ * (corner radius 14) behind the glyph; minimize / maximize-restore / close.
+ * Only mounted in an app window (see windowControls.ts); a browser tab keeps
+ * its own frame.
+ */
+:root {
+  --titlebar-h: 40px;
+}
+
+.titlebar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: var(--titlebar-h);
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  z-index: 2000;
+  background: var(--term-bg, var(--bg));
+  -webkit-app-region: drag;
+  app-region: drag;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.titlebar-drag {
+  flex: 1 1 auto;
+}
+
+.win-controls {
+  display: flex;
+  align-items: stretch;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.win-btn {
+  position: relative;
+  width: 36px;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.win-btn > svg {
+  position: relative;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+/* The gray hover circle "under" the icon — ChromeOS ink drop (28px, r=14). */
+.win-btn::before {
+  content: '';
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.win-btn:hover::before,
+.win-btn:focus-visible::before {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.win-btn:active::before {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.win-btn:focus-visible {
+  outline: none;
+}
+
+/* Make room for the caption bar; only when running as an app window. */
+html.app-chrome body {
+  padding-top: var(--titlebar-h);
+}
+
+html.app-chrome #terminal[data-renderer='restty'],
+html.app-chrome #terminal[data-renderer='restty'].restty-pane-root {
+  height: calc(100dvh - var(--titlebar-h));
+}
+
+html.app-chrome .home,
+html.app-chrome .connect-page {
+  min-height: calc(100vh - var(--titlebar-h));
+}
+
+html.app-chrome .term-debug-btn {
+  top: calc(var(--titlebar-h) + 6px);
+}
+
+html.app-chrome .term-debug-panel {
+  top: calc(var(--titlebar-h) + 40px);
+}

@@ -7,7 +7,7 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["tabbed"],
+  "display_override": ["unframed", "borderless", "tabbed"],
   "background_color": "#202124",
   "theme_color": "#202124",
   "isolated_storage": true,
@@ -27,7 +27,8 @@
     "direct-sockets": ["self"],
     "direct-sockets-private": ["self"],
     "local-network": ["self"],
-    "loopback-network": ["self"]
+    "loopback-network": ["self"],
+    "window-management": ["self"]
   },
   "icons": [
     {
