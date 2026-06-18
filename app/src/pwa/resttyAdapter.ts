@@ -1,6 +1,8 @@
 import { Terminal } from '@eslzzyl/restty/esm/xterm';
 import type { TerminalAdapter, TerminalSubscription } from '../terminal/TerminalAdapter';
 import type { PwaTerminalSettings } from './types';
+import { DEFAULT_FONT_ID, bundledFontForSelection, isCustomSelection, customSelectionId } from './terminalFonts';
+import { getCustomFontData } from './customFontStore';
 
 /** Minimal PtyTransport shape — DA/DSR replies route here, not onData (source=pty). */
 type LoopbackPtyTransport = {
@@ -26,10 +28,35 @@ type LoopbackPtyTransport = {
  * height, which is what actually restores scrolling. Box-drawing/powerline
  * glyphs are rendered programmatically by restty, so a Nerd Font is not needed.
  */
-const RESTTY_FONT_SOURCES = [
-  { type: 'url' as const, url: '/fonts/JetBrainsMono-Regular.ttf', label: 'JetBrains Mono' },
-  { type: 'url' as const, url: '/fonts/JetBrainsMono-Bold.ttf', label: 'JetBrains Mono Bold' },
+type ResttyFontSource =
+  | { type: 'url'; url: string; label: string }
+  | { type: 'buffer'; data: ArrayBuffer; label: string };
+
+/** JetBrains Mono — the default and the always-present fallback. */
+const BUNDLED_FALLBACK: ResttyFontSource[] = [
+  { type: 'url', url: '/fonts/JetBrainsMono-Regular.ttf', label: 'JetBrains Mono' },
+  { type: 'url', url: '/fonts/JetBrainsMono-Bold.ttf', label: 'JetBrains Mono Bold' },
 ];
+
+/**
+ * Resolve a font selection (bundled id or `custom:<id>`) to restty fontSources.
+ * The selected font is tried first; JetBrains Mono is always appended so a real
+ * font always loads (cellH > 0) even if a custom buffer is missing or a bundled
+ * URL fails. Box-drawing/powerline glyphs are drawn programmatically by restty,
+ * so a Nerd Font is not required.
+ */
+async function resolveFontSources(selection: string): Promise<ResttyFontSource[]> {
+  if (isCustomSelection(selection)) {
+    const data = await getCustomFontData(customSelectionId(selection)).catch(() => undefined);
+    if (data) return [{ type: 'buffer', data, label: 'Custom font' }, ...BUNDLED_FALLBACK];
+    return BUNDLED_FALLBACK;
+  }
+  const font = bundledFontForSelection(selection);
+  if (font.id === DEFAULT_FONT_ID) return BUNDLED_FALLBACK;
+  const sources: ResttyFontSource[] = [{ type: 'url', url: font.regular, label: font.family }];
+  if (font.bold) sources.push({ type: 'url', url: font.bold, label: `${font.family} Bold` });
+  return [...sources, ...BUNDLED_FALLBACK];
+}
 
 type ResttyDebugEntry = {
   sessionId: string;
@@ -188,13 +215,15 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
       );
       adapter.inputListeners.forEach((cb) => cb(data));
     };
+    // Resolve the selected font (bundled or user-provided) to same-origin URL /
+    // buffer sources before opening; restty's default font list (Local Font
+    // Access + CDN) is unusable in the IWA. JetBrains Mono is always appended as
+    // a fallback so a real font loads (cellH > 0), which keeps scrolling alive.
+    const fontSources = await resolveFontSources(settings.fontFamily);
     const term = new Terminal({
       appOptions: {
         ptyTransport: createLoopbackPtyTransport(emitInput, (cols, rows) => adapter.emitResize(cols, rows), debugCtx),
-        // Replace restty's default Local-Font-Access + CDN font list with our
-        // bundled same-origin fonts so a real font always loads (cellH > 0);
-        // see RESTTY_FONT_SOURCES. Without this, scrollback wheel scroll bails.
-        fontSources: RESTTY_FONT_SOURCES,
+        fontSources,
         autoResize: true,
         attachCanvasEvents: true,
         // restty touch pan is armed on pointerdown only in long-press/drag modes (see

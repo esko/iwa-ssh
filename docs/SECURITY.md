@@ -158,7 +158,9 @@ trusted-types default
 
 The bundle declares `require-trusted-types-for 'script'` (the directive that actually enables Trusted Types enforcement, which Chrome requires on IWAs) together with `trusted-types default` (the policy allowlist). The app registers a **default** Trusted Types policy in `app/src/security/trustedTypes.ts` before any `innerHTML` rendering so the shell can boot.
 
-This policy mirrors Chrome's required IWA baseline verbatim. Chrome **injects** the required CSP onto every resource served from the bundle; any policy the bundle declares is enforced *in addition* (policies combine as an intersection), so this header cannot relax the baseline — it can only match it or tighten it. In particular `font-src` is `'self' blob: data:` (no `https:`): **remote web fonts cannot load in an IWA**. The bundled terminal font is same-origin and reaches the renderer via `fetch` (`connect-src 'self'`), not `@font-face`; the custom-font setting therefore only works with same-origin or `data:` URLs.
+This policy mirrors Chrome's required IWA baseline verbatim. Chrome **injects** the required CSP onto every resource served from the bundle; any policy the bundle declares is enforced *in addition* (policies combine as an intersection), so this header cannot relax the baseline — it can only match it or tighten it. In particular `font-src` is `'self' blob: data:` (no `https:`): **remote `@font-face` fonts cannot load in an IWA**.
+
+The terminal therefore never relies on `@font-face` for the canvas: restty shapes from font **bytes**. Bundled fonts (`app/public/fonts/`) load by same-origin URL (`connect-src 'self'`); user-provided fonts are uploaded, or downloaded from a URL (the fetch uses `connect-src`, which allows `https:`), then cached in IndexedDB and handed to restty as a `buffer` source. None of these depend on `font-src`.
 
 Cross-origin isolation headers:
 

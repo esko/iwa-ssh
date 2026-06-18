@@ -1,11 +1,18 @@
 import { clamp } from './dom';
 import { THEME_PRESETS } from './themes';
 import type { PwaTerminalSettings, TerminalTheme } from './types';
+import {
+  DEFAULT_FONT_ID,
+  bundledFontForSelection,
+  customSelectionId,
+  isCustomSelection,
+} from './terminalFonts';
+import { getCustomFontData } from './customFontStore';
 
 export const SETTINGS_KEY = 'iwa-ssh-legacy-pwa-terminal-settings';
 
 export const DEFAULT_PWA_SETTINGS: PwaTerminalSettings = {
-  fontFamily: 'JetBrains Mono, Noto Sans Mono, monospace',
+  fontFamily: DEFAULT_FONT_ID,
   customFontName: '',
   customFontUrl: '',
   fontSize: 15,
@@ -102,22 +109,46 @@ export function applyPwaAppearance(settings: PwaTerminalSettings): void {
   document.documentElement.style.setProperty('--terminal-padding', `${settings.terminalPadding}px`);
 }
 
+/** CSS family name a user-provided font is registered under (wterm/CSS only). */
+const CUSTOM_FONT_FAMILY_PREFIX = 'iwa-custom-font-';
+
+/**
+ * CSS `font-family` for the wterm renderer and app CSS. Bundled families are
+ * declared via @font-face in styles.css; a user-provided font is registered by
+ * `ensureTerminalFontLoaded`. restty does not use this — it consumes its own
+ * url/buffer fontSources (see resttyAdapter).
+ */
 export function terminalFontFamily(settings: PwaTerminalSettings): string {
-  if (!settings.customFontUrl) return settings.fontFamily;
-  return `"${settings.customFontName || 'Custom Terminal Font'}", ${settings.fontFamily}`;
+  const selection = settings.fontFamily;
+  const family = isCustomSelection(selection)
+    ? `${CUSTOM_FONT_FAMILY_PREFIX}${customSelectionId(selection)}`
+    : bundledFontForSelection(selection).family;
+  return `"${family}", "JetBrains Mono", monospace`;
 }
 
-export async function loadCustomFont(settings: PwaTerminalSettings): Promise<void> {
-  document.getElementById('customTerminalFont')?.remove();
-  if (!settings.customFontUrl) return;
-  const style = document.createElement('style');
-  const fontName = settings.customFontName || 'Custom Terminal Font';
-  style.id = 'customTerminalFont';
-  style.textContent = `@font-face{font-family:"${cssString(fontName)}";font-style:normal;font-weight:400;font-display:block;src:url("${cssUrl(settings.customFontUrl)}") format("${fontFormat(settings.customFontUrl)}")}`;
-  document.head.append(style);
-  if ('fonts' in document) {
-    await document.fonts.load(`400 ${settings.fontSize}px "${fontName}"`).catch(() => undefined);
-    await document.fonts.ready.catch(() => undefined);
+/**
+ * Make the selected font available to CSS/wterm. Bundled fonts are already
+ * declared via @font-face; a user-provided font is registered as a FontFace
+ * from its IndexedDB bytes. No-op for restty, which loads bytes directly.
+ */
+export async function ensureTerminalFontLoaded(settings: PwaTerminalSettings): Promise<void> {
+  if (!isCustomSelection(settings.fontFamily)) return;
+  if (!('fonts' in document) || typeof FontFace === 'undefined') return;
+  const id = customSelectionId(settings.fontFamily);
+  const family = `${CUSTOM_FONT_FAMILY_PREFIX}${id}`;
+  let already = false;
+  document.fonts.forEach((face) => {
+    if (face.family === family) already = true;
+  });
+  if (already) return;
+  const data = await getCustomFontData(id).catch(() => undefined);
+  if (!data) return;
+  try {
+    const face = new FontFace(family, data);
+    await face.load();
+    document.fonts.add(face);
+  } catch {
+    /* invalid bytes — wterm uses the fallback stack, restty falls back too */
   }
 }
 
@@ -146,18 +177,3 @@ function normalizeFontUrl(value: unknown): string {
   }
 }
 
-function cssString(value: string): string {
-  return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
-}
-
-function cssUrl(value: string): string {
-  return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', '');
-}
-
-function fontFormat(url: string): string {
-  const path = new URL(url, window.location.href).pathname.toLowerCase();
-  if (path.endsWith('.woff2')) return 'woff2';
-  if (path.endsWith('.woff')) return 'woff';
-  if (path.endsWith('.otf')) return 'opentype';
-  return 'truetype';
-}

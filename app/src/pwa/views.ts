@@ -6,7 +6,20 @@ import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
 import { WtermTerminalAdapter } from './wtermAdapter';
 import { ResttyTerminalAdapter } from './resttyAdapter';
-import { loadCustomFont, normalizePwaSettings, applyPwaAppearance } from './settings';
+import { ensureTerminalFontLoaded, normalizePwaSettings, applyPwaAppearance } from './settings';
+import {
+  BUNDLED_FONTS,
+  DEFAULT_FONT_ID,
+  customSelection,
+  isCustomSelection,
+} from './terminalFonts';
+import {
+  addCustomFontFromFile,
+  addCustomFontFromUrl,
+  deleteCustomFont,
+  listCustomFonts,
+  type CustomFontMeta,
+} from './customFontStore';
 import { getThemePalette, THEME_PRESETS } from './themes';
 import {
   loadSettingsProfiles,
@@ -361,7 +374,7 @@ export function openSettings(initial: SettingsTab = 'appearance'): void {
 }
 
 function renderSettingsTab(body: HTMLElement, tab: SettingsTab, profileId: string): void {
-  if (tab === 'appearance') return renderAppearanceTab(body, profileId);
+  if (tab === 'appearance') return void renderAppearanceTab(body, profileId);
   if (tab === 'about') return void renderAboutTab(body);
   const note =
     tab === 'keyboard'
@@ -377,14 +390,40 @@ function setRow(label: string, control: string, hint?: string): string {
   </div>`;
 }
 
-function renderAppearanceTab(body: HTMLElement, profileId: string): void {
+async function renderAppearanceTab(body: HTMLElement, profileId: string): Promise<void> {
   const s = getSettingsProfile(profileId).settings;
   const save = (patch: Record<string, unknown>): void => {
     const current = getSettingsProfile(profileId);
     upsertSettingsProfile({ ...current, settings: normalizePwaSettings({ ...current.settings, ...patch }) });
   };
+  const rerender = (): void => void renderAppearanceTab(body, profileId);
   const opts = (values: (string | number)[], current: string | number): string =>
     values.map((v) => `<option value="${v}"${String(v) === String(current) ? ' selected' : ''}>${v}</option>`).join('');
+
+  const customFonts = await listCustomFonts().catch((): CustomFontMeta[] => []);
+  const bundledIds = new Set(BUNDLED_FONTS.map((f) => f.id));
+  const selectedFont = isCustomSelection(s.fontFamily)
+    ? customFonts.some((f) => customSelection(f.id) === s.fontFamily)
+      ? s.fontFamily
+      : DEFAULT_FONT_ID
+    : bundledIds.has(s.fontFamily)
+      ? s.fontFamily
+      : DEFAULT_FONT_ID;
+  const fontOptions =
+    `<optgroup label="Bundled">${BUNDLED_FONTS.map(
+      (f) => `<option value="${f.id}"${f.id === selectedFont ? ' selected' : ''}>${escapeHTML(f.family)}</option>`,
+    ).join('')}</optgroup>` +
+    (customFonts.length
+      ? `<optgroup label="Your fonts">${customFonts
+          .map((f) => {
+            const value = customSelection(f.id);
+            return `<option value="${value}"${value === selectedFont ? ' selected' : ''}>${escapeHTML(f.name)}</option>`;
+          })
+          .join('')}</optgroup>`
+      : '');
+  const selectedCustom = isCustomSelection(selectedFont)
+    ? customFonts.find((f) => customSelection(f.id) === selectedFont)
+    : undefined;
 
   const swatches = [...THEME_PRESETS.entries()]
     .map(([id, p]) => {
@@ -403,7 +442,23 @@ README  <span style="color:${p.magenta}">.env</span></span>`;
     <div class="group-title">Theme</div>
     <div class="theme-grid">${swatches}</div>
     <div class="group-title">Text</div>
-    ${setRow('Font family', `<input name="fontFamily" value="${escapeHTML(s.fontFamily)}">`)}
+    ${setRow('Font', `<select name="fontFamily">${fontOptions}</select>`, 'Bundled, or your own — stored on this device')}
+    ${setRow(
+      'Add a font',
+      `<button type="button" class="btn-ghost" id="fontUploadBtn">Upload…</button>
+       <input type="file" id="fontUploadInput" accept=".ttf,.otf,.woff,.woff2,font/*" hidden>`,
+      '.ttf, .otf, .woff or .woff2',
+    )}
+    ${setRow(
+      'From URL',
+      `<div style="display:flex;gap:6px">
+         <input type="text" id="fontUrlInput" placeholder="https://…/Font.ttf" autocomplete="off" spellcheck="false">
+         <button type="button" class="btn-ghost" id="fontUrlBtn">Add</button>
+       </div>`,
+      'Downloaded and stored locally',
+    )}
+    ${selectedCustom ? setRow('Remove font', `<button type="button" class="btn-ghost" id="fontRemoveBtn">Remove “${escapeHTML(selectedCustom.name)}”</button>`) : ''}
+    <div id="fontMsg" class="set-hint" role="status"></div>
     ${setRow('Size', `<select class="control-narrow" name="fontSize">${opts([11, 12, 13, 14, 15, 16, 18, 20, 22], s.fontSize)}</select>`)}
     ${setRow('Cursor', `<select name="cursorStyle">${opts(['block', 'bar', 'underline'], s.cursorStyle)}</select>`)}
     ${setRow('Cursor blink', `<select name="cursorBlink">${opts(['on', 'off'], s.cursorBlink ? 'on' : 'off')}</select>`)}
@@ -411,6 +466,40 @@ README  <span style="color:${p.magenta}">.env</span></span>`;
     ${setRow('Padding', `<select class="control-narrow" name="terminalPadding">${opts([0, 4, 8, 12, 16, 24], s.terminalPadding)}</select>`, 'Space around the terminal canvas')}
     ${setRow('Scrollback', `<select name="scrollback">${opts([1000, 5000, 10000, 20000], s.scrollback)}</select>`)}
   `;
+
+  const fontMsg = body.querySelector<HTMLElement>('#fontMsg');
+  const showFontMsg = (text: string, bad = false): void => {
+    if (!fontMsg) return;
+    fontMsg.textContent = text;
+    fontMsg.style.color = bad ? '#e9a0a0' : 'var(--faint)';
+  };
+  const addFont = async (run: () => Promise<{ id: string }>): Promise<void> => {
+    showFontMsg('Adding font…');
+    try {
+      const meta = await run();
+      save({ fontFamily: customSelection(meta.id) });
+      rerender();
+    } catch (error) {
+      showFontMsg(error instanceof Error ? error.message : 'Could not add font.', true);
+    }
+  };
+  const uploadInput = body.querySelector<HTMLInputElement>('#fontUploadInput');
+  body.querySelector<HTMLButtonElement>('#fontUploadBtn')?.addEventListener('click', () => uploadInput?.click());
+  uploadInput?.addEventListener('change', () => {
+    const file = uploadInput.files?.[0];
+    if (file) void addFont(() => addCustomFontFromFile(file));
+  });
+  body.querySelector<HTMLButtonElement>('#fontUrlBtn')?.addEventListener('click', () => {
+    const url = body.querySelector<HTMLInputElement>('#fontUrlInput')?.value.trim() ?? '';
+    if (url) void addFont(() => addCustomFontFromUrl(url));
+  });
+  body.querySelector<HTMLButtonElement>('#fontRemoveBtn')?.addEventListener('click', () => {
+    if (!selectedCustom) return;
+    void deleteCustomFont(selectedCustom.id).then(() => {
+      save({ fontFamily: DEFAULT_FONT_ID });
+      rerender();
+    });
+  });
 
   body.querySelectorAll<HTMLButtonElement>('[data-theme]').forEach((btn) =>
     btn.addEventListener('click', () => {
@@ -475,7 +564,7 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
 
   const settings = resolveSettings(spec.settingsProfileId);
   applyPwaAppearance(settings);
-  await loadCustomFont(settings);
+  await ensureTerminalFontLoaded(settings);
 
   const palette = getThemePalette(settings.theme);
   setThemeColor(palette.background);
