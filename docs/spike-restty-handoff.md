@@ -1,6 +1,41 @@
 # restty spike handoff (`spike/restty-iwa`)
 
-**Status:** Phase 0 spike mostly works; **trackpad scrollback scroll is still broken** on device (ChromeOS IWA via dev proxy).
+**Status:** Phase 0 spike works; **trackpad scrollback scroll is FIXED** (was broken on device — ChromeOS IWA via dev proxy).
+
+## Scroll fix (root cause + resolution)
+
+**Root cause: no font ever loaded, so `cellH` stayed 0 and restty's wheel handler bailed.**
+
+- On touch devices (`navigator.maxTouchPoints > 0`) restty installs **no native
+  scroll host** (`scrollbar-runtime.ts` L52–69) — scrollback relies entirely on
+  the canvas `onWheel` handler.
+- That handler early-returns when `getGridState().cellH === 0`
+  (`bind-pointer-aux-handlers.ts onWheel: !i() || !a() || !o().cellH`).
+- The app passed **no `fontSources`**, so restty used its defaults: the Local
+  Font Access API (gated/denied inside an IWA — no installed JetBrains Mono Nerd
+  Font) and a **jsdelivr CDN** fetch (offline/blocked on device). Neither
+  delivered a font buffer → `computeCellMetrics()` returned null → `cellH = 0` →
+  wheel bailed → scrollback never moved. (Keys/DA/CPR still worked because they
+  are VT-core, font-independent.)
+
+**Fix:** bundle JetBrains Mono (Regular + Bold, OFL) under `app/public/fonts/`
+and load them via same-origin `appOptions.fontSources` in `resttyAdapter.ts`
+(allowed by the IWA CSP `connect-src 'self'`). A real font always loads →
+`cellH > 0` → trackpad scrollback scrolls. Box-drawing/powerline glyphs are
+drawn programmatically by restty, so a Nerd Font is not required.
+
+**Verified headless** (Chromium CDP, `navigator.maxTouchPoints` overridden to
+simulate the device's canvas-wheel-only path): before the fix `onGridSize` never
+fires and dispatched wheels report `defaultPrevented === false` (handler bails);
+after the fix `onGridSize` fires (`cellH > 0`), wheels report
+`defaultPrevented === true`, and the rendered canvas visibly changes on scroll
+(screenshot diff). Headless without a real font does NOT reproduce — its
+swiftshader/no-font state mimics the bug, which is why the original device repro
+was hard to chase from the harness.
+
+---
+
+### Original report (pre-fix)
 
 ## What landed on this branch
 

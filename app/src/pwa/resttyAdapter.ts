@@ -12,6 +12,25 @@ type LoopbackPtyTransport = {
   destroy: () => void;
 };
 
+/**
+ * Same-origin terminal fonts bundled with the app (`app/public/fonts/`).
+ *
+ * restty's built-in default font list resolves via the Local Font Access API
+ * (gated/denied inside an IWA) and a jsdelivr CDN fetch. In the ChromeOS IWA
+ * neither is reliable: there is no installed "JetBrains Mono Nerd Font" and the
+ * CDN is offline / blocked, so no font buffer ever reaches text-shaper. With no
+ * shaped font, `computeCellMetrics()` returns null and `gridState.cellH` stays
+ * 0 — which makes restty's wheel handler bail (`!getGridState().cellH`) and
+ * trackpad scrollback never moves. Loading our own font over the bundle origin
+ * (allowed by the IWA CSP `connect-src 'self'`) guarantees a non-zero cell
+ * height, which is what actually restores scrolling. Box-drawing/powerline
+ * glyphs are rendered programmatically by restty, so a Nerd Font is not needed.
+ */
+const RESTTY_FONT_SOURCES = [
+  { type: 'url' as const, url: '/fonts/JetBrainsMono-Regular.ttf', label: 'JetBrains Mono' },
+  { type: 'url' as const, url: '/fonts/JetBrainsMono-Bold.ttf', label: 'JetBrains Mono Bold' },
+];
+
 type ResttyDebugEntry = {
   sessionId: string;
   location: string;
@@ -172,6 +191,10 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     const term = new Terminal({
       appOptions: {
         ptyTransport: createLoopbackPtyTransport(emitInput, (cols, rows) => adapter.emitResize(cols, rows), debugCtx),
+        // Replace restty's default Local-Font-Access + CDN font list with our
+        // bundled same-origin fonts so a real font always loads (cellH > 0);
+        // see RESTTY_FONT_SOURCES. Without this, scrollback wheel scroll bails.
+        fontSources: RESTTY_FONT_SOURCES,
         autoResize: true,
         attachCanvasEvents: true,
         // restty touch pan is armed on pointerdown only in long-press/drag modes (see
