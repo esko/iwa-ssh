@@ -150,7 +150,7 @@ connect-src 'self' https: wss: blob: data:
 script-src 'self' 'wasm-unsafe-eval'
 img-src 'self' https: blob: data:
 media-src 'self' https: blob: data:
-font-src 'self' blob: data:
+font-src 'self' https: blob: data:
 style-src 'self' 'unsafe-inline'
 require-trusted-types-for 'script'
 trusted-types default
