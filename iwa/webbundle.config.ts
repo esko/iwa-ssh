@@ -33,13 +33,21 @@ export type WebBundleConfig = {
   headerOverride: BundleHeaderOverride;
 };
 
-/** Standard IWA CSP — keep in sync with docs/SECURITY.md */
+/**
+ * Standard IWA CSP — keep in sync with docs/SECURITY.md.
+ *
+ * Mirrors Chrome's required IWA baseline. Trusted Types must be turned on with
+ * `require-trusted-types-for 'script'` (the directive Chrome enforces on IWAs);
+ * `trusted-types default` only allowlists policy names and does NOT enable
+ * enforcement on its own. The app registers the `default` policy in
+ * app/src/security/trustedTypes.ts.
+ */
 export const IWA_CSP =
   "base-uri 'none'; default-src 'self'; object-src 'none'; " +
   "frame-src 'self' https: blob: data:; connect-src 'self' https: wss: blob: data:; " +
   "script-src 'self' 'wasm-unsafe-eval'; img-src 'self' https: blob: data:; " +
   "media-src 'self' https: blob: data:; font-src 'self' blob: data:; " +
-  "style-src 'self' 'unsafe-inline'; trusted-types default;";
+  "style-src 'self' 'unsafe-inline'; require-trusted-types-for 'script'; trusted-types default;";
 
 export const bundleConfig: WebBundleConfig = {
   appName: 'iwa-ssh',

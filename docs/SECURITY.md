@@ -152,10 +152,11 @@ img-src 'self' https: blob: data:
 media-src 'self' https: blob: data:
 font-src 'self' blob: data:
 style-src 'self' 'unsafe-inline'
+require-trusted-types-for 'script'
 trusted-types default
 ```
 
-Chrome enforces `require-trusted-types-for 'script'` on IWAs at runtime. The app registers a **default** Trusted Types policy in `app/src/security/trustedTypes.ts` before any `innerHTML` rendering so the shell can boot.
+The bundle declares `require-trusted-types-for 'script'` (the directive that actually enables Trusted Types enforcement, which Chrome requires on IWAs) together with `trusted-types default` (the policy allowlist). The app registers a **default** Trusted Types policy in `app/src/security/trustedTypes.ts` before any `innerHTML` rendering so the shell can boot.
 
 Cross-origin isolation headers:
 
