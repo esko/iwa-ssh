@@ -47,15 +47,17 @@ let appliedFontSelection: string | null = null;
 let fontSyncCleanup: (() => void) | null = null;
 
 /**
- * Reapply the terminal font to the live session when the relevant settings
- * profile changes — same window (settings opened from the terminal context
- * menu) or another window (settings changed in the launcher, delivered via a
- * `storage` event). Only the font is reapplied live; other settings still take
- * effect on the next open.
+ * Reapply terminal settings (theme colors, cursor, font size, and font) to the
+ * live session when the relevant profile changes — same window (settings opened
+ * from the terminal context menu) or another window (launcher), delivered via a
+ * `storage` event. Theme/cursor/size apply every time; the (heavier) font swap
+ * only runs when the selection actually changed.
  */
-async function syncActiveTerminalFont(): Promise<void> {
+async function syncActiveTerminalSettings(): Promise<void> {
   if (!activeTerminal || !activeSpec) return;
   const settings = resolveSettings(activeSpec.settingsProfileId);
+  activeTerminal.setAppearance(settings);
+  setThemeColor(getThemePalette(settings.theme).background);
   if (settings.fontFamily === appliedFontSelection) return;
   appliedFontSelection = settings.fontFamily;
   await ensureTerminalFontLoaded(settings);
@@ -417,7 +419,7 @@ async function renderAppearanceTab(body: HTMLElement, profileId: string): Promis
     upsertSettingsProfile({ ...current, settings: normalizePwaSettings({ ...current.settings, ...patch }) });
     // Same-window reapply (settings opened from the terminal context menu).
     // Cross-window changes arrive via the `storage` listener in renderTerminal.
-    void syncActiveTerminalFont();
+    void syncActiveTerminalSettings();
   };
   const rerender = (): void => void renderAppearanceTab(body, profileId);
   const opts = (values: (string | number)[], current: string | number): string =>
@@ -631,7 +633,7 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
   appliedFontSelection = settings.fontFamily;
   // Live-reapply the font when its settings profile changes in another window.
   const onSettingsStorage = (event: StorageEvent): void => {
-    if (event.key === null || event.key === SETTINGS_PROFILES_STORAGE_KEY) void syncActiveTerminalFont();
+    if (event.key === null || event.key === SETTINGS_PROFILES_STORAGE_KEY) void syncActiveTerminalSettings();
   };
   window.addEventListener('storage', onSettingsStorage);
   fontSyncCleanup = () => window.removeEventListener('storage', onSettingsStorage);

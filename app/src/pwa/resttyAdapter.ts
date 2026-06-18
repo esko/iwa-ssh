@@ -3,6 +3,48 @@ import type { TerminalAdapter, TerminalSubscription } from '../terminal/Terminal
 import type { PwaTerminalSettings } from './types';
 import { DEFAULT_FONT_ID, bundledFontForSelection, isCustomSelection, customSelectionId } from './terminalFonts';
 import { getCustomFontData } from './customFontStore';
+import { getThemePalette } from './themes';
+import type { TerminalPalette } from './types';
+
+type Rgb = { r: number; g: number; b: number };
+
+function hexToRgb(hex: string): Rgb {
+  const h = hex.replace('#', '').trim();
+  const v = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  return {
+    r: parseInt(v.slice(0, 2), 16) || 0,
+    g: parseInt(v.slice(2, 4), 16) || 0,
+    b: parseInt(v.slice(4, 6), 16) || 0,
+  };
+}
+
+/** Convert our palette to restty's GhosttyTheme (semantic colors + 256-palette). */
+function buildResttyTheme(p: TerminalPalette): unknown {
+  const ansi = [
+    p.black, p.red, p.green, p.yellow, p.blue, p.magenta, p.cyan, p.white,
+    p.brightBlack, p.brightRed, p.brightGreen, p.brightYellow, p.brightBlue, p.brightMagenta, p.brightCyan, p.brightWhite,
+  ];
+  const palette: Array<Rgb | undefined> = new Array(256).fill(undefined);
+  ansi.forEach((hex, i) => { palette[i] = hexToRgb(hex); });
+  return {
+    name: p.name,
+    colors: {
+      background: hexToRgb(p.background),
+      foreground: hexToRgb(p.foreground),
+      cursor: hexToRgb(p.cursor),
+      cursorText: hexToRgb(p.background),
+      selectionBackground: hexToRgb(p.selectionBackground),
+      palette,
+    },
+    raw: {},
+  };
+}
+
+/** DECSCUSR sequence for cursor shape + blink. */
+function cursorSequence(style: 'block' | 'bar' | 'underline', blink: boolean): string {
+  const steady = style === 'block' ? 2 : style === 'underline' ? 4 : 6;
+  return `\x1b[${blink ? steady - 1 : steady} q`;
+}
 
 /** Minimal PtyTransport shape — DA/DSR replies route here, not onData (source=pty). */
 type LoopbackPtyTransport = {
@@ -266,6 +308,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     // term.onData would duplicate keyboard when isConnected() is true.
     term.onResize(({ cols, rows }) => adapter.resizeListeners.forEach((cb) => cb(cols, rows)));
     adapter.term = term;
+    adapter.setAppearance(settings);
     term.focus();
     // SPIKE-ONLY: expose the adapter so the CDP harness can probe DA/DSR replies
     // and the render backend. Removed in Phase 1.
@@ -338,6 +381,18 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   }
 
   updateAppearance(): void {}
+
+  /** Apply theme colors, cursor shape/blink, and font size to the live terminal. */
+  setAppearance(settings: PwaTerminalSettings): void {
+    const restty = this.term?.restty as
+      | { applyTheme?: (theme: unknown, name?: string) => void; setFontSize?: (px: number) => void }
+      | undefined;
+    if (!restty) return;
+    const palette = getThemePalette(settings.theme);
+    restty.applyTheme?.(buildResttyTheme(palette), palette.name);
+    if (Number.isFinite(settings.fontSize)) restty.setFontSize?.(settings.fontSize);
+    this.term?.write(cursorSequence(settings.cursorStyle, settings.cursorBlink));
+  }
 
   /** Reapply the terminal font live (e.g. after a settings change) without reopening. */
   async setFont(settings: PwaTerminalSettings): Promise<void> {

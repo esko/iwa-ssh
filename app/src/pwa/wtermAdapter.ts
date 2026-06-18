@@ -105,6 +105,11 @@ export class WtermTerminalAdapter implements TerminalAdapter {
     if (this.el) this.el.style.setProperty('--term-font-family', terminalFontFamily(settings));
   }
 
+  /** Apply theme colors and font size live (wterm is CSS-custom-property driven). */
+  setAppearance(settings: PwaTerminalSettings): void {
+    if (this.el) applyWtermTheme(this.el, settings);
+  }
+
   dispose(): void {
     this.term?.destroy();
     this.term = null;
