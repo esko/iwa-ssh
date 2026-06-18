@@ -758,6 +758,9 @@ textarea {
   width: 100vw;
   height: 100vh;
   height: 100dvh;
+  /* box-sizing: border-box (global) keeps the canvas inside the padding; the
+     padded gutter shows the terminal background. */
+  padding: var(--terminal-padding, 0px);
 }
 
 #terminal[data-renderer='restty'] .restty-pane-root,

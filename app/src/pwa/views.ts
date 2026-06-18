@@ -56,8 +56,10 @@ let fontSyncCleanup: (() => void) | null = null;
 async function syncActiveTerminalSettings(): Promise<void> {
   if (!activeTerminal || !activeSpec) return;
   const settings = resolveSettings(activeSpec.settingsProfileId);
+  applyPwaAppearance(settings); // accent / density / terminal padding
   activeTerminal.setAppearance(settings);
   setThemeColor(getThemePalette(settings.theme).background);
+  activeTerminal.fit?.(); // padding change resizes the grid
   if (settings.fontFamily === appliedFontSelection) return;
   appliedFontSelection = settings.fontFamily;
   await ensureTerminalFontLoaded(settings);
