@@ -95,13 +95,18 @@ export function installWindowControls(): void {
   window.matchMedia('(display-state: maximized)').addEventListener?.('change', syncMaxIcon);
 
   const w = window as AcwWindow;
-  bar.querySelector('[data-act="minimize"]')?.addEventListener('click', () => void w.minimize?.());
-  maxBtn.addEventListener('click', async () => {
+  const toggleMaximize = async (): Promise<void> => {
     if (isMaximized()) await w.restore?.();
     else await w.maximize?.();
     syncMaxIcon();
-  });
+  };
+  bar.querySelector('[data-act="minimize"]')?.addEventListener('click', () => void w.minimize?.());
+  maxBtn.addEventListener('click', () => void toggleMaximize());
   bar.querySelector('[data-act="close"]')?.addEventListener('click', () => window.close());
+  // ChromeOS: double-clicking the caption (not a button) maximizes/restores.
+  bar.addEventListener('dblclick', (event) => {
+    if (!(event.target as Element)?.closest('.win-controls')) void toggleMaximize();
+  });
 
   void ensureWindowManagement();
 }
