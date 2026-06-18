@@ -13,6 +13,8 @@ export type SettingsProfile = {
 };
 
 const STORE_KEY = 'iwa-ssh-settings-profiles';
+/** localStorage key the profiles persist under (for cross-window `storage` events). */
+export const SETTINGS_PROFILES_STORAGE_KEY = STORE_KEY;
 export const DEFAULT_SETTINGS_PROFILE_ID = 'default';
 
 export function loadSettingsProfiles(): SettingsProfile[] {

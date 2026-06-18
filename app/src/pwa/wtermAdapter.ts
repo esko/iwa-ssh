@@ -100,6 +100,11 @@ export class WtermTerminalAdapter implements TerminalAdapter {
     if (this.el) applyWtermTheme(this.el, undefined);
   }
 
+  /** Reapply the terminal font live; wterm reads it from the CSS custom property. */
+  setFont(settings: PwaTerminalSettings): void {
+    if (this.el) this.el.style.setProperty('--term-font-family', terminalFontFamily(settings));
+  }
+
   dispose(): void {
     this.term?.destroy();
     this.term = null;

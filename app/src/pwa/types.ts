@@ -28,9 +28,8 @@ export type TerminalPalette = {
 export type TerminalTheme = { preset: string } | { preset: 'custom'; palette: TerminalPalette };
 
 export type PwaTerminalSettings = {
+  /** Font selection: a bundled font id or `custom:<id>` (see terminalFonts). */
   fontFamily: string;
-  customFontName: string;
-  customFontUrl: string;
   fontSize: number;
   scrollback: number;
   cursorBlink: boolean;

@@ -30,6 +30,7 @@ import {
   upsertSettingsProfile,
   resolveSettings,
   DEFAULT_SETTINGS_PROFILE_ID,
+  SETTINGS_PROFILES_STORAGE_KEY,
 } from './settingsProfiles';
 import { profileToSpec, recordConnection, specFromQuery, specToQuery } from './profileModel';
 import { shouldPassThroughSystemShortcut } from './shortcuts';
@@ -41,6 +42,25 @@ let activeTransport: TerminalTransport | null = null;
 let activeTerminal: WtermTerminalAdapter | ResttyTerminalAdapter | null = null;
 let activeSpec: PwaConnectionSpec | null = null;
 let reconnecting = false;
+/** Font currently applied to the live terminal; guards redundant reapplies. */
+let appliedFontSelection: string | null = null;
+let fontSyncCleanup: (() => void) | null = null;
+
+/**
+ * Reapply the terminal font to the live session when the relevant settings
+ * profile changes — same window (settings opened from the terminal context
+ * menu) or another window (settings changed in the launcher, delivered via a
+ * `storage` event). Only the font is reapplied live; other settings still take
+ * effect on the next open.
+ */
+async function syncActiveTerminalFont(): Promise<void> {
+  if (!activeTerminal || !activeSpec) return;
+  const settings = resolveSettings(activeSpec.settingsProfileId);
+  if (settings.fontFamily === appliedFontSelection) return;
+  appliedFontSelection = settings.fontFamily;
+  await ensureTerminalFontLoaded(settings);
+  await activeTerminal.setFont(settings);
+}
 
 // ----------------------------------------------------------------- helpers --
 
@@ -395,6 +415,9 @@ async function renderAppearanceTab(body: HTMLElement, profileId: string): Promis
   const save = (patch: Record<string, unknown>): void => {
     const current = getSettingsProfile(profileId);
     upsertSettingsProfile({ ...current, settings: normalizePwaSettings({ ...current.settings, ...patch }) });
+    // Same-window reapply (settings opened from the terminal context menu).
+    // Cross-window changes arrive via the `storage` listener in renderTerminal.
+    void syncActiveTerminalFont();
   };
   const rerender = (): void => void renderAppearanceTab(body, profileId);
   const opts = (values: (string | number)[], current: string | number): string =>
@@ -605,6 +628,13 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
     ? await ResttyTerminalAdapter.create(terminalRoot, settings)
     : await WtermTerminalAdapter.create(terminalRoot, settings);
   terminalRoot.dataset.renderer = useRestty ? 'restty' : 'wterm';
+  appliedFontSelection = settings.fontFamily;
+  // Live-reapply the font when its settings profile changes in another window.
+  const onSettingsStorage = (event: StorageEvent): void => {
+    if (event.key === null || event.key === SETTINGS_PROFILES_STORAGE_KEY) void syncActiveTerminalFont();
+  };
+  window.addEventListener('storage', onSettingsStorage);
+  fontSyncCleanup = () => window.removeEventListener('storage', onSettingsStorage);
   activeTerminal.onTitle((value) => {
     document.title = value.trim() || title;
   });
@@ -840,6 +870,9 @@ export function disposeTerminal(): void {
   void activeTransport?.disconnect().catch(() => undefined);
   activeTransport?.dispose();
   activeTerminal?.dispose();
+  fontSyncCleanup?.();
+  fontSyncCleanup = null;
+  appliedFontSelection = null;
   activeTransport = null;
   activeTerminal = null;
   activeSpec = null;

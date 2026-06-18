@@ -339,6 +339,17 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
 
   updateAppearance(): void {}
 
+  /** Reapply the terminal font live (e.g. after a settings change) without reopening. */
+  async setFont(settings: PwaTerminalSettings): Promise<void> {
+    const restty = this.term?.restty as
+      | { setFontSources?: (sources: ResttyFontSource[]) => Promise<void> }
+      | undefined;
+    if (!restty?.setFontSources) return;
+    const sources = await resolveFontSources(settings.fontFamily);
+    await restty.setFontSources(sources);
+    this.syncLayout();
+  }
+
   /** SPIKE debug: mouse mode + recent wheel/scroll logs (device ring buffer). */
   getDebugSummary(): Record<string, unknown> {
     const mouse = this.term?.restty?.getMouseStatus?.();

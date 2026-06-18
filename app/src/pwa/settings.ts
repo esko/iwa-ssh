@@ -13,8 +13,6 @@ export const SETTINGS_KEY = 'iwa-ssh-legacy-pwa-terminal-settings';
 
 export const DEFAULT_PWA_SETTINGS: PwaTerminalSettings = {
   fontFamily: DEFAULT_FONT_ID,
-  customFontName: '',
-  customFontUrl: '',
   fontSize: 15,
   scrollback: 5000,
   cursorBlink: true,
@@ -89,8 +87,6 @@ export function normalizePwaSettings(value: Partial<PwaTerminalSettings> | Recor
 
   return {
     fontFamily: normalizeText(value.fontFamily, DEFAULT_PWA_SETTINGS.fontFamily, 160),
-    customFontName: normalizeText(value.customFontName, DEFAULT_PWA_SETTINGS.customFontName, 80),
-    customFontUrl: normalizeFontUrl(value.customFontUrl),
     fontSize: Number.isFinite(fontSize) ? clamp(Math.round(fontSize), 12, 22) : DEFAULT_PWA_SETTINGS.fontSize,
     scrollback: [1000, 5000, 10000, 20000].includes(scrollback) ? scrollback : DEFAULT_PWA_SETTINGS.scrollback,
     cursorBlink: typeof value.cursorBlink === 'boolean' ? value.cursorBlink : DEFAULT_PWA_SETTINGS.cursorBlink,
@@ -162,18 +158,5 @@ function normalizeHexColor(value: unknown, fallback: string): string {
   if (typeof value !== 'string') return fallback;
   const cleaned = value.trim();
   return /^#[0-9A-Fa-f]{3}$|^#[0-9A-Fa-f]{4}$|^#[0-9A-Fa-f]{6}$|^#[0-9A-Fa-f]{8}$/.test(cleaned) ? cleaned : fallback;
-}
-
-function normalizeFontUrl(value: unknown): string {
-  if (typeof value !== 'string') return '';
-  const nextValue = value.trim();
-  if (!nextValue) return '';
-  try {
-    const url = new URL(nextValue, window.location.href);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
-    return url.pathname.startsWith('/') && url.origin === window.location.origin ? `${url.pathname}${url.search}${url.hash}` : url.toString();
-  } catch {
-    return '';
-  }
 }
 
