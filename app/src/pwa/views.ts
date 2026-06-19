@@ -6,6 +6,7 @@ import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
 import { WtermTerminalAdapter } from './wtermAdapter';
 import { ResttyTerminalAdapter } from './resttyAdapter';
+import type { TerminalSubscription } from '../terminal/TerminalAdapter';
 import { ensureTerminalFontLoaded, normalizePwaSettings, applyPwaAppearance } from './settings';
 import {
   BUNDLED_FONTS,
@@ -38,13 +39,41 @@ import { showContextMenu, type ContextMenuItem } from './contextMenu';
 import { createTransport, type TerminalTransport } from './transport';
 import type { PwaConnectionSpec, TerminalTransportStatus } from './types';
 
-let activeTransport: TerminalTransport | null = null;
+// `active*` always point at the focused tab's session, so the existing helpers
+// (copy, reconnect, settings sync, context menu) keep operating on it.
 let activeTerminal: WtermTerminalAdapter | ResttyTerminalAdapter | null = null;
 let activeSpec: PwaConnectionSpec | null = null;
-let reconnecting = false;
-/** Font currently applied to the live terminal; guards redundant reapplies. */
+/** Font currently applied to the active terminal; guards redundant reapplies. */
 let appliedFontSelection: string | null = null;
 let fontSyncCleanup: (() => void) | null = null;
+let activeSessionId: string | null = null;
+let tabStrip: HTMLElement | null = null;
+let sessionsHost: HTMLElement | null = null;
+let sharedStatus: HTMLElement | null = null;
+
+/** One terminal session per tab (ADR 0008). */
+type TermSession = {
+  id: string;
+  spec: PwaConnectionSpec;
+  title: string;
+  status: TerminalTransportStatus;
+  container: HTMLElement;
+  surface: HTMLElement;
+  terminal: WtermTerminalAdapter | ResttyTerminalAdapter;
+  transport: TerminalTransport;
+  appliedFont: string;
+  reconnecting: boolean;
+  titleSub: TerminalSubscription | null;
+};
+
+const sessions: TermSession[] = [];
+let sessionSeq = 0;
+let terminalQuery: URLSearchParams = new URLSearchParams();
+let statusHideTimer = 0;
+
+function activeSession(): TermSession | null {
+  return sessions.find((s) => s.id === activeSessionId) ?? null;
+}
 
 /**
  * Reapply terminal settings (theme colors, cursor, font size, and font) to the
@@ -578,6 +607,7 @@ function appendSpikeRendererParams(params: URLSearchParams): void {
 
 export async function renderTerminal(root: HTMLElement): Promise<void> {
   const query = new URLSearchParams(window.location.search);
+  terminalQuery = query;
   let spec = specFromQuery(query);
   if (query.get('profile')) {
     const profile = (await listProfiles()).find((item) => item.id === query.get('profile'));
@@ -587,68 +617,217 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
     renderTerminalConnect(root);
     return;
   }
-  activeSpec = spec;
-
-  const settings = resolveSettings(spec.settingsProfileId);
-  applyPwaAppearance(settings);
-  await ensureTerminalFontLoaded(settings);
-
-  const palette = getThemePalette(settings.theme);
-  setThemeColor(palette.background);
-  document.documentElement.style.setProperty('--term-bg', palette.background);
-  const title = connectionTarget(spec);
-  document.title = title;
 
   root.innerHTML = `
-    <main id="terminal" class="term-full" aria-label="Terminal"></main>
+    <div class="term-shell">
+      <div class="term-tabs" role="tablist" aria-label="Terminal tabs" data-count="0"></div>
+      <div class="term-sessions"></div>
+    </div>
     <div id="status" class="term-status" data-state="connecting" data-show="true"><span class="status-state">connecting</span></div>
   `;
+  tabStrip = requiredElement<HTMLElement>('.term-tabs', root);
+  sessionsHost = requiredElement<HTMLElement>('.term-sessions', root);
+  sharedStatus = requiredElement<HTMLElement>('#status', root);
+  tabStrip.addEventListener('click', onTabStripClick);
 
-  const terminalRoot = requiredElement<HTMLElement>('#terminal', root);
-  const status = requiredElement<HTMLElement>('#status', root);
-  if (query.get('debug') !== '0') installTerminalDebugHud(root, terminalRoot, status);
-  let hideTimer = 0;
-  let lastState: TerminalTransportStatus = 'idle';
-  const updateStatus = (state: TerminalTransportStatus, error?: string): void => {
-    status.dataset.state = state;
-    status.dataset.show = state === 'connected' ? 'false' : 'true';
-    status.innerHTML = `<span class="status-state">${state}</span>${error ? `<span class="status-detail">${escapeHTML(error)}</span>` : ''}`;
-    document.title = state === 'error' ? `${title} — error` : title;
-    window.clearTimeout(hideTimer);
-    if (state === 'connected') hideTimer = window.setTimeout(() => (status.dataset.show = 'false'), 700);
-    // Session ended — return to the launcher. Stay put on errors (so they can be
-    // read) and during reconnect's own disconnect/connect cycle.
-    if (state === 'disconnected' && !reconnecting && lastState !== 'error') {
-      window.setTimeout(() => {
-        if (!reconnecting) navigate('/');
-      }, 700);
-    }
-    lastState = state;
-  };
+  installShortcutPassThrough();
+  installTabShortcuts();
+  installTerminalContextMenu(sessionsHost);
+  if (query.get('debug') !== '0') installTerminalDebugHud(root, sessionsHost, sharedStatus);
 
-  // SPIKE: restty default on this branch; ?renderer=wterm forces wterm.
-  const useRestty = spikeUseRestty(query);
-  activeTerminal = useRestty
-    ? await ResttyTerminalAdapter.create(terminalRoot, settings)
-    : await WtermTerminalAdapter.create(terminalRoot, settings);
-  terminalRoot.dataset.renderer = useRestty ? 'restty' : 'wterm';
-  appliedFontSelection = settings.fontFamily;
-  // Live-reapply the font when its settings profile changes in another window.
+  // Live-reapply settings when the active tab's profile changes in another window.
   const onSettingsStorage = (event: StorageEvent): void => {
     if (event.key === null || event.key === SETTINGS_PROFILES_STORAGE_KEY) void syncActiveTerminalSettings();
   };
   window.addEventListener('storage', onSettingsStorage);
   fontSyncCleanup = () => window.removeEventListener('storage', onSettingsStorage);
-  activeTerminal.onTitle((value) => {
-    document.title = value.trim() || title;
+
+  const session = await createSession(spec);
+  setActiveSession(session.id);
+}
+
+/** Build a fully-connected session (its own renderer + transport) in a new tab. */
+async function createSession(spec: PwaConnectionSpec): Promise<TermSession> {
+  const settings = resolveSettings(spec.settingsProfileId);
+  await ensureTerminalFontLoaded(settings);
+
+  const container = document.createElement('div');
+  container.className = 'term-session';
+  const surface = document.createElement('main');
+  surface.className = 'term-surface';
+  surface.setAttribute('aria-label', 'Terminal');
+  container.append(surface);
+  sessionsHost!.append(container);
+
+  const useRestty = spikeUseRestty(terminalQuery);
+  const terminal = useRestty
+    ? await ResttyTerminalAdapter.create(surface, settings)
+    : await WtermTerminalAdapter.create(surface, settings);
+  surface.dataset.renderer = useRestty ? 'restty' : 'wterm';
+
+  const session: TermSession = {
+    id: `tab${++sessionSeq}`,
+    spec,
+    title: connectionTarget(spec),
+    status: 'connecting',
+    container,
+    surface,
+    terminal,
+    transport: createTransport(spec, (state, error) => onSessionStatus(session, state, error)),
+    appliedFont: settings.fontFamily,
+    reconnecting: false,
+    titleSub: null,
+  };
+  session.titleSub = terminal.onTitle((value) => {
+    session.title = value.trim() || connectionTarget(spec);
+    if (session.id === activeSessionId) document.title = session.title;
+    renderTabs();
   });
-  activeTransport = createTransport(spec, updateStatus);
-  installShortcutPassThrough();
-  installTerminalContextMenu(terminalRoot);
+
+  terminal.setAppearance?.(settings);
+  sessions.push(session);
+  renderTabs();
   await recordConnection(spec);
-  await activeTransport.connect(activeTerminal);
-  activeTerminal.focus();
-  activeTerminal.fit();
+  await session.transport.connect(terminal);
+  terminal.fit?.();
+  return session;
+}
+
+function onSessionStatus(session: TermSession, state: TerminalTransportStatus, error?: string): void {
+  const prev = session.status;
+  session.status = state;
+  if (session.id === activeSessionId) updateSharedStatus(session, state, error);
+  renderTabs();
+  // A clean disconnect ends the tab; errors stay so they can be read, and a
+  // reconnect's own disconnect/connect cycle is ignored.
+  if (state === 'disconnected' && !session.reconnecting && prev !== 'error') {
+    window.setTimeout(() => {
+      if (!session.reconnecting) closeSession(session);
+    }, 700);
+  }
+}
+
+function updateSharedStatus(session: TermSession, state: TerminalTransportStatus, error?: string): void {
+  if (!sharedStatus) return;
+  sharedStatus.dataset.state = state;
+  sharedStatus.dataset.show = state === 'connected' ? 'false' : 'true';
+  sharedStatus.innerHTML = `<span class="status-state">${state}</span>${error ? `<span class="status-detail">${escapeHTML(error)}</span>` : ''}`;
+  document.title = state === 'error' ? `${session.title} — error` : session.title;
+  window.clearTimeout(statusHideTimer);
+  if (state === 'connected') statusHideTimer = window.setTimeout(() => sharedStatus && (sharedStatus.dataset.show = 'false'), 700);
+}
+
+function setActiveSession(id: string): void {
+  const session = sessions.find((s) => s.id === id);
+  if (!session) return;
+  activeSessionId = id;
+  sessions.forEach((s) => (s.container.hidden = s.id !== id));
+  activeTerminal = session.terminal;
+  activeSpec = session.spec;
+  appliedFontSelection = session.appliedFont;
+  (window as unknown as { __resttyAdapter?: unknown }).__resttyAdapter = session.terminal;
+
+  const settings = resolveSettings(session.spec.settingsProfileId);
+  applyPwaAppearance(settings);
+  const palette = getThemePalette(settings.theme);
+  setThemeColor(palette.background);
+  document.documentElement.style.setProperty('--term-bg', palette.background);
+
+  document.title = session.title;
+  updateSharedStatus(session, session.status);
+  renderTabs();
+  session.terminal.focus();
+  session.terminal.fit?.();
+}
+
+function closeSession(session: TermSession): void {
+  const index = sessions.indexOf(session);
+  if (index < 0) return;
+  session.titleSub?.dispose();
+  void session.transport.disconnect().catch(() => undefined);
+  session.transport.dispose();
+  session.terminal.dispose();
+  session.container.remove();
+  sessions.splice(index, 1);
+  if (sessions.length === 0) {
+    navigate('/');
+    return;
+  }
+  if (session.id === activeSessionId) {
+    setActiveSession(sessions[Math.min(index, sessions.length - 1)].id);
+  } else {
+    renderTabs();
+  }
+}
+
+async function openTab(spec: PwaConnectionSpec): Promise<void> {
+  const session = await createSession(spec);
+  setActiveSession(session.id);
+}
+
+function renderTabs(): void {
+  if (!tabStrip) return;
+  tabStrip.dataset.count = String(sessions.length);
+  const tabs = sessions
+    .map(
+      (s) => `<div class="term-tab" role="tab" data-id="${s.id}" aria-selected="${s.id === activeSessionId}" title="${escapeHTML(s.title)}">
+        <span class="term-tab-title">${escapeHTML(s.title)}</span>
+        <span class="term-tab-close" data-close="${s.id}" role="button" aria-label="Close tab">×</span>
+      </div>`,
+    )
+    .join('');
+  tabStrip.innerHTML = `${tabs}<button class="term-tab-new" type="button" data-newtab aria-label="New tab">+</button>`;
+}
+
+function onTabStripClick(event: MouseEvent): void {
+  const target = event.target as HTMLElement;
+  if (target.closest('[data-newtab]')) {
+    if (activeSpec) void openTab(activeSpec);
+    return;
+  }
+  const close = target.closest<HTMLElement>('[data-close]');
+  if (close) {
+    event.stopPropagation();
+    const session = sessions.find((s) => s.id === close.dataset.close);
+    if (session) closeSession(session);
+    return;
+  }
+  const tab = target.closest<HTMLElement>('.term-tab');
+  if (tab?.dataset.id) setActiveSession(tab.dataset.id);
+}
+
+function cycleTab(direction: number): void {
+  if (sessions.length < 2) return;
+  const index = sessions.findIndex((s) => s.id === activeSessionId);
+  const next = (index + direction + sessions.length) % sessions.length;
+  setActiveSession(sessions[next].id);
+}
+
+/** In-window tab keys for the unframed app window (ADR 0008). */
+function installTabShortcuts(): void {
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if (!event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.code === 'KeyT' && !event.shiftKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (activeSpec) void openTab(activeSpec);
+      } else if (event.code === 'KeyW' && !event.shiftKey) {
+        const session = activeSession();
+        if (session) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          closeSession(session);
+        }
+      } else if (event.code === 'Tab' && sessions.length > 1) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        cycleTab(event.shiftKey ? -1 : 1);
+      }
+    },
+    { capture: true },
+  );
 }
 
 function installTerminalDebugHud(
@@ -829,21 +1008,19 @@ function copyPath(): void {
 }
 
 function duplicateSession(): void {
-  if (!activeSpec) return;
-  const params = new URLSearchParams(specToQuery(activeSpec));
-  appendSpikeRendererParams(params);
-  openWindow(`/terminal.html?${params.toString()}`);
+  if (activeSpec) void openTab(activeSpec);
 }
 
 async function reconnect(): Promise<void> {
-  if (!activeTransport || !activeTerminal) return;
-  reconnecting = true;
+  const session = activeSession();
+  if (!session) return;
+  session.reconnecting = true;
   try {
-    activeTerminal.write('\x1b[2J\x1b[H');
-    await activeTransport.disconnect();
-    await activeTransport.connect(activeTerminal);
+    session.terminal.write('\x1b[2J\x1b[H');
+    await session.transport.disconnect();
+    await session.transport.connect(session.terminal);
   } finally {
-    reconnecting = false;
+    session.reconnecting = false;
   }
 }
 
@@ -884,13 +1061,17 @@ function installShortcutPassThrough(): void {
 }
 
 export function disposeTerminal(): void {
-  void activeTransport?.disconnect().catch(() => undefined);
-  activeTransport?.dispose();
-  activeTerminal?.dispose();
+  for (const session of sessions) {
+    session.titleSub?.dispose();
+    void session.transport.disconnect().catch(() => undefined);
+    session.transport.dispose();
+    session.terminal.dispose();
+  }
+  sessions.length = 0;
   fontSyncCleanup?.();
   fontSyncCleanup = null;
   appliedFontSelection = null;
-  activeTransport = null;
   activeTerminal = null;
   activeSpec = null;
+  activeSessionId = null;
 }
