@@ -781,9 +781,11 @@ function installTerminalDebugHud(
 function installTerminalContextMenu(terminalRoot: HTMLElement): void {
   terminalRoot.addEventListener('contextmenu', (event) => {
     event.preventDefault();
-    const hasSelection = activeTerminal?.hasSelection() ?? false;
+    // restty copies its own canvas selection (no public selection-text query),
+    // so enable Copy whenever that path exists; it's a no-op with no selection.
+    const canCopy = (activeTerminal?.hasSelection() ?? false) || canCopyViaRenderer();
     const items: ContextMenuItem[] = [
-      { type: 'item', label: 'Copy', key: '⌃⇧C', disabled: !hasSelection, onSelect: copySelection },
+      { type: 'item', label: 'Copy', key: '⌃⇧C', disabled: !canCopy, onSelect: copySelection },
       { type: 'item', label: 'Paste', key: '⌃⇧V', onSelect: pasteClipboard },
       { type: 'item', label: 'Copy path', onSelect: copyPath },
       { type: 'separator' },
@@ -798,7 +800,18 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
   });
 }
 
+type RendererCopy = { copySelectionToClipboard?: () => Promise<boolean> };
+
+function canCopyViaRenderer(): boolean {
+  return typeof (activeTerminal as RendererCopy | null)?.copySelectionToClipboard === 'function';
+}
+
 function copySelection(): void {
+  const renderer = activeTerminal as RendererCopy | null;
+  if (renderer?.copySelectionToClipboard) {
+    void renderer.copySelectionToClipboard();
+    return;
+  }
   const text = activeTerminal?.getSelection();
   if (text) void navigator.clipboard.writeText(text).catch(() => undefined);
 }

@@ -225,6 +225,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   private wheelForwardCleanup: (() => void) | null = null;
   private pointerFocusCleanup: (() => void) | null = null;
   private cwd: string | null = null;
+  private lastTitle: string | null = null;
   private oscBuffer = '';
   private readonly decoder = new TextDecoder();
 
@@ -324,7 +325,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
 
   write(data: string | Uint8Array): void {
     const text = typeof data === 'string' ? data : this.decoder.decode(data, { stream: true });
-    this.captureCwd(text);
+    this.captureOsc(text);
     const ctx = (window as unknown as { __resttyDebugCtx?: { markPtyWrite: () => void; clearPtyWrite: () => void } }).__resttyDebugCtx;
     ctx?.markPtyWrite();
     this.term?.write(text);
@@ -360,12 +361,20 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     return { cols: this.gridCols, rows: this.gridRows };
   }
 
+  // restty owns selection on the GPU canvas and doesn't expose the text, but it
+  // can copy the active selection straight to the clipboard.
   getSelection(): string {
     return '';
   }
 
   hasSelection(): boolean {
     return false;
+  }
+
+  /** Copy restty's current canvas selection to the clipboard (no-op if empty). */
+  async copySelectionToClipboard(): Promise<boolean> {
+    const restty = this.term?.restty as { copySelectionToClipboard?: () => Promise<boolean> } | undefined;
+    return (await restty?.copySelectionToClipboard?.().catch(() => false)) ?? false;
   }
 
   paste(data: string): void {
@@ -572,19 +581,38 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     this.pointerFocusCleanup = () => root.removeEventListener('pointerdown', onPointerDown);
   }
 
-  // OSC 7: ESC ] 7 ; file://host/path (BEL | ST). Scanned across writes.
-  private captureCwd(data: string): void {
-    this.oscBuffer = (this.oscBuffer + data).slice(-1024);
-    const re = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
-    let match: RegExpExecArray | null;
-    let last: RegExpExecArray | null = null;
-    while ((match = re.exec(this.oscBuffer))) last = match;
-    if (!last) return;
-    try {
-      this.cwd = decodeURIComponent(last[1]);
-    } catch {
-      this.cwd = last[1];
+  // OSC 0/2 (window title) and OSC 7 (cwd). ESC ] N ; payload (BEL | ST).
+  // Scanned across writes; the buffer is bounded so old matches age out.
+  private captureOsc(data: string): void {
+    this.oscBuffer = (this.oscBuffer + data).slice(-2048);
+    let consumed = 0;
+
+    const titleRe = /\x1b\]([02]);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+    let m: RegExpExecArray | null;
+    let lastTitle: RegExpExecArray | null = null;
+    while ((m = titleRe.exec(this.oscBuffer))) lastTitle = m;
+    if (lastTitle) {
+      consumed = Math.max(consumed, lastTitle.index + lastTitle[0].length);
+      const title = lastTitle[2];
+      if (title !== this.lastTitle) {
+        this.lastTitle = title;
+        this.titleListeners.forEach((cb) => cb(title));
+      }
     }
-    this.oscBuffer = this.oscBuffer.slice(re.lastIndex);
+
+    const cwdRe = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+    let c: RegExpExecArray | null;
+    let lastCwd: RegExpExecArray | null = null;
+    while ((c = cwdRe.exec(this.oscBuffer))) lastCwd = c;
+    if (lastCwd) {
+      consumed = Math.max(consumed, lastCwd.index + lastCwd[0].length);
+      try {
+        this.cwd = decodeURIComponent(lastCwd[1]);
+      } catch {
+        this.cwd = lastCwd[1];
+      }
+    }
+
+    if (consumed) this.oscBuffer = this.oscBuffer.slice(consumed);
   }
 }
