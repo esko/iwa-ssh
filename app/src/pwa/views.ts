@@ -5,7 +5,7 @@ import { cacheIdentityPassphrase } from '../ssh/IdentityPassphrase';
 import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
 import { WtermTerminalAdapter } from './wtermAdapter';
-import { ResttyTerminalAdapter } from './resttyAdapter';
+import { ResttyTerminalAdapter, type ResttyPaneSink } from './resttyAdapter';
 import type { TerminalSubscription } from '../terminal/TerminalAdapter';
 import { ensureTerminalFontLoaded, normalizePwaSettings, applyPwaAppearance } from './settings';
 import {
@@ -51,7 +51,16 @@ let tabStrip: HTMLElement | null = null;
 let sessionsHost: HTMLElement | null = null;
 let sharedStatus: HTMLElement | null = null;
 
-/** One terminal session per tab (ADR 0008). */
+/** One restty split pane: its own transport bound to the pane's sink (ADR 0008). */
+type PaneConn = {
+  paneId: number;
+  transport: TerminalTransport;
+  sink: ResttyPaneSink;
+  status: TerminalTransportStatus;
+  reconnecting: boolean;
+};
+
+/** One terminal session per tab (ADR 0008); restty tabs fan out to split panes. */
 type TermSession = {
   id: string;
   spec: PwaConnectionSpec;
@@ -60,7 +69,11 @@ type TermSession = {
   container: HTMLElement;
   surface: HTMLElement;
   terminal: WtermTerminalAdapter | ResttyTerminalAdapter;
-  transport: TerminalTransport;
+  /** wterm single-session transport; undefined for restty (uses `panes`). */
+  transport: TerminalTransport | null;
+  /** restty per-pane transports, keyed by restty pane id. */
+  panes: Map<number, PaneConn>;
+  paneSubs: TerminalSubscription[];
   appliedFont: string;
   reconnecting: boolean;
   titleSub: TerminalSubscription | null;
@@ -630,8 +643,12 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
   sharedStatus = requiredElement<HTMLElement>('#status', root);
   tabStrip.addEventListener('click', onTabStripClick);
 
-  installShortcutPassThrough();
+  // Tab/split keys must be claimed before the system pass-through (which would
+  // otherwise stopImmediatePropagation Ctrl+T/Ctrl+W/Ctrl+Shift+W to ChromeOS).
+  // In the unframed app window the app owns these (ADR 0008); every other key
+  // still falls through to installShortcutPassThrough untouched.
   installTabShortcuts();
+  installShortcutPassThrough();
   installTerminalContextMenu(sessionsHost);
   if (query.get('debug') !== '0') installTerminalDebugHud(root, sessionsHost, sharedStatus);
 
@@ -673,7 +690,9 @@ async function createSession(spec: PwaConnectionSpec): Promise<TermSession> {
     container,
     surface,
     terminal,
-    transport: createTransport(spec, (state, error) => onSessionStatus(session, state, error)),
+    transport: null,
+    panes: new Map(),
+    paneSubs: [],
     appliedFont: settings.fontFamily,
     reconnecting: false,
     titleSub: null,
@@ -688,9 +707,60 @@ async function createSession(spec: PwaConnectionSpec): Promise<TermSession> {
   sessions.push(session);
   renderTabs();
   await recordConnection(spec);
-  await session.transport.connect(terminal);
+
+  if (terminal instanceof ResttyTerminalAdapter) {
+    // Each restty pane (the first and every split) binds its own transport when
+    // restty connects it; registering the listener flushes the initial pane.
+    session.paneSubs.push(terminal.onPaneClose((id) => closePaneConn(session, id)));
+    session.paneSubs.push(terminal.onPaneOpen((sink) => void openPaneConn(session, sink)));
+  } else {
+    session.transport = createTransport(spec, (state, error) => onSessionStatus(session, state, error));
+    await session.transport.connect(terminal);
+  }
   terminal.fit?.();
   return session;
+}
+
+/** Bind a fresh transport to a newly opened restty pane (split or first pane). */
+async function openPaneConn(session: TermSession, sink: ResttyPaneSink): Promise<void> {
+  if (session.panes.has(sink.paneId)) return;
+  const conn: PaneConn = {
+    paneId: sink.paneId,
+    sink,
+    status: 'connecting',
+    reconnecting: false,
+    transport: createTransport(session.spec, (state, error) => onPaneStatus(session, sink.paneId, state, error)),
+  };
+  session.panes.set(sink.paneId, conn);
+  await conn.transport.connect(sink);
+}
+
+/** Tear down a closed restty pane's transport; the last pane closing ends the tab. */
+function closePaneConn(session: TermSession, paneId: number): void {
+  const conn = session.panes.get(paneId);
+  if (!conn) return;
+  session.panes.delete(paneId);
+  void conn.transport.disconnect().catch(() => undefined);
+  conn.transport.dispose();
+  if (session.panes.size === 0) closeSession(session);
+}
+
+function onPaneStatus(session: TermSession, paneId: number, state: TerminalTransportStatus, error?: string): void {
+  const conn = session.panes.get(paneId);
+  if (!conn) return;
+  const prev = conn.status;
+  conn.status = state;
+  session.status = state;
+  if (session.id === activeSessionId) updateSharedStatus(session, state, error);
+  // A clean disconnect closes that pane (the tab ends with its last pane);
+  // errors stay readable, and a reconnect's own cycle is ignored.
+  if (state === 'disconnected' && !conn.reconnecting && prev !== 'error') {
+    window.setTimeout(() => {
+      if (conn.reconnecting || !session.panes.has(paneId)) return;
+      if (session.panes.size <= 1) closeSession(session);
+      else if (session.terminal instanceof ResttyTerminalAdapter) session.terminal.closePaneById(paneId);
+    }, 700);
+  }
 }
 
 function onSessionStatus(session: TermSession, state: TerminalTransportStatus, error?: string): void {
@@ -744,8 +814,17 @@ function closeSession(session: TermSession): void {
   const index = sessions.indexOf(session);
   if (index < 0) return;
   session.titleSub?.dispose();
-  void session.transport.disconnect().catch(() => undefined);
-  session.transport.dispose();
+  session.paneSubs.forEach((sub) => sub.dispose());
+  session.paneSubs = [];
+  if (session.transport) {
+    void session.transport.disconnect().catch(() => undefined);
+    session.transport.dispose();
+  }
+  for (const conn of session.panes.values()) {
+    void conn.transport.disconnect().catch(() => undefined);
+    conn.transport.dispose();
+  }
+  session.panes.clear();
   session.terminal.dispose();
   session.container.remove();
   sessions.splice(index, 1);
@@ -803,17 +882,47 @@ function cycleTab(direction: number): void {
   setActiveSession(sessions[next].id);
 }
 
-/** In-window tab keys for the unframed app window (ADR 0008). */
+/** Split the focused restty pane (no-op for wterm sessions). */
+function splitActivePane(direction: 'vertical' | 'horizontal'): boolean {
+  const session = activeSession();
+  if (session?.terminal instanceof ResttyTerminalAdapter) {
+    session.terminal.split(direction);
+    return true;
+  }
+  return false;
+}
+
+/** Close the focused restty pane; returns false when there's nothing to close. */
+function closeActivePane(): boolean {
+  const session = activeSession();
+  return session?.terminal instanceof ResttyTerminalAdapter ? session.terminal.closeActivePane() : false;
+}
+
+/** In-window tab + split keys for the unframed app window (ADR 0008). */
 function installTabShortcuts(): void {
   document.addEventListener(
     'keydown',
     (event) => {
       if (!event.ctrlKey || event.metaKey || event.altKey) return;
-      if (event.code === 'KeyT' && !event.shiftKey) {
+      if (event.shiftKey) {
+        // Splits: Ctrl+Shift+E → right, Ctrl+Shift+D → down, Ctrl+Shift+W → close pane.
+        if (event.code === 'KeyE' && splitActivePane('vertical')) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        } else if (event.code === 'KeyD' && splitActivePane('horizontal')) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        } else if (event.code === 'KeyW' && closeActivePane()) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+        return;
+      }
+      if (event.code === 'KeyT') {
         event.preventDefault();
         event.stopImmediatePropagation();
         if (activeSpec) void openTab(activeSpec);
-      } else if (event.code === 'KeyW' && !event.shiftKey) {
+      } else if (event.code === 'KeyW') {
         const session = activeSession();
         if (session) {
           event.preventDefault();
@@ -920,13 +1029,11 @@ function installTerminalDebugHud(
       __resttyPtyLog?: string[];
     };
     if (!win.__resttyAdapter) return 'DA probe: n/a (wterm or hook missing)';
-    const log: string[] = [];
-    const sub = win.__resttyAdapter.onInput((d) => log.push(d));
+    const before = (win.__resttyPtyLog ?? []).length;
     win.__resttyAdapter.write('\x1b[c');
     win.__resttyAdapter.write('\x1b[6n');
     await new Promise((r) => window.setTimeout(r, 400));
-    sub.dispose();
-    const merged = log.join('') + (win.__resttyPtyLog ?? []).join('');
+    const merged = (win.__resttyPtyLog ?? []).slice(before).join('');
     const da = /\x1b\[\?[0-9;]*c/.test(merged);
     const cpr = /\x1b\[[0-9]+;[0-9]+R/.test(merged);
     return `DA probe: da=${da} cpr=${cpr}\n${JSON.stringify(merged)}`;
@@ -963,11 +1070,21 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
     // restty copies its own canvas selection (no public selection-text query),
     // so enable Copy whenever that path exists; it's a no-op with no selection.
     const canCopy = (activeTerminal?.hasSelection() ?? false) || canCopyViaRenderer();
+    const isRestty = activeTerminal instanceof ResttyTerminalAdapter;
+    const paneCount = isRestty ? (activeTerminal as ResttyTerminalAdapter).paneCount() : 1;
     const items: ContextMenuItem[] = [
       { type: 'item', label: 'Copy', key: '⌃⇧C', disabled: !canCopy, onSelect: copySelection },
       { type: 'item', label: 'Paste', key: '⌃⇧V', onSelect: pasteClipboard },
       { type: 'item', label: 'Copy path', onSelect: copyPath },
       { type: 'separator' },
+      ...(isRestty
+        ? ([
+            { type: 'item', label: 'Split right', key: '⌃⇧E', onSelect: () => void splitActivePane('vertical') },
+            { type: 'item', label: 'Split down', key: '⌃⇧D', onSelect: () => void splitActivePane('horizontal') },
+            { type: 'item', label: 'Close pane', key: '⌃⇧W', disabled: paneCount <= 1, onSelect: () => void closeActivePane() },
+            { type: 'separator' },
+          ] as ContextMenuItem[])
+        : []),
       { type: 'item', label: 'New window', onSelect: () => openWindow('/') },
       { type: 'item', label: 'Duplicate session', onSelect: duplicateSession },
       { type: 'item', label: 'Reconnect', onSelect: reconnect },
@@ -1014,6 +1131,21 @@ function duplicateSession(): void {
 async function reconnect(): Promise<void> {
   const session = activeSession();
   if (!session) return;
+  // restty: reconnect the focused pane's transport; wterm: the single session.
+  if (session.terminal instanceof ResttyTerminalAdapter && !session.transport) {
+    const conn = session.panes.get(session.terminal.getActivePaneId());
+    if (!conn) return;
+    conn.reconnecting = true;
+    try {
+      session.terminal.write('\x1b[2J\x1b[H');
+      await conn.transport.disconnect();
+      await conn.transport.connect(conn.sink);
+    } finally {
+      conn.reconnecting = false;
+    }
+    return;
+  }
+  if (!session.transport) return;
   session.reconnecting = true;
   try {
     session.terminal.write('\x1b[2J\x1b[H');
@@ -1063,8 +1195,16 @@ function installShortcutPassThrough(): void {
 export function disposeTerminal(): void {
   for (const session of sessions) {
     session.titleSub?.dispose();
-    void session.transport.disconnect().catch(() => undefined);
-    session.transport.dispose();
+    session.paneSubs.forEach((sub) => sub.dispose());
+    if (session.transport) {
+      void session.transport.disconnect().catch(() => undefined);
+      session.transport.dispose();
+    }
+    for (const conn of session.panes.values()) {
+      void conn.transport.disconnect().catch(() => undefined);
+      conn.transport.dispose();
+    }
+    session.panes.clear();
     session.terminal.dispose();
   }
   sessions.length = 0;

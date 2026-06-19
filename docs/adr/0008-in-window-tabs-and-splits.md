@@ -103,12 +103,24 @@ window.
 
 ## Phasing
 
-1. Per-pane/session transport sink: refactor `TerminalTransport` + adapters to a
-   sink interface; keep single-session behavior identical (no UX change).
-2. Splits: `appOptions` factory + per-pane transports + split/close/focus
-   keybindings and context-menu wiring. Verify two live echo panes, then SSH.
-3. Tabs: `TabManager`, caption tab strip, new/close/switch, `Ctrl+T`/`Ctrl+W`
-   capture in the unframed window.
+1. ~~Per-pane/session transport sink~~ ✅ — `ResttyTerminalAdapter` now drives one
+   `PaneBridge` per restty pane. Each bridge is both the pane's `PtyTransport`
+   (restty → `sendInput`/`resize`/`isConnected`) and the `TerminalAdapter` sink a
+   `TerminalTransport` binds to (`write` → `callbacks.onData`). This replaced the
+   spike's single loopback PTY + `term.write()` path (and removed its debug
+   `fetch` egress).
+2. ~~Splits~~ ✅ — `appOptions` is a factory; each pane gets its own bridge and
+   transport. `split()`/`closePaneById()` drive restty's pane manager;
+   `Ctrl+Shift+E`/`Ctrl+Shift+D` split right/down and `Ctrl+Shift+W` closes the
+   focused pane, mirrored in the terminal context menu. Echo-verified headless
+   (two independent live panes, per-pane input routing, close → single pane,
+   healthy per-pane grids; see `scripts/verify-splits.mjs`). **SSH per pane is
+   not yet device-verified.**
+3. Tabs ✅ (landed in #—, commit "in-window tabs"). `Ctrl+T`/`Ctrl+W`/`Ctrl+Tab`
+   are now **captured in-app**: `installTabShortcuts` registers before
+   `installShortcutPassThrough`, so it claims only those keys (and the split
+   keys) and everything else still passes through to ChromeOS. This resolves the
+   open "Ctrl+T/W capture" question in favor of the unframed-window design above.
 4. Polish: per-pane titles/status, drag-to-reorder tabs, persist layout.
 
 ## Tracking

@@ -46,16 +46,6 @@ function cursorSequence(style: 'block' | 'bar' | 'underline', blink: boolean): s
   return `\x1b[${blink ? steady - 1 : steady} q`;
 }
 
-/** Minimal PtyTransport shape — DA/DSR replies route here, not onData (source=pty). */
-type LoopbackPtyTransport = {
-  connect: () => void;
-  disconnect: () => void;
-  sendInput: (data: string) => boolean;
-  resize: (cols: number, rows: number) => boolean;
-  isConnected: () => boolean;
-  destroy: () => void;
-};
-
 /**
  * Same-origin terminal fonts bundled with the app (`app/public/fonts/`).
  *
@@ -100,237 +90,111 @@ async function resolveFontSources(selection: string): Promise<ResttyFontSource[]
   return [...sources, ...BUNDLED_FALLBACK];
 }
 
-type ResttyDebugEntry = {
-  sessionId: string;
-  location: string;
-  message: string;
-  data: Record<string, unknown>;
-  timestamp: number;
-  hypothesisId: string;
-};
-
-function agentLog(
-  location: string,
-  message: string,
-  data: Record<string, unknown>,
-  hypothesisId: string,
-): void {
-  const entry: ResttyDebugEntry = {
-    sessionId: 'b42bad',
-    location,
-    message,
-    data,
-    timestamp: Date.now(),
-    hypothesisId,
-  };
-  const win = window as unknown as { __resttyDebugLog?: ResttyDebugEntry[] };
+/** Trim the device wheel ring (kept for the debug HUD; no network egress). */
+function pushWheelLog(data: Record<string, unknown>): void {
+  const win = window as unknown as { __resttyDebugLog?: { location: string; data: Record<string, unknown> }[] };
   const ring = win.__resttyDebugLog ?? [];
-  ring.push(entry);
-  if (ring.length > 120) ring.shift();
+  ring.push({ location: 'wheel', data });
+  if (ring.length > 60) ring.shift();
   win.__resttyDebugLog = ring;
-  // #region agent log
-  fetch('http://127.0.0.1:7889/ingest/a7434359-56dc-434f-91db-1acc691680a2', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b42bad' },
-    body: JSON.stringify(entry),
-  }).catch(() => {});
-  // #endregion
 }
 
-function createLoopbackPtyTransport(
-  onDeviceResponse: (data: string) => void,
-  onResize: (cols: number, rows: number) => void,
-  debugCtx: { markPtyWrite: () => void; clearPtyWrite: () => void; isPtyWritePending: () => boolean },
-): LoopbackPtyTransport {
-  return {
-    connect: () => {},
-    disconnect: () => {},
-    sendInput: (data) => {
-      if (data) {
-        const log = (window as unknown as { __resttyPtyLog?: string[] }).__resttyPtyLog;
-        if (log) log.push(data);
-        agentLog(
-          'resttyAdapter.ts:pty-sendInput',
-          'loopback pty sendInput',
-          { len: data.length, preview: data.slice(0, 24), afterPtyWrite: debugCtx.isPtyWritePending() },
-          'H1',
-        );
-        onDeviceResponse(data);
-      }
-      return true;
-    },
-    resize: (cols, rows) => {
-      agentLog('resttyAdapter.ts:pty-resize', 'loopback pty resize', { cols, rows }, 'H4');
-      onResize(cols, rows);
-      return true;
-    },
-    // Must report connected so WASM drainOutput() forwards replies after PTY writes.
-    isConnected: () => true,
-    destroy: () => {},
-  };
-}
+// ---------------------------------------------------------------- pane I/O --
 
-async function waitForResttyReady(
-  term: Terminal,
-  probeInput: (cb: (data: string) => void) => TerminalSubscription,
-  timeoutMs = 20_000,
-): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  let backend = '';
-  while (Date.now() < deadline) {
-    const next = term.restty?.getBackend?.();
-    if (next === 'webgpu' || next === 'webgl2' || next === 'webgl') {
-      backend = next;
-      break;
-    }
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  if (!backend) throw new Error('restty backend not ready');
+/** restty's per-pane PtyTransport callbacks (see vendor/restty/dist/pty/types.d.ts). */
+type PaneCallbacks = {
+  onConnect?: () => void;
+  onDisconnect?: () => void;
+  onData?: (data: string) => void;
+  onStatus?: (shell: string) => void;
+  onError?: (message: string, errors?: string[]) => void;
+  onExit?: (code: number) => void;
+};
+type PaneConnectOptions = { url?: string; cols?: number; rows?: number; callbacks: PaneCallbacks };
 
-  // getBackend() is set before wasmPromise finishes in restty init(); probe DA so
-  // keyboard IME handlers (which require wasm) are actually live.
-  let daReply = false;
-  const sub = probeInput(() => {
-    daReply = true;
-  });
-  term.write('\x1b[c');
-  while (!daReply && Date.now() < deadline) {
-    term.restty?.updateSize(true);
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  sub.dispose();
-  if (!daReply) throw new Error('restty wasm input path not ready (DA probe failed)');
-  agentLog('resttyAdapter.ts:ready', 'restty ready', { backend }, 'H-delay');
-  return backend;
-}
+/** The per-pane sink a {@link TerminalTransport} binds to (one per split). */
+export type ResttyPaneSink = TerminalAdapter & { readonly paneId: number };
 
 /**
- * SPIKE adapter backed by restty's xterm-compat shim (libghostty-vt → WASM,
- * WebGPU/WebGL2 GPU atlas). The reason for the migration: restty answers DA1/DSR
- * queries and implements scrollback, which wterm's libghostty build does not.
+ * Per-pane bridge between restty and a {@link TerminalTransport}.
  *
- * This is the minimal surface needed to prove render + DA replies + scrollback
- * behind a temporary renderer flag in views.ts (restty default on spike branch;
- * ?renderer=wterm opts back). The full adapter (byte-write path, theme/font
- * mapping, real selection/title) is Phase 1.
+ * It is two things at once:
+ *  - the `PtyTransport` restty drives for one pane — `connect()` stores the
+ *    pane's render callbacks, `sendInput()` carries keystrokes + the parser's
+ *    DA/DSR auto-replies out, `resize()` carries window-change, and
+ *    `isConnected()` gates both (restty only routes a pane's bytes to its
+ *    transport while connected);
+ *  - the {@link TerminalAdapter} sink the transport binds to — `write()` pushes
+ *    server output into the pane (`callbacks.onData`), and `onInput`/`onResize`
+ *    deliver the pane's outbound bytes / size to the transport.
+ *
+ * One bridge per pane gives every split its own independent session, replacing
+ * the spike's single shared loopback PTY + `term.write()` path.
  */
-export class ResttyTerminalAdapter implements TerminalAdapter {
-  private term: Terminal | null = null;
-  private resizeObserver: ResizeObserver | null = null;
+class PaneBridge implements TerminalAdapter {
+  private callbacks: PaneCallbacks | null = null;
+  private connected = false;
+  private cols = 80;
+  private rows = 24;
   private readonly inputListeners = new Set<(data: string) => void>();
   private readonly resizeListeners = new Set<(cols: number, rows: number) => void>();
-  private readonly titleListeners = new Set<(title: string) => void>();
-  private gridCols = 80;
-  private gridRows = 24;
-  private wheelForwardCleanup: (() => void) | null = null;
-  private pointerFocusCleanup: (() => void) | null = null;
-  private cwd: string | null = null;
-  private lastTitle: string | null = null;
-  private oscBuffer = '';
   private readonly decoder = new TextDecoder();
 
-  private emitResize(cols: number, rows: number): void {
-    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) return;
-    if (cols === this.gridCols && rows === this.gridRows) return;
-    this.gridCols = cols;
-    this.gridRows = rows;
-    if (this.term) {
-      this.term.cols = cols;
-      this.term.rows = rows;
-    }
-    this.resizeListeners.forEach((cb) => cb(cols, rows));
+  constructor(
+    readonly paneId: number,
+    private readonly owner: ResttyTerminalAdapter,
+  ) {}
+
+  // --- PtyTransport surface (restty -> bridge) ---
+
+  connect(options: PaneConnectOptions): void {
+    this.callbacks = options.callbacks;
+    if (options.cols) this.cols = options.cols;
+    if (options.rows) this.rows = options.rows;
+    this.connected = true;
+    options.callbacks.onConnect?.();
+    this.owner.notifyPaneOpen(this);
   }
 
-  static async create(el: HTMLElement, settings: PwaTerminalSettings): Promise<ResttyTerminalAdapter> {
-    const adapter = new ResttyTerminalAdapter();
-    let ptyWriteDepth = 0;
-    const debugCtx = {
-      markPtyWrite: () => { ptyWriteDepth += 1; },
-      clearPtyWrite: () => { ptyWriteDepth = Math.max(0, ptyWriteDepth - 1); },
-      isPtyWritePending: () => ptyWriteDepth > 0,
-    };
-    const emitInput = (data: string) => {
-      agentLog(
-        'resttyAdapter.ts:emitInput',
-        'adapter inputListeners emit',
-        { len: data.length, preview: data.slice(0, 24), listenerCount: adapter.inputListeners.size },
-        'H2',
-      );
-      adapter.inputListeners.forEach((cb) => cb(data));
-    };
-    // Resolve the selected font (bundled or user-provided) to same-origin URL /
-    // buffer sources before opening; restty's default font list (Local Font
-    // Access + CDN) is unusable in the IWA. JetBrains Mono is always appended as
-    // a fallback so a real font loads (cellH > 0), which keeps scrolling alive.
-    const fontSources = await resolveFontSources(settings.fontFamily);
-    const term = new Terminal({
-      appOptions: {
-        ptyTransport: createLoopbackPtyTransport(emitInput, (cols, rows) => adapter.emitResize(cols, rows), debugCtx),
-        fontSources,
-        autoResize: true,
-        attachCanvasEvents: true,
-        // restty touch pan is armed on pointerdown only in long-press/drag modes (see
-        // bind-pointer-events.ts); "off" disables touch scroll entirely on touchscreens.
-        touchSelectionMode: 'long-press',
-        maxScrollbackBytes: Math.max(1_000_000, settings.scrollback * 200),
-        callbacks: {
-          onGridSize: (cols, rows) => {
-            adapter.emitResize(cols, rows);
-            agentLog(
-              'resttyAdapter.ts:onGridSize',
-              'restty onGridSize',
-              { cols, rows, xtermCols: term.cols, xtermRows: term.rows },
-              'H4',
-            );
-          },
-          onCanvasSize: (width, height) => {
-            const canvas = el.querySelector('canvas');
-            agentLog(
-              'resttyAdapter.ts:onCanvasSize',
-              'restty onCanvasSize',
-              { width, height, clientW: canvas?.clientWidth, clientH: canvas?.clientHeight },
-              'H5',
-            );
-          },
-        },
-      },
-    });
-    term.open(el);
-    const backend = await waitForResttyReady(term, (cb) => adapter.onInput(cb));
-    adapter.syncLayout();
-    adapter.installScrollGuard(el);
-    adapter.installPointerFocus(el);
-    adapter.resizeObserver = new ResizeObserver(() => {
-      adapter.syncLayout();
-      adapter.installScrollGuard(el);
-    });
-    adapter.resizeObserver.observe(el);
-    // Outbound bytes (keys, paste, DA/DSR replies) must use the loopback PTY only.
-    // term.onData would duplicate keyboard when isConnected() is true.
-    term.onResize(({ cols, rows }) => adapter.resizeListeners.forEach((cb) => cb(cols, rows)));
-    adapter.term = term;
-    adapter.setAppearance(settings);
-    term.focus();
-    // SPIKE-ONLY: expose the adapter so the CDP harness can probe DA/DSR replies
-    // and the render backend. Removed in Phase 1.
-    (window as unknown as { __resttyAdapter?: ResttyTerminalAdapter; __resttyBackend?: string; __resttyPtyLog?: string[]; __resttyDebugCtx?: typeof debugCtx }).__resttyAdapter = adapter;
-    (window as unknown as { __resttyBackend?: string }).__resttyBackend = backend;
-    (window as unknown as { __resttyPtyLog?: string[] }).__resttyPtyLog = [];
-    (window as unknown as { __resttyDebugCtx?: typeof debugCtx }).__resttyDebugCtx = debugCtx;
-    return adapter;
+  disconnect(): void {
+    if (!this.connected) return;
+    this.connected = false;
+    this.callbacks?.onDisconnect?.();
   }
 
-  // create() does the real work; open() exists to satisfy the interface.
+  sendInput(data: string): boolean {
+    if (!data) return true;
+    const log = (window as unknown as { __resttyPtyLog?: string[] }).__resttyPtyLog;
+    if (log) log.push(data);
+    this.inputListeners.forEach((cb) => cb(data));
+    return true;
+  }
+
+  resize(cols: number, rows: number): boolean {
+    this.emitResize(cols, rows);
+    return true;
+  }
+
+  // Report connected so restty's WASM drainOutput() forwards DA/DSR replies.
+  isConnected(): boolean {
+    return this.connected;
+  }
+
+  destroy(): void {
+    this.connected = false;
+    this.callbacks = null;
+    this.inputListeners.clear();
+    this.resizeListeners.clear();
+  }
+
+  // --- TerminalAdapter sink (transport -> bridge -> pane) ---
+
   open(): void {}
 
   write(data: string | Uint8Array): void {
     const text = typeof data === 'string' ? data : this.decoder.decode(data, { stream: true });
-    this.captureOsc(text);
-    const ctx = (window as unknown as { __resttyDebugCtx?: { markPtyWrite: () => void; clearPtyWrite: () => void } }).__resttyDebugCtx;
-    ctx?.markPtyWrite();
-    this.term?.write(text);
-    queueMicrotask(() => ctx?.clearPtyWrite());
-    agentLog('resttyAdapter.ts:write', 'adapter write to term', { len: text.length, preview: text.slice(0, 24) }, 'H1');
+    this.owner.captureOsc(this, text);
+    this.callbacks?.onData?.(text);
   }
 
   onInput(cb: (data: string) => void): TerminalSubscription {
@@ -343,6 +207,273 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     return { dispose: () => this.resizeListeners.delete(cb) };
   }
 
+  focus(): void {
+    this.owner.focusPane(this.paneId);
+  }
+
+  dispose(): void {
+    this.destroy();
+  }
+
+  getSize(): { cols: number; rows: number } {
+    return { cols: this.cols, rows: this.rows };
+  }
+
+  emitResize(cols: number, rows: number): void {
+    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) return;
+    if (cols === this.cols && rows === this.rows) return;
+    this.cols = cols;
+    this.rows = rows;
+    this.resizeListeners.forEach((cb) => cb(cols, rows));
+  }
+
+  /** Route context-menu paste to this pane's transport (remote echo draws it). */
+  emitInput(data: string): void {
+    if (data) this.inputListeners.forEach((cb) => cb(data));
+  }
+}
+
+type ResttyHandle = {
+  getBackend?: () => string;
+  updateSize?: (force?: boolean) => void;
+  setFontSize?: (px: number) => void;
+  applyTheme?: (theme: unknown, name?: string) => void;
+  resize?: (cols: number, rows: number) => void;
+  focus?: () => void;
+};
+type ResttyPaneHandleLite = {
+  id: number;
+  connectPty: (url?: string) => void;
+  disconnectPty: () => void;
+  sendInput: (text: string, source?: string) => void;
+  applyTheme: (theme: unknown, sourceLabel?: string) => void;
+  setFontSize: (px: number) => void;
+  resize: (cols: number, rows: number) => void;
+  focus: () => void;
+  updateSize: (force?: boolean) => void;
+  getBackend: () => string;
+  getMouseStatus?: () => { active: boolean; mode: string } | undefined;
+  copySelectionToClipboard: () => Promise<boolean>;
+};
+type ResttySurface = ResttyHandle & {
+  setFontSources?: (sources: ResttyFontSource[]) => Promise<void>;
+  splitActivePane?: (dir: 'vertical' | 'horizontal') => unknown;
+  closePane?: (id: number) => boolean;
+  setActivePane?: (id: number, options?: { focus?: boolean }) => void;
+  getActivePane?: () => { id: number } | null;
+  pane?: (id: number) => ResttyPaneHandleLite | null;
+  activePane?: () => ResttyPaneHandleLite | null;
+  panes?: () => ResttyPaneHandleLite[];
+};
+
+type PaneState = { bridge: PaneBridge; title: string | null; cwd: string | null; oscBuffer: string };
+
+/**
+ * Adapter backed by restty's xterm-compat shim (libghostty-vt → WASM,
+ * WebGPU/WebGL2 GPU atlas). restty answers DA1/DSR queries and implements
+ * scrollback, which wterm's libghostty build does not.
+ *
+ * Each restty pane (split) runs an independent session through its own
+ * {@link PaneBridge}; the adapter owns layout/appearance/title and exposes
+ * `onPaneOpen`/`onPaneClose` so the view layer can bind one transport per pane.
+ */
+export class ResttyTerminalAdapter implements TerminalAdapter {
+  private term: Terminal | null = null;
+  private root: HTMLElement | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  private readonly panes = new Map<number, PaneState>();
+  private activePaneId = -1;
+  private readonly titleListeners = new Set<(title: string) => void>();
+  private readonly paneOpenListeners = new Set<(sink: PaneBridge) => void>();
+  private readonly paneCloseListeners = new Set<(paneId: number) => void>();
+  private readonly openedPanes = new Set<number>();
+  private pendingOpen: PaneBridge[] = [];
+  private wheelForwardCleanup: (() => void) | null = null;
+  private pointerFocusCleanup: (() => void) | null = null;
+  private settings: PwaTerminalSettings | null = null;
+
+  private get surface(): ResttySurface | null {
+    return (this.term?.restty as ResttySurface | null) ?? null;
+  }
+
+  static async create(el: HTMLElement, settings: PwaTerminalSettings): Promise<ResttyTerminalAdapter> {
+    const adapter = new ResttyTerminalAdapter();
+    adapter.root = el;
+    adapter.settings = settings;
+    // Resolve the selected font (bundled or user-provided) to same-origin URL /
+    // buffer sources before opening; restty's default font list (Local Font
+    // Access + CDN) is unusable in the IWA. JetBrains Mono is always appended as
+    // a fallback so a real font loads (cellH > 0), which keeps scrolling alive.
+    const fontSources = await resolveFontSources(settings.fontFamily);
+
+    const term = new Terminal({
+      // Per-pane app options: every pane (the first and every split) gets its
+      // own PtyTransport bridge keyed by the pane id restty assigns it.
+      appOptions: (ctx: { id: number }) => ({
+        ptyTransport: adapter.registerPane(ctx.id),
+        fontSources,
+        autoResize: true,
+        attachCanvasEvents: true,
+        // restty touch pan is armed on pointerdown only in long-press/drag modes
+        // (see bind-pointer-events.ts); "off" disables touch scroll entirely.
+        touchSelectionMode: 'long-press',
+        maxScrollbackBytes: Math.max(1_000_000, settings.scrollback * 200),
+        callbacks: {
+          onGridSize: (cols: number, rows: number) => adapter.panes.get(ctx.id)?.bridge.emitResize(cols, rows),
+        },
+      }),
+      // Built-in split keybindings stay off; the app drives splits explicitly so
+      // it can bind a transport to each new pane (Ctrl+Shift+D/E in views.ts).
+      shortcuts: false,
+      onPaneSplit: (_src: { id: number }, created: { id: number }) => adapter.handlePaneCreated(created.id),
+      onPaneClosed: (pane: { id: number }) => adapter.handlePaneClosed(pane.id),
+      onActivePaneChange: (pane: { id: number } | null) => adapter.handleActivePaneChange(pane?.id ?? -1),
+    } as unknown as ConstructorParameters<typeof Terminal>[0]);
+
+    term.open(el);
+    adapter.term = term;
+    await adapter.waitForBackend();
+    // The initial pane was created during open() before term.restty existed, so
+    // connect it now; splits connect from onPaneSplit (term.restty is live then).
+    const firstId = [...adapter.panes.keys()][0] ?? -1;
+    if (firstId >= 0) {
+      adapter.activePaneId = firstId;
+      adapter.connectPane(firstId);
+      await adapter.waitForPaneReady(firstId);
+    }
+    adapter.syncLayout();
+    adapter.installScrollGuard(el);
+    adapter.installPointerFocus(el);
+    adapter.resizeObserver = new ResizeObserver(() => {
+      adapter.syncLayout();
+      adapter.installScrollGuard(el);
+    });
+    adapter.resizeObserver.observe(el);
+    adapter.setAppearance(settings);
+    term.focus();
+    // Expose for the CDP harness / debug HUD.
+    const win = window as unknown as {
+      __resttyAdapter?: ResttyTerminalAdapter;
+      __resttyBackend?: string;
+      __resttyPtyLog?: string[];
+    };
+    win.__resttyAdapter = adapter;
+    win.__resttyBackend = adapter.surface?.getBackend?.() ?? '';
+    win.__resttyPtyLog = [];
+    return adapter;
+  }
+
+  /** Factory hook: build (or reuse) the bridge restty drives for a pane. */
+  registerPane(id: number): PaneBridge {
+    let state = this.panes.get(id);
+    if (!state) {
+      state = { bridge: new PaneBridge(id, this), title: null, cwd: null, oscBuffer: '' };
+      this.panes.set(id, state);
+    }
+    return state.bridge;
+  }
+
+  /** restty signals a pane is connected → let the view bind a transport to it. */
+  notifyPaneOpen(bridge: PaneBridge): void {
+    if (this.openedPanes.has(bridge.paneId)) return;
+    this.openedPanes.add(bridge.paneId);
+    if (this.paneOpenListeners.size === 0) {
+      this.pendingOpen.push(bridge);
+      return;
+    }
+    this.paneOpenListeners.forEach((cb) => cb(bridge));
+  }
+
+  onPaneOpen(cb: (sink: ResttyPaneSink) => void): TerminalSubscription {
+    this.paneOpenListeners.add(cb);
+    const queued = this.pendingOpen;
+    this.pendingOpen = [];
+    queued.forEach((bridge) => cb(bridge));
+    return { dispose: () => this.paneOpenListeners.delete(cb) };
+  }
+
+  onPaneClose(cb: (paneId: number) => void): TerminalSubscription {
+    this.paneCloseListeners.add(cb);
+    return { dispose: () => this.paneCloseListeners.delete(cb) };
+  }
+
+  /** Split the focused pane; the new pane connects via onPaneSplit. */
+  split(direction: 'vertical' | 'horizontal'): void {
+    this.surface?.splitActivePane?.(direction);
+  }
+
+  /** Close the focused pane (its transport is torn down via onPaneClosed). */
+  closeActivePane(): boolean {
+    return this.closePaneById(this.activePaneId);
+  }
+
+  /** Close a pane by id; refuses to close the last remaining pane. */
+  closePaneById(id: number): boolean {
+    if (id < 0 || this.panes.size <= 1) return false;
+    return this.surface?.closePane?.(id) ?? false;
+  }
+
+  paneCount(): number {
+    return this.panes.size;
+  }
+
+  getActivePaneId(): number {
+    return this.activePaneId;
+  }
+
+  private handlePaneCreated(id: number): void {
+    this.registerPane(id);
+    this.connectPane(id);
+    this.syncLayout();
+    if (this.root) this.installScrollGuard(this.root);
+    if (this.settings) this.applyAppearanceToPane(id, this.settings);
+  }
+
+  private handlePaneClosed(id: number): void {
+    this.panes.delete(id);
+    this.openedPanes.delete(id);
+    this.paneCloseListeners.forEach((cb) => cb(id));
+    this.syncLayout();
+  }
+
+  private handleActivePaneChange(id: number): void {
+    if (id >= 0) this.activePaneId = id;
+  }
+
+  private connectPane(id: number): void {
+    const handle = this.surface?.pane?.(id);
+    handle?.connectPty();
+  }
+
+  private activeHandle(): ResttyPaneHandleLite | null {
+    const surface = this.surface;
+    if (!surface) return null;
+    return surface.pane?.(this.activePaneId) ?? surface.activePane?.() ?? null;
+  }
+
+  focusPane(id: number): void {
+    this.activePaneId = id;
+    this.surface?.setActivePane?.(id, { focus: true });
+  }
+
+  // create() does the real work; open() exists to satisfy the interface.
+  open(): void {}
+
+  /** Inject output into the active pane (used by reconnect's clear-screen). */
+  write(data: string | Uint8Array): void {
+    const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
+    this.activeHandle()?.sendInput(text, 'pty');
+  }
+
+  onInput(): TerminalSubscription {
+    // Input is bound per-pane via PaneBridge; the adapter itself has no stream.
+    return { dispose: () => undefined };
+  }
+
+  onResize(): TerminalSubscription {
+    return { dispose: () => undefined };
+  }
+
   onTitle(cb: (title: string) => void): TerminalSubscription {
     this.titleListeners.add(cb);
     return { dispose: () => this.titleListeners.delete(cb) };
@@ -352,17 +483,14 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     this.term?.focus();
   }
 
-  // restty owns its own resize; nothing to do here.
   fit(): void {
     this.syncLayout();
   }
 
   getSize(): { cols: number; rows: number } {
-    return { cols: this.gridCols, rows: this.gridRows };
+    return this.panes.get(this.activePaneId)?.bridge.getSize() ?? { cols: 80, rows: 24 };
   }
 
-  // restty owns selection on the GPU canvas and doesn't expose the text, but it
-  // can copy the active selection straight to the clipboard.
   getSelection(): string {
     return '';
   }
@@ -371,92 +499,81 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     return false;
   }
 
-  /** Copy restty's current canvas selection to the clipboard (no-op if empty). */
+  /** Copy the focused pane's canvas selection to the clipboard (no-op if empty). */
   async copySelectionToClipboard(): Promise<boolean> {
-    const restty = this.term?.restty as { copySelectionToClipboard?: () => Promise<boolean> } | undefined;
-    return (await restty?.copySelectionToClipboard?.().catch(() => false)) ?? false;
+    return (await this.activeHandle()?.copySelectionToClipboard?.().catch(() => false)) ?? false;
   }
 
   paste(data: string): void {
     if (!data) return;
-    agentLog('resttyAdapter.ts:paste', 'context-menu paste', { len: data.length, preview: data.slice(0, 24) }, 'H3');
-    // Context-menu paste: send to transport only (remote echo draws). Do not also
-    // route through restty keyboard handling — that duplicates with Ctrl+V paste.
-    this.inputListeners.forEach((cb) => cb(data));
+    // Context-menu paste: send to the focused pane's transport (remote echo
+    // draws it). Do not also route through restty keyboard handling.
+    this.panes.get(this.activePaneId)?.bridge.emitInput(data);
   }
 
   getCwd(): string | null {
-    return this.cwd;
+    return this.panes.get(this.activePaneId)?.cwd ?? null;
   }
 
   updateAppearance(): void {}
 
-  /** Apply theme colors, cursor shape/blink, and font size to the live terminal. */
+  /** Apply theme colors, cursor shape/blink, and font size to every pane. */
   setAppearance(settings: PwaTerminalSettings): void {
-    const restty = this.term?.restty as
-      | { applyTheme?: (theme: unknown, name?: string) => void; setFontSize?: (px: number) => void }
-      | undefined;
-    if (!restty) return;
-    const palette = getThemePalette(settings.theme);
-    restty.applyTheme?.(buildResttyTheme(palette), palette.name);
-    if (Number.isFinite(settings.fontSize)) restty.setFontSize?.(settings.fontSize);
-    this.term?.write(cursorSequence(settings.cursorStyle, settings.cursorBlink));
+    this.settings = settings;
+    for (const id of this.panes.keys()) this.applyAppearanceToPane(id, settings);
   }
 
-  /** Reapply the terminal font live (e.g. after a settings change) without reopening. */
+  private applyAppearanceToPane(id: number, settings: PwaTerminalSettings): void {
+    const handle = this.surface?.pane?.(id);
+    if (!handle) return;
+    const palette = getThemePalette(settings.theme);
+    handle.applyTheme(buildResttyTheme(palette), palette.name);
+    if (Number.isFinite(settings.fontSize)) handle.setFontSize(settings.fontSize);
+    handle.sendInput(cursorSequence(settings.cursorStyle, settings.cursorBlink), 'pty');
+  }
+
+  /** Reapply the terminal font live (every pane) without reopening. */
   async setFont(settings: PwaTerminalSettings): Promise<void> {
-    const restty = this.term?.restty as
-      | { setFontSources?: (sources: ResttyFontSource[]) => Promise<void> }
-      | undefined;
-    if (!restty?.setFontSources) return;
+    this.settings = settings;
     const sources = await resolveFontSources(settings.fontFamily);
-    await restty.setFontSources(sources);
+    await this.surface?.setFontSources?.(sources);
     this.syncLayout();
   }
 
-  /** SPIKE debug: mouse mode + recent wheel/scroll logs (device ring buffer). */
+  /** SPIKE debug: mouse mode + grid/canvas snapshot for the focused pane. */
   getDebugSummary(): Record<string, unknown> {
-    const mouse = this.term?.restty?.getMouseStatus?.();
-    const canvas = this.term?.element?.querySelector('canvas');
-    const logs = (window as unknown as { __resttyDebugLog?: ResttyDebugEntry[] }).__resttyDebugLog ?? [];
-    const wheelLogs = logs.filter((e) => e.location.includes('wheel'));
+    const handle = this.activeHandle();
+    const mouse = handle?.getMouseStatus?.();
+    const canvas = this.root?.querySelector('canvas');
+    const size = this.getSize();
     return {
       mouse,
-      grid: { cols: this.gridCols, rows: this.gridRows },
+      panes: this.panes.size,
+      grid: { cols: size.cols, rows: size.rows },
       canvas: canvas
         ? { px: `${canvas.width}×${canvas.height}`, client: `${canvas.clientWidth}×${canvas.clientHeight}` }
         : null,
-      wheelEvents: wheelLogs.length,
-      lastWheel: wheelLogs.at(-1)?.data ?? null,
     };
   }
 
-  /** SPIKE debug: fill scrollback then dispatch trackpad-like wheel ticks on the canvas. */
+  /** SPIKE debug: per-pane grid + backend (cols/rows > 0 ⇒ cellH > 0 ⇒ scrollable). */
+  paneMetrics(): Array<{ id: number; cols: number; rows: number; backend: string }> {
+    return [...this.panes.entries()].map(([id, state]) => {
+      const size = state.bridge.getSize();
+      return { id, cols: size.cols, rows: size.rows, backend: this.surface?.pane?.(id)?.getBackend() ?? '' };
+    });
+  }
+
+  /** SPIKE debug: fill scrollback then dispatch trackpad-like wheel ticks. */
   probeScrollWheel(): void {
     let block = '';
     for (let i = 1; i <= 80; i += 1) block += `scroll-probe ${i}\r\n`;
     this.write(block);
-    const canvas = this.term?.element?.querySelector('canvas');
-    if (!canvas) {
-      agentLog('resttyAdapter.ts:scroll-probe', 'scroll probe: no canvas', {}, 'H-wheel');
-      return;
-    }
+    const canvas = this.root?.querySelector('canvas');
+    if (!canvas) return;
     for (let i = 0; i < 5; i += 1) {
-      canvas.dispatchEvent(
-        new WheelEvent('wheel', {
-          deltaY: -120,
-          deltaMode: 0,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
+      canvas.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, deltaMode: 0, bubbles: true, cancelable: true }));
     }
-    agentLog(
-      'resttyAdapter.ts:scroll-probe',
-      'scroll probe dispatched 5 wheel events',
-      { deltaY: -120, canvasClient: `${canvas.clientWidth}×${canvas.clientHeight}` },
-      'H-wheel',
-    );
   }
 
   dispose(): void {
@@ -468,29 +585,67 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     this.resizeObserver = null;
     this.term?.dispose();
     this.term = null;
-    this.inputListeners.clear();
-    this.resizeListeners.clear();
+    this.panes.clear();
+    this.openedPanes.clear();
+    this.pendingOpen = [];
     this.titleListeners.clear();
+    this.paneOpenListeners.clear();
+    this.paneCloseListeners.clear();
+  }
+
+  private async waitForBackend(timeoutMs = 20_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const backend = this.surface?.getBackend?.();
+      if (backend === 'webgpu' || backend === 'webgl2' || backend === 'webgl') return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error('restty backend not ready');
+  }
+
+  // getBackend() resolves before wasmPromise finishes in restty init(); probe DA
+  // so keyboard IME handlers (which require wasm) are actually live.
+  private async waitForPaneReady(id: number, timeoutMs = 20_000): Promise<void> {
+    const bridge = this.panes.get(id)?.bridge;
+    const handle = this.surface?.pane?.(id);
+    if (!bridge || !handle) return;
+    const deadline = Date.now() + timeoutMs;
+    let daReply = false;
+    const sub = bridge.onInput(() => { daReply = true; });
+    handle.sendInput('\x1b[c', 'pty');
+    while (!daReply && Date.now() < deadline) {
+      handle.updateSize(true);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    sub.dispose();
+    if (!daReply) throw new Error('restty wasm input path not ready (DA probe failed)');
   }
 
   private syncLayout(): void {
-    this.term?.restty?.updateSize(true);
+    this.surface?.updateSize?.(true);
   }
 
   /**
-   * Trackpad scroll is wheel on the restty canvas (bubble listener). Do not call
-   * updateSize during wheel — it retriggers grid resize and resets viewport offset.
-   * Forward parent-target wheels; bypass mouse-reporting hijack with Shift.
+   * Trackpad scroll is wheel on a restty canvas (bubble listener). Forward
+   * parent-target wheels to the canvas under the pointer and bypass the
+   * mouse-reporting hijack with Shift. Re-scans canvases so splits are covered.
    */
   private installScrollGuard(root: HTMLElement): void {
     this.wheelForwardCleanup?.();
-    const canvas = root.querySelector('canvas');
-    if (!canvas) {
+    const canvases = Array.from(root.querySelectorAll('canvas'));
+    if (canvases.length === 0) {
       this.wheelForwardCleanup = null;
       return;
     }
 
-    const dispatchCanvasWheel = (source: WheelEvent, shiftKey: boolean): void => {
+    const canvasUnder = (x: number, y: number): HTMLCanvasElement | null => {
+      for (const canvas of canvases) {
+        const rect = canvas.getBoundingClientRect();
+        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return canvas;
+      }
+      return null;
+    };
+    const dispatchCanvasWheel = (canvas: HTMLElement, source: WheelEvent, shiftKey: boolean): void => {
       canvas.dispatchEvent(
         new WheelEvent('wheel', {
           deltaX: source.deltaX,
@@ -510,109 +665,78 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     };
 
     const onCanvasWheelCapture = (event: WheelEvent): void => {
-      const mouse = this.term?.restty?.getMouseStatus?.();
+      const mouse = this.activeHandle()?.getMouseStatus?.();
       if (!event.shiftKey && mouse?.active) {
         event.stopImmediatePropagation();
         event.preventDefault();
-        agentLog(
-          'resttyAdapter.ts:wheel-unhijack',
-          'mouse reporting stole wheel; re-dispatch with shift',
-          { deltaY: event.deltaY, mouseMode: mouse.mode },
-          'H-wheel',
-        );
-        dispatchCanvasWheel(event, true);
+        dispatchCanvasWheel(event.currentTarget as HTMLElement, event, true);
       }
     };
 
     const onRootWheelCapture = (event: WheelEvent): void => {
-      if (event.target === canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const overCanvas =
-        event.clientX >= rect.left &&
-        event.clientX <= rect.right &&
-        event.clientY >= rect.top &&
-        event.clientY <= rect.bottom;
-      if (!overCanvas || !root.contains(event.target as Node)) return;
-      const mouse = this.term?.restty?.getMouseStatus?.();
-      agentLog(
-        'resttyAdapter.ts:wheel-forward',
-        'forward parent-target wheel to canvas',
-        {
-          deltaY: event.deltaY,
-          target: event.target instanceof Element ? event.target.className || event.target.tagName : '?',
-          mouseActive: mouse?.active ?? false,
-        },
-        'H-wheel',
-      );
+      if (event.target instanceof HTMLCanvasElement) return;
+      const canvas = canvasUnder(event.clientX, event.clientY);
+      if (!canvas || !root.contains(event.target as Node)) return;
+      const mouse = this.activeHandle()?.getMouseStatus?.();
+      pushWheelLog({ deltaY: event.deltaY, forwarded: true });
       event.stopImmediatePropagation();
       event.preventDefault();
-      dispatchCanvasWheel(event, event.shiftKey || !!mouse?.active);
+      dispatchCanvasWheel(canvas, event, event.shiftKey || !!mouse?.active);
     };
 
-    const onCanvasWheelBubble = (event: WheelEvent): void => {
-      agentLog(
-        'resttyAdapter.ts:canvas-wheel',
-        'wheel bubbled on canvas',
-        {
-          deltaY: event.deltaY,
-          deltaMode: event.deltaMode,
-          defaultPrevented: event.defaultPrevented,
-        },
-        'H-wheel',
-      );
-    };
-
-    canvas.addEventListener('wheel', onCanvasWheelCapture, { capture: true, passive: false });
-    canvas.addEventListener('wheel', onCanvasWheelBubble, { passive: true });
+    canvases.forEach((canvas) =>
+      canvas.addEventListener('wheel', onCanvasWheelCapture, { capture: true, passive: false }),
+    );
     root.addEventListener('wheel', onRootWheelCapture, { capture: true, passive: false });
     this.wheelForwardCleanup = () => {
-      canvas.removeEventListener('wheel', onCanvasWheelCapture, { capture: true });
-      canvas.removeEventListener('wheel', onCanvasWheelBubble);
+      canvases.forEach((canvas) =>
+        canvas.removeEventListener('wheel', onCanvasWheelCapture, { capture: true }),
+      );
       root.removeEventListener('wheel', onRootWheelCapture, { capture: true });
     };
   }
 
   private installPointerFocus(root: HTMLElement): void {
     this.pointerFocusCleanup?.();
-    const onPointerDown = () => {
-      this.term?.focus();
-    };
+    const onPointerDown = () => this.term?.focus();
     root.addEventListener('pointerdown', onPointerDown, { passive: true });
     this.pointerFocusCleanup = () => root.removeEventListener('pointerdown', onPointerDown);
   }
 
   // OSC 0/2 (window title) and OSC 7 (cwd). ESC ] N ; payload (BEL | ST).
-  // Scanned across writes; the buffer is bounded so old matches age out.
-  private captureOsc(data: string): void {
-    this.oscBuffer = (this.oscBuffer + data).slice(-2048);
+  // Scanned per pane across writes; the buffer is bounded so old matches age out.
+  captureOsc(bridge: PaneBridge, data: string): void {
+    const state = this.panes.get(bridge.paneId);
+    if (!state) return;
+    state.oscBuffer = (state.oscBuffer + data).slice(-2048);
     let consumed = 0;
 
     const titleRe = /\x1b\]([02]);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
     let m: RegExpExecArray | null;
     let lastTitle: RegExpExecArray | null = null;
-    while ((m = titleRe.exec(this.oscBuffer))) lastTitle = m;
+    while ((m = titleRe.exec(state.oscBuffer))) lastTitle = m;
     if (lastTitle) {
       consumed = Math.max(consumed, lastTitle.index + lastTitle[0].length);
       const title = lastTitle[2];
-      if (title !== this.lastTitle) {
-        this.lastTitle = title;
-        this.titleListeners.forEach((cb) => cb(title));
+      if (title !== state.title) {
+        state.title = title;
+        if (bridge.paneId === this.activePaneId) this.titleListeners.forEach((cb) => cb(title));
       }
     }
 
     const cwdRe = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
     let c: RegExpExecArray | null;
     let lastCwd: RegExpExecArray | null = null;
-    while ((c = cwdRe.exec(this.oscBuffer))) lastCwd = c;
+    while ((c = cwdRe.exec(state.oscBuffer))) lastCwd = c;
     if (lastCwd) {
       consumed = Math.max(consumed, lastCwd.index + lastCwd[0].length);
       try {
-        this.cwd = decodeURIComponent(lastCwd[1]);
+        state.cwd = decodeURIComponent(lastCwd[1]);
       } catch {
-        this.cwd = lastCwd[1];
+        state.cwd = lastCwd[1];
       }
     }
 
-    if (consumed) this.oscBuffer = this.oscBuffer.slice(consumed);
+    if (consumed) state.oscBuffer = state.oscBuffer.slice(consumed);
   }
 }
