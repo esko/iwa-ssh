@@ -39,6 +39,10 @@ export type PwaTerminalSettings = {
   cursorStyle: 'block' | 'underline' | 'bar';
   terminalPadding: number;
   scrollSensitivity: number;
+  /** Capture Ctrl+T / Ctrl+W / Ctrl+Tab in-app instead of passing to the OS. */
+  captureShortcuts: boolean;
+  /** Ask for confirmation before closing a tab whose session is connected. */
+  confirmClose: boolean;
 };
 
 export type PwaConnectionSpec = {

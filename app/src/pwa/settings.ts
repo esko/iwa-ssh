@@ -22,6 +22,8 @@ export const DEFAULT_PWA_SETTINGS: PwaTerminalSettings = {
   cursorStyle: 'block',
   terminalPadding: 0,
   scrollSensitivity: 1,
+  captureShortcuts: true,
+  confirmClose: false,
 };
 
 export function loadPwaSettings(): PwaTerminalSettings {
@@ -96,6 +98,8 @@ export function normalizePwaSettings(value: Partial<PwaTerminalSettings> | Recor
     cursorStyle,
     terminalPadding: Number.isFinite(terminalPadding) ? clamp(Math.round(terminalPadding), 0, 32) : DEFAULT_PWA_SETTINGS.terminalPadding,
     scrollSensitivity: Number.isFinite(scrollSensitivity) ? clamp(scrollSensitivity, 0.5, 2) : DEFAULT_PWA_SETTINGS.scrollSensitivity,
+    captureShortcuts: typeof value.captureShortcuts === 'boolean' ? value.captureShortcuts : DEFAULT_PWA_SETTINGS.captureShortcuts,
+    confirmClose: typeof value.confirmClose === 'boolean' ? value.confirmClose : DEFAULT_PWA_SETTINGS.confirmClose,
   };
 }
 

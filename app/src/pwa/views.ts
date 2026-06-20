@@ -37,7 +37,7 @@ import { profileToSpec, recordConnection, specFromQuery, specToQuery } from './p
 import { shouldPassThroughSystemShortcut } from './shortcuts';
 import { showContextMenu, type ContextMenuItem } from './contextMenu';
 import { createTransport, type TerminalTransport } from './transport';
-import type { PwaConnectionSpec, TerminalTransportStatus } from './types';
+import type { PwaConnectionSpec, PwaTerminalSettings, TerminalTransportStatus } from './types';
 
 // `active*` always point at the focused tab's session, so the existing helpers
 // (copy, reconnect, settings sync, context menu) keep operating on it.
@@ -86,6 +86,17 @@ let statusHideTimer = 0;
 
 function activeSession(): TermSession | null {
   return sessions.find((s) => s.id === activeSessionId) ?? null;
+}
+
+/** Resolved settings for the focused tab (Keyboard/Behavior toggles read live). */
+function currentSettings(): PwaTerminalSettings {
+  return resolveSettings(activeSpec?.settingsProfileId);
+}
+
+/** Behavior: optionally confirm before a user closes a still-connected tab. */
+function confirmCloseSession(session: TermSession): boolean {
+  if (!currentSettings().confirmClose || session.status !== 'connected') return true;
+  return window.confirm(`Close ${session.title}? The session is still connected.`);
 }
 
 /**
@@ -442,11 +453,56 @@ export function openSettings(initial: SettingsTab = 'appearance'): void {
 function renderSettingsTab(body: HTMLElement, tab: SettingsTab, profileId: string): void {
   if (tab === 'appearance') return void renderAppearanceTab(body, profileId);
   if (tab === 'about') return void renderAboutTab(body);
-  const note =
-    tab === 'keyboard'
-      ? 'Copy/paste, tab, and modifier behavior live here. The terminal already passes Ctrl+T and Ctrl+W through to ChromeOS.'
-      : 'Reconnect-on-disconnect and close confirmation live here.';
-  body.innerHTML = `<p class="placeholder-note">${note} Controls land with the settings-profile wiring.</p>`;
+  if (tab === 'keyboard') return renderKeyboardTab(body, profileId);
+  return renderBehaviorTab(body, profileId);
+}
+
+/** Shared on/off select, persisted to the settings profile and reapplied live. */
+function renderToggleTab(
+  body: HTMLElement,
+  profileId: string,
+  groupTitle: string,
+  rows: { name: keyof PwaTerminalSettings; label: string; hint: string; value: boolean }[],
+): void {
+  const save = (patch: Record<string, unknown>): void => {
+    const current = getSettingsProfile(profileId);
+    upsertSettingsProfile({ ...current, settings: normalizePwaSettings({ ...current.settings, ...patch }) });
+    void syncActiveTerminalSettings();
+  };
+  const onOff = (on: boolean): string =>
+    `<option value="on"${on ? ' selected' : ''}>On</option><option value="off"${on ? '' : ' selected'}>Off</option>`;
+  body.innerHTML =
+    `<div class="group-title">${groupTitle}</div>` +
+    rows.map((r) => setRow(r.label, `<select name="${r.name}">${onOff(r.value)}</select>`, r.hint)).join('');
+  rows.forEach((r) => {
+    body.querySelector<HTMLSelectElement>(`[name="${r.name}"]`)?.addEventListener('change', (event) => {
+      save({ [r.name]: (event.target as HTMLSelectElement).value === 'on' });
+    });
+  });
+}
+
+function renderKeyboardTab(body: HTMLElement, profileId: string): void {
+  const s = getSettingsProfile(profileId).settings;
+  renderToggleTab(body, profileId, 'Shortcuts', [
+    {
+      name: 'captureShortcuts',
+      label: 'Tab keys handled in app',
+      hint: 'Ctrl+T new tab, Ctrl+W close tab, Ctrl+Tab cycle. Off passes them to ChromeOS.',
+      value: s.captureShortcuts,
+    },
+  ]);
+}
+
+function renderBehaviorTab(body: HTMLElement, profileId: string): void {
+  const s = getSettingsProfile(profileId).settings;
+  renderToggleTab(body, profileId, 'Session', [
+    {
+      name: 'confirmClose',
+      label: 'Confirm before closing a connected tab',
+      hint: 'Ctrl+W or the tab × ask first while a session is live.',
+      value: s.confirmClose,
+    },
+  ]);
 }
 
 function setRow(label: string, control: string, hint?: string): string {
@@ -868,7 +924,7 @@ function onTabStripClick(event: MouseEvent): void {
   if (close) {
     event.stopPropagation();
     const session = sessions.find((s) => s.id === close.dataset.close);
-    if (session) closeSession(session);
+    if (session && confirmCloseSession(session)) closeSession(session);
     return;
   }
   const tab = target.closest<HTMLElement>('.term-tab');
@@ -905,7 +961,8 @@ function installTabShortcuts(): void {
     (event) => {
       if (!event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.shiftKey) {
-        // Splits: Ctrl+Shift+E → right, Ctrl+Shift+D → down, Ctrl+Shift+W → close pane.
+        // Splits are an app feature (not a system shortcut), so always handled:
+        // Ctrl+Shift+E → right, Ctrl+Shift+D → down, Ctrl+Shift+W → close pane.
         if (event.code === 'KeyE' && splitActivePane('vertical')) {
           event.preventDefault();
           event.stopImmediatePropagation();
@@ -918,6 +975,9 @@ function installTabShortcuts(): void {
         }
         return;
       }
+      // Tab keys are gated by the Keyboard setting; when off they fall through
+      // to installShortcutPassThrough and on to ChromeOS.
+      if (!currentSettings().captureShortcuts) return;
       if (event.code === 'KeyT') {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -927,7 +987,7 @@ function installTabShortcuts(): void {
         if (session) {
           event.preventDefault();
           event.stopImmediatePropagation();
-          closeSession(session);
+          if (confirmCloseSession(session)) closeSession(session);
         }
       } else if (event.code === 'Tab' && sessions.length > 1) {
         event.preventDefault();
