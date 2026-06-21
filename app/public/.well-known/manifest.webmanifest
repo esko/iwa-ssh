@@ -27,7 +27,8 @@
     "direct-sockets": ["self"],
     "direct-sockets-private": ["self"],
     "local-network": ["self"],
-    "loopback-network": ["self"]
+    "loopback-network": ["self"],
+    "window-management": ["self"]
   },
   "icons": [
     {

@@ -69,6 +69,19 @@ async function ensureWindowManagement(): Promise<void> {
 }
 
 export function installWindowControls(): void {
+  // window-management is what unlocks unframed/borderless, and it may only be
+  // granted a beat after load (flipping the window from standalone to unframed).
+  // Mount immediately if already frameless, and re-check on display-mode changes
+  // so the caption appears once the mode flips — without it the user is stuck
+  // with the native standalone bar even after the grant.
+  mountCaption();
+  for (const mode of ['unframed', 'borderless']) {
+    window.matchMedia(`(display-mode: ${mode})`).addEventListener?.('change', mountCaption);
+  }
+  void ensureWindowManagement();
+}
+
+function mountCaption(): void {
   if (!isAppWindow()) return;
   if (document.getElementById(TITLEBAR_ID)) return;
   document.documentElement.classList.add('app-chrome');
@@ -117,6 +130,4 @@ export function installWindowControls(): void {
   bar.addEventListener('dblclick', (event) => {
     if (!(event.target as Element)?.closest('.win-controls')) void toggleMaximize();
   });
-
-  void ensureWindowManagement();
 }
