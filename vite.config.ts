@@ -10,10 +10,23 @@ const UPSTREAM_PLUGIN_BASE = `${UPSTREAM_BASE}/plugin`;
 
 const DEV_HOST = process.env.IWA_SSH_DEV_HOST ?? '127.0.0.1';
 const DEV_PORT = Number(process.env.IWA_SSH_DEV_PORT ?? 5173);
+/** Dev Mode Proxy CSP adds ws://localhost:<port>; HMR must match (not 127.0.0.1). */
+const DEV_HMR_HOST = process.env.IWA_SSH_DEV_HMR_HOST ?? 'localhost';
+/** HMR is off by default — IWA CSP blocks ws except Dev Mode Proxy allowance; dev workflow reopens the app anyway. */
+const DEV_HMR_ENABLED = process.env.IWA_SSH_HMR === '1';
 
 const crossOriginIsolationHeaders = {
   'Cross-Origin-Opener-Policy': 'same-origin',
   'Cross-Origin-Embedder-Policy': 'require-corp',
+};
+
+/** IWA / Dev Mode Proxy: relax feature policy for terminal fonts + dbg clipboard. */
+const iwaDevPermissionsPolicy =
+  'clipboard-read=(self), clipboard-write=(self), local-fonts=(self)';
+
+const iwaDevHeaders = {
+  ...crossOriginIsolationHeaders,
+  'Permissions-Policy': iwaDevPermissionsPolicy,
 };
 
 /** Load Trusted Types default policy before Vite client / app code (IWA requirement). */
@@ -125,7 +138,11 @@ export default defineConfig({
     __IWA_DEFAULT_SSH_WASM__: JSON.stringify(`${UPSTREAM_PLUGIN_BASE}/wasm/ssh.wasm`),
   },
   assetsInclude: ['**/*.wasm'],
-  plugins: [upstreamStaticDev(), copyUpstreamDist(), iwaTrustedTypesFirst()],
+  plugins: [
+    upstreamStaticDev(),
+    copyUpstreamDist(),
+    iwaTrustedTypesFirst(),
+  ],
   build: {
     outDir: resolve(__dirname, 'dist'),
     emptyOutDir: true,
@@ -144,20 +161,24 @@ export default defineConfig({
     host: DEV_HOST,
     port: DEV_PORT,
     strictPort: true,
-    headers: crossOriginIsolationHeaders,
-    // Vite overlay/HMR use innerHTML; disable overlay in IWA. Point HMR at 127.0.0.1 for Dev Mode Proxy.
-    hmr: {
-      host: DEV_HOST,
-      port: DEV_PORT,
-      clientPort: DEV_PORT,
-      protocol: 'ws',
-      overlay: false,
-    },
+    // Asset URLs in isolated-app dev should resolve to the proxied dev origin.
+    origin: `http://${DEV_HMR_HOST}:${DEV_PORT}`,
+    headers: iwaDevHeaders,
+    // Vite HMR: off by default in IWA dev (CSP connect-src spam). Set IWA_SSH_HMR=1 for browser-only dev.
+    hmr: DEV_HMR_ENABLED
+      ? {
+          host: DEV_HMR_HOST,
+          port: DEV_PORT,
+          clientPort: DEV_PORT,
+          protocol: 'ws',
+          overlay: false,
+        }
+      : false,
   },
   preview: {
     host: DEV_HOST,
     port: DEV_PORT,
     strictPort: true,
-    headers: crossOriginIsolationHeaders,
+    headers: iwaDevHeaders,
   },
 });
