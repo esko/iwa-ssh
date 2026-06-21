@@ -59,21 +59,39 @@ const targets = [
 console.log(`Bump ${current} -> ${next}${dryRun ? ' (dry run)' : ''}\n`);
 
 let failed = false;
-for (const { path, find, replace } of targets) {
+const prepared = [];
+for (const { path, find, replace, expected = 1 } of targets) {
   const full = join(ROOT, path);
   const text = readFileSync(full, 'utf8');
-  if (!text.includes(find)) {
-    console.error(`  ✗ ${path}: expected ${JSON.stringify(find)} not found`);
+  const occurrences = text.split(find).length - 1;
+  if (occurrences !== expected) {
+    console.error(`  ✗ ${path}: expected ${expected} occurrence(s) of ${JSON.stringify(find)}, found ${occurrences}`);
     failed = true;
     continue;
   }
-  if (!dryRun) writeFileSync(full, text.replace(find, replace));
+  prepared.push({ full, text: text.replaceAll(find, replace) });
   console.log(`  ✓ ${path}`);
+}
+
+const lockPath = join(ROOT, 'package-lock.json');
+const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+if (lock.version !== current || lock.packages?.['']?.version !== current) {
+  console.error(`  ✗ package-lock.json: root versions must both equal ${current}`);
+  failed = true;
+} else {
+  lock.version = next;
+  lock.packages[''].version = next;
+  console.log('  ✓ package-lock.json');
 }
 
 if (failed) {
   console.error('\nNo files changed — fix the drift above and retry.');
   process.exit(1);
+}
+
+if (!dryRun) {
+  for (const { full, text } of prepared) writeFileSync(full, text);
+  writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
 }
 
 console.log(
