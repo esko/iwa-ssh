@@ -15,6 +15,20 @@ export type ReadinessDiagnostics = {
   tabbedDisplayMode: boolean;
 };
 
+let assetReadinessPromise: Promise<{ upstreamAssets: boolean; moshAssets: boolean }> | null = null;
+
+function readAssetReadiness(): Promise<{ upstreamAssets: boolean; moshAssets: boolean }> {
+  assetReadinessPromise ??= Promise.all([areUpstreamAssetsReady(), areMoshAssetsReady()]).then(
+    ([upstreamAssets, moshAssets]) => ({ upstreamAssets, moshAssets }),
+  );
+  return assetReadinessPromise;
+}
+
+/** Test/dev hook for a page whose asset tree is intentionally replaced in place. */
+export function resetDiagnosticsAssetCache(): void {
+  assetReadinessPromise = null;
+}
+
 export async function readDiagnostics(): Promise<ReadinessDiagnostics> {
   const global = globalThis as typeof globalThis & {
     TCPSocket?: unknown;
@@ -23,13 +37,13 @@ export async function readDiagnostics(): Promise<ReadinessDiagnostics> {
     launchQueue?: unknown;
   };
   const udp = typeof global.UDPSocket === 'function';
-  const moshAssets = await areMoshAssetsReady();
+  const { upstreamAssets, moshAssets } = await readAssetReadiness();
   return {
     crossOriginIsolated: globalThis.crossOriginIsolated,
     directSockets: typeof global.TCPSocket === 'function',
     directSocketsPrivate: typeof global.TCPServerSocket === 'function' || udp,
     udp,
-    upstreamAssets: await areUpstreamAssetsReady(),
+    upstreamAssets,
     moshAssets,
     moshReady: udp && moshAssets,
     launchQueue: Boolean(global.launchQueue),

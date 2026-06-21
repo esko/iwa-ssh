@@ -186,10 +186,13 @@ export class NasshCommandBridge {
       this.handleExit(code, 'wassh');
     };
 
-    // nassh exit() shows an hterm reconnect overlay we don't use; onPluginExit
-    // already reported session end. Suppress the overlay IO push only.
+    // nassh exit() normally shows an hterm reconnect overlay we don't use.
+    // It is also the only exit path for failures before the plugin starts, so
+    // suppress the overlay while still reporting and cleaning up the session.
     instance.exit = (code) => {
       log.ssh.debug('nassh exit() suppressed', { code });
+      instance.terminateProgram_();
+      this.handleExit(code, 'nassh-exit');
     };
 
     this.commandInstance = instance;
@@ -225,7 +228,7 @@ export class NasshCommandBridge {
         identity: connectParams.identity,
       });
       await instance.connectTo(connectParams);
-      if (this.disposed) return;
+      if (this.disposed || this.hasExited) return;
       await syncKnownHostsFromNassh(this.options.host, this.options.port).catch((error) => {
         log.knownHosts.warn('post-connect known_hosts sync failed', { error });
       });
@@ -236,6 +239,7 @@ export class NasshCommandBridge {
         log.ssh.debug('connectTo rejected during host key recovery', {});
         return;
       }
+      if (this.hasExited) return;
       const message = error instanceof Error ? error.message : String(error);
       log.ssh.error('connectTo failed', { message, error });
       this.options.onStatus?.('error', message);
@@ -354,7 +358,14 @@ export class NasshCommandBridge {
     this.hasExited = true;
     log.ssh.info('nassh bridge exited', { code, source, ...detail });
     this.commandInstance = null;
+    this.ioShim?.dispose();
+    this.ioShim = null;
+    this.resizeSubscription?.dispose();
+    this.resizeSubscription = null;
+    this.hostKeyGuard?.reset();
+    this.hostKeyGuard = null;
     const disconnectReason: SessionDisconnectReason = code === 0 ? 'normal-exit' : 'transport';
-    this.options.onStatus?.('disconnected', undefined, { disconnectReason });
+    const error = code === 0 ? undefined : `SSH exited with status ${code}`;
+    this.options.onStatus?.('disconnected', error, { disconnectReason });
   }
 }

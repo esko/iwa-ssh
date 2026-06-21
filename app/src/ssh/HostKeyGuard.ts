@@ -26,15 +26,29 @@ export type HostKeyGuardOptions = {
 export class HostKeyGuard {
   private parser = new HostKeyParser();
   private promptInFlight = false;
+  private outputQueue: Promise<void> = Promise.resolve();
+  private generation = 0;
 
   constructor(private readonly options: HostKeyGuardOptions) {}
 
   reset(): void {
+    this.generation += 1;
     this.parser.reset();
     this.promptInFlight = false;
+    this.outputQueue = Promise.resolve();
   }
 
-  async handleOutput(data: string | Uint8Array): Promise<void> {
+  handleOutput(data: string | Uint8Array): Promise<void> {
+    const generation = this.generation;
+    const pending = this.outputQueue.then(() => {
+      if (generation !== this.generation) return;
+      return this.processOutput(data);
+    });
+    this.outputQueue = pending.catch(() => undefined);
+    return pending;
+  }
+
+  private async processOutput(data: string | Uint8Array): Promise<void> {
     const chunk = typeof data === 'string' ? data : new TextDecoder().decode(data);
     const events = this.parser.parse(chunk);
 
@@ -58,7 +72,6 @@ export class HostKeyGuard {
         const { fingerprint, keyType } = event;
 
         if (this.options.isSessionTrusted?.(fingerprint)) {
-          this.promptInFlight = true;
           log.knownHosts.debug('auto-accepting session-trusted host key', {
             host: this.options.host,
             port: this.options.port,

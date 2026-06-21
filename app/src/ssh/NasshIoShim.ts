@@ -96,14 +96,17 @@ class NasshTerminalIo implements HtermTerminalIo {
 
   writeUTF8(buffer: ArrayBuffer | ArrayLike<number>): void {
     const u8 = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-    // Each wassh Tty write is a complete chunk; stream:true can hold bytes back
-    // indefinitely and stall host-key prompts / shell output in the IWA shim.
-    const string = this.textDecoder_.decode(u8);
+    // wassh writes are arbitrary byte chunks, not UTF-8 character boundaries.
+    // An empty write is an explicit boundary and flushes any incomplete tail.
+    const string = u8.byteLength === 0
+      ? this.textDecoder_.decode()
+      : this.textDecoder_.decode(u8, { stream: true });
     this.print(string);
   }
 
   writelnUTF8(buffer: ArrayBuffer | ArrayLike<number>): void {
     this.writeUTF8(buffer);
+    this.writeUTF8(new Uint8Array());
     this.writeUTF8(new Uint8Array([0x0d, 0x0a]));
   }
 
@@ -224,6 +227,8 @@ export class NasshIoShim {
   }
 
   dispose(): void {
+    const io = this.io as HtermTerminalIo;
+    io.writeUTF8?.(new Uint8Array());
     if (this.overlayHideTimer) clearTimeout(this.overlayHideTimer);
     this.overlayHideTimer = null;
     this.inputSubscription?.dispose();

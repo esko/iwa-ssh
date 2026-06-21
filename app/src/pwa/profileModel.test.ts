@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { profileToSpec, specToQuery, specFromQuery, specTitle } from './profileModel';
+import { layoutSpecKey, profileToSpec, specToQuery, specFromQuery, specTitle } from './profileModel';
 import type { Profile } from '../settings/types';
 
 describe('profile to terminal query mapping', () => {
@@ -90,5 +90,14 @@ describe('profile to terminal query mapping', () => {
       port: 22,
       etPort: 2022,
     });
+  });
+});
+
+describe('layoutSpecKey', () => {
+  it('distinguishes session-affecting connection intent', () => {
+    const base = { protocol: 'et' as const, hostname: 'host', username: 'user', args: [] as string[] };
+    expect(layoutSpecKey({ ...base, etPort: 2022 })).not.toBe(layoutSpecKey({ ...base, etPort: 2023 }));
+    expect(layoutSpecKey({ ...base, identityId: 'a' })).not.toBe(layoutSpecKey({ ...base, identityId: 'b' }));
+    expect(layoutSpecKey({ ...base, startupCommand: 'one' })).not.toBe(layoutSpecKey({ ...base, startupCommand: 'two' }));
   });
 });

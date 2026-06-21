@@ -33,12 +33,20 @@ import {
   DEFAULT_SETTINGS_PROFILE_ID,
   SETTINGS_PROFILES_STORAGE_KEY,
 } from './settingsProfiles';
-import { profileToSpec, recordConnection, specFromQuery, specToQuery } from './profileModel';
+import {
+  formatConnectionTarget,
+  layoutSpecKey,
+  profileToSpec,
+  recordConnection,
+  specFromQuery,
+  specToQuery,
+} from './profileModel';
 import { shouldPassThroughSystemShortcut } from './shortcuts';
 import { showContextMenu, type ContextMenuItem } from './contextMenu';
 import { CAPTION_TABS_SLOT_ID } from './windowControls';
 import { createTransport, type TerminalTransport } from './transport';
 import type { PwaConnectionSpec, PwaTerminalSettings, TerminalTransportStatus } from './types';
+import type { SessionStatusMeta } from '../settings/types';
 
 // `active*` always point at the focused tab's session, so the existing helpers
 // (copy, reconnect, settings sync, context menu) keep operating on it.
@@ -59,6 +67,7 @@ type PaneConn = {
   transport: TerminalTransport;
   sink: ResttyPaneSink;
   status: TerminalTransportStatus;
+  error?: string;
   reconnecting: boolean;
 };
 
@@ -68,6 +77,7 @@ type TermSession = {
   spec: PwaConnectionSpec;
   title: string;
   status: TerminalTransportStatus;
+  statusError?: string;
   container: HTMLElement;
   surface: HTMLElement;
   terminal: WtermTerminalAdapter | ResttyTerminalAdapter;
@@ -87,6 +97,7 @@ const sessions: TermSession[] = [];
 let sessionSeq = 0;
 let terminalQuery: URLSearchParams = new URLSearchParams();
 let statusHideTimer = 0;
+let tabRenderFrame = 0;
 
 function activeSession(): TermSession | null {
   return sessions.find((s) => s.id === activeSessionId) ?? null;
@@ -97,10 +108,6 @@ const TAB_LAYOUT_KEY = 'iwa-ssh-tab-layout';
 type SavedTabLayout = { specs: PwaConnectionSpec[]; activeIndex: number };
 
 /** Identity of a connection, so a fresh launch doesn't inherit stale tabs. */
-function specKey(spec: PwaConnectionSpec | null | undefined): string {
-  return spec ? `${spec.protocol}:${spec.username ?? ''}@${spec.hostname}:${spec.port ?? 22}` : '';
-}
-
 function saveTabLayout(): void {
   try {
     if (sessions.length === 0) {
@@ -135,7 +142,7 @@ function currentSettings(): PwaTerminalSettings {
 
 /** Behavior: optionally confirm before a user closes a still-connected tab. */
 function confirmCloseSession(session: TermSession): boolean {
-  if (!currentSettings().confirmClose || session.status !== 'connected') return true;
+  if (!resolveSettings(session.spec.settingsProfileId).confirmClose || !sessionHasConnectedPane(session)) return true;
   return window.confirm(`Close ${session.title}? The session is still connected.`);
 }
 
@@ -208,14 +215,6 @@ function setThemeColor(color: string): void {
     document.head.append(meta);
   }
   meta.content = color;
-}
-
-function connectionTarget(spec: PwaConnectionSpec): string {
-  const user = spec.username ? `${spec.username}@` : '';
-  const displayPort = spec.protocol === 'et' ? spec.etPort : spec.port;
-  const defaultPort = spec.protocol === 'et' ? 2022 : 22;
-  const port = displayPort && displayPort !== defaultPort ? `:${displayPort}` : '';
-  return `${user}${spec.hostname}${port}`;
 }
 
 function openOverlay(build: (close: () => void) => HTMLElement): void {
@@ -314,7 +313,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
 }
 
 function profileRow(profile: Profile): string {
-  const target = connectionTarget(profileToSpec(profile));
+  const target = formatConnectionTarget(profileToSpec(profile));
   const meta = profile.lastConnectedAt ? formatTime(profile.lastConnectedAt) : profile.protocol ?? 'ssh';
   return `
     <button class="conn-row" type="button" data-launch-id="${escapeHTML(profile.id)}">
@@ -696,7 +695,7 @@ README  <span style="color:${p.magenta}">.env</span></span>`;
     )}
     ${selectedCustom ? setRow('Remove font', `<button type="button" class="btn-ghost" id="fontRemoveBtn">Remove “${escapeHTML(selectedCustom.name)}”</button>`) : ''}
     <div id="fontMsg" class="set-hint" role="status"></div>
-    ${setRow('Size', `<select class="control-narrow" name="fontSize">${opts([11, 12, 13, 14, 15, 16, 18, 20, 22], s.fontSize)}</select>`)}
+    ${setRow('Size', `<select class="control-narrow" name="fontSize">${opts([12, 13, 14, 15, 16, 18, 20, 22], s.fontSize)}</select>`)}
     ${setRow('Cursor', `<select name="cursorStyle">${opts(['block', 'bar', 'underline'], s.cursorStyle)}</select>`)}
     ${setRow('Cursor blink', `<select name="cursorBlink">${opts(['on', 'off'], s.cursorBlink ? 'on' : 'off')}</select>`)}
     <div class="group-title">Window</div>
@@ -864,7 +863,7 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
   // Restore this window's tabs on reload/crash when they belong to the same
   // connection (sessionStorage is per-window); otherwise start a single tab.
   const layout = loadTabLayout();
-  if (layout && specKey(layout.specs[0]) === specKey(spec)) {
+  if (layout && layoutSpecKey(layout.specs[0]) === layoutSpecKey(spec)) {
     for (const saved of layout.specs) await createSession(saved);
     const active = sessions[Math.min(layout.activeIndex, sessions.length - 1)] ?? sessions[0];
     if (active) setActiveSession(active.id);
@@ -898,8 +897,9 @@ async function createSession(spec: PwaConnectionSpec): Promise<TermSession> {
   const session: TermSession = {
     id: `tab${++sessionSeq}`,
     spec,
-    title: connectionTarget(spec),
+    title: formatConnectionTarget(spec),
     status: 'connecting',
+    statusError: undefined,
     container,
     surface,
     terminal,
@@ -912,9 +912,9 @@ async function createSession(spec: PwaConnectionSpec): Promise<TermSession> {
     resumeEtSessionId,
   };
   session.titleSub = terminal.onTitle((value) => {
-    session.title = value.trim() || connectionTarget(spec);
+    session.title = value.trim() || formatConnectionTarget(spec);
     if (session.id === activeSessionId) document.title = session.title;
-    renderTabs();
+    scheduleTabRender();
   });
 
   terminal.setAppearance?.(settings);
@@ -928,7 +928,10 @@ async function createSession(spec: PwaConnectionSpec): Promise<TermSession> {
     session.paneSubs.push(terminal.onPaneClose((id) => closePaneConn(session, id)));
     session.paneSubs.push(terminal.onPaneOpen((sink) => void openPaneConn(session, sink)));
   } else {
-    session.transport = createTransport({ ...spec, etSessionId: session.resumeEtSessionId }, (state, error) => onSessionStatus(session, state, error));
+    session.transport = createTransport(
+      { ...spec, etSessionId: session.resumeEtSessionId },
+      (state, error, meta) => onSessionStatus(session, state, error, meta),
+    );
     await session.transport.connect(terminal);
     session.resumeEtSessionId = session.transport.getPersistentSessionId?.();
   }
@@ -943,10 +946,11 @@ async function openPaneConn(session: TermSession, sink: ResttyPaneSink): Promise
     paneId: sink.paneId,
     sink,
     status: 'connecting',
+    error: undefined,
     reconnecting: false,
     transport: createTransport(
       { ...session.spec, etSessionId: session.panes.size === 0 ? session.resumeEtSessionId : undefined },
-      (state, error) => onPaneStatus(session, sink.paneId, state, error),
+      (state, error, meta) => onPaneStatus(session, sink.paneId, state, error, meta),
     ),
   };
   session.panes.set(sink.paneId, conn);
@@ -962,16 +966,22 @@ function closePaneConn(session: TermSession, paneId: number): void {
   session.panes.delete(paneId);
   void conn.transport.disconnect().catch(() => undefined);
   conn.transport.dispose();
+  session.status = paneSessionStatus(session);
+  session.statusError = paneStatusError(session);
+  if (session.id === activeSessionId) updateSharedStatus(session, tabStatus(session), session.statusError);
+  renderTabs();
   if (session.panes.size === 0) closeSession(session);
 }
 
-function onPaneStatus(session: TermSession, paneId: number, state: TerminalTransportStatus, error?: string): void {
+function onPaneStatus(session: TermSession, paneId: number, state: TerminalTransportStatus, error?: string, meta?: SessionStatusMeta): void {
   const conn = session.panes.get(paneId);
   if (!conn) return;
-  const prev = conn.status;
-  conn.status = state;
-  session.status = state;
-  if (session.id === activeSessionId) updateSharedStatus(session, state, error);
+  const effectiveState = state === 'disconnected' && meta?.disconnectReason === 'transport' ? 'error' : state;
+  conn.status = effectiveState;
+  conn.error = error;
+  session.status = paneSessionStatus(session);
+  session.statusError = paneStatusError(session);
+  if (session.id === activeSessionId) updateSharedStatus(session, tabStatus(session), session.statusError);
   renderTabs();
   if (state === 'connected' && session.panes.keys().next().value === paneId) {
     session.resumeEtSessionId = conn.transport.getPersistentSessionId?.() ?? session.resumeEtSessionId;
@@ -980,7 +990,7 @@ function onPaneStatus(session: TermSession, paneId: number, state: TerminalTrans
   // A clean disconnect closes that pane (the tab ends with its last pane);
   // errors stay readable, a reconnect's own cycle is ignored, and "keep open"
   // (closeOnExit off) leaves the ended pane in place for reading.
-  if (state === 'disconnected' && !conn.reconnecting && prev !== 'error' && resolveSettings(session.spec.settingsProfileId).closeOnExit) {
+  if (state === 'disconnected' && meta?.disconnectReason === 'normal-exit' && !conn.reconnecting && resolveSettings(session.spec.settingsProfileId).closeOnExit) {
     window.setTimeout(() => {
       if (conn.reconnecting || !session.panes.has(paneId)) return;
       if (session.panes.size <= 1) closeSession(session);
@@ -989,10 +999,10 @@ function onPaneStatus(session: TermSession, paneId: number, state: TerminalTrans
   }
 }
 
-function onSessionStatus(session: TermSession, state: TerminalTransportStatus, error?: string): void {
-  const prev = session.status;
-  session.status = state;
-  if (session.id === activeSessionId) updateSharedStatus(session, state, error);
+function onSessionStatus(session: TermSession, state: TerminalTransportStatus, error?: string, meta?: SessionStatusMeta): void {
+  session.status = state === 'disconnected' && meta?.disconnectReason === 'transport' ? 'error' : state;
+  session.statusError = error;
+  if (session.id === activeSessionId) updateSharedStatus(session, session.status, error);
   renderTabs();
   if (state === 'connected') {
     session.resumeEtSessionId = session.transport?.getPersistentSessionId?.() ?? session.resumeEtSessionId;
@@ -1000,7 +1010,7 @@ function onSessionStatus(session: TermSession, state: TerminalTransportStatus, e
   }
   // A clean disconnect ends the tab; errors stay so they can be read, a
   // reconnect's own cycle is ignored, and "keep open" leaves the ended tab.
-  if (state === 'disconnected' && !session.reconnecting && prev !== 'error' && resolveSettings(session.spec.settingsProfileId).closeOnExit) {
+  if (state === 'disconnected' && meta?.disconnectReason === 'normal-exit' && !session.reconnecting && resolveSettings(session.spec.settingsProfileId).closeOnExit) {
     window.setTimeout(() => {
       if (!session.reconnecting) closeSession(session);
     }, 700);
@@ -1034,7 +1044,7 @@ function setActiveSession(id: string): void {
   document.documentElement.style.setProperty('--term-bg', palette.background);
 
   document.title = session.title;
-  updateSharedStatus(session, session.status);
+  updateSharedStatus(session, tabStatus(session), session.statusError);
   renderTabs();
   saveTabLayout();
   session.terminal.focus();
@@ -1093,8 +1103,36 @@ function tabStatus(session: TermSession): TerminalTransportStatus {
   const states = [...session.panes.values()].map((c) => c.status);
   if (states.includes('error')) return 'error';
   if (states.some((s) => s === 'connecting' || s === 'disconnecting')) return 'connecting';
-  if (states.every((s) => s === 'connected')) return 'connected';
+  if (states.some((s) => s === 'connected')) return 'connected';
+  if (states.every((s) => s === 'disconnected' || s === 'idle')) return 'disconnected';
+  return 'idle';
+}
+
+function sessionHasConnectedPane(session: TermSession): boolean {
+  return session.panes.size > 0
+    ? [...session.panes.values()].some((pane) => pane.status === 'connected')
+    : session.status === 'connected';
+}
+
+function paneSessionStatus(session: TermSession): TerminalTransportStatus {
+  const states = [...session.panes.values()].map((pane) => pane.status);
+  if (states.some((state) => state === 'connected')) return 'connected';
+  if (states.some((state) => state === 'connecting' || state === 'disconnecting')) return 'connecting';
+  if (states.some((state) => state === 'error')) return 'error';
+  if (states.length && states.every((state) => state === 'disconnected' || state === 'idle')) return 'disconnected';
   return session.status;
+}
+
+function paneStatusError(session: TermSession): string | undefined {
+  return [...session.panes.values()].find((pane) => pane.status === 'error' && pane.error)?.error;
+}
+
+function scheduleTabRender(): void {
+  if (tabRenderFrame) return;
+  tabRenderFrame = window.requestAnimationFrame(() => {
+    tabRenderFrame = 0;
+    renderTabs();
+  });
 }
 
 function renderTabs(): void {
@@ -1207,6 +1245,13 @@ function installTabShortcuts(): void {
     'keydown',
     (event) => {
       if (!event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.code === 'Tab') {
+        if (!currentSettings().captureShortcuts || sessions.length < 2) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        cycleTab(event.shiftKey ? -1 : 1);
+        return;
+      }
       if (event.shiftKey) {
         // Splits are an app feature (not a system shortcut), so always handled:
         // Ctrl+Shift+E → right, Ctrl+Shift+D → down, Ctrl+Shift+W → close pane.
@@ -1236,10 +1281,6 @@ function installTabShortcuts(): void {
           event.stopImmediatePropagation();
           if (confirmCloseSession(session)) closeSession(session);
         }
-      } else if (event.code === 'Tab' && sessions.length > 1) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        cycleTab(event.shiftKey ? -1 : 1);
       }
     },
     { capture: true },
@@ -1427,7 +1468,7 @@ function pasteClipboard(): void {
 }
 
 function copyPath(): void {
-  const path = activeTerminal?.getCwd() ?? (activeSpec ? connectionTarget(activeSpec) : '');
+  const path = activeTerminal?.getCwd() ?? (activeSpec ? formatConnectionTarget(activeSpec) : '');
   if (path) void navigator.clipboard.writeText(path).catch(() => undefined);
 }
 
@@ -1505,6 +1546,8 @@ function installShortcutPassThrough(): void {
 }
 
 export function disposeTerminal(): void {
+  if (tabRenderFrame) window.cancelAnimationFrame(tabRenderFrame);
+  tabRenderFrame = 0;
   for (const session of sessions) {
     session.titleSub?.dispose();
     session.paneSubs.forEach((sub) => sub.dispose());

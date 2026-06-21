@@ -21,11 +21,32 @@ export function profileToSpec(profile: Profile): PwaConnectionSpec {
 }
 
 export function specTitle(spec: PwaConnectionSpec): string {
+  return `${spec.protocol} ${formatConnectionTarget(spec)}`;
+}
+
+export function formatConnectionTarget(spec: PwaConnectionSpec): string {
   const user = spec.username ? `${spec.username}@` : '';
   const displayPort = spec.protocol === 'et' ? spec.etPort : spec.port;
   const defaultPort = spec.protocol === 'et' ? 2022 : 22;
   const port = displayPort && displayPort !== defaultPort ? `:${displayPort}` : '';
-  return `${spec.protocol} ${user}${spec.hostname}${port}`;
+  return `${user}${spec.hostname}${port}`;
+}
+
+/** Full connection intent used to decide whether a saved tab layout is reusable. */
+export function layoutSpecKey(spec: PwaConnectionSpec | null | undefined): string {
+  if (!spec) return '';
+  return JSON.stringify({
+    protocol: spec.protocol,
+    username: spec.username ?? '',
+    hostname: spec.hostname,
+    port: spec.port ?? (spec.protocol === 'ssh' || spec.protocol === 'et' ? 22 : null),
+    etPort: spec.etPort ?? (spec.protocol === 'et' ? 2022 : null),
+    argstr: spec.argstr ?? '',
+    identityId: spec.identityId ?? '',
+    settingsProfileId: spec.settingsProfileId ?? '',
+    startupCommand: spec.startupCommand ?? '',
+    etSessionId: spec.etSessionId ?? '',
+  });
 }
 
 export function specToQuery(spec: PwaConnectionSpec): string {

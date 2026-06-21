@@ -39,4 +39,9 @@ describe('PWA settings normalization', () => {
       confirmClose: false,
     });
   });
+
+  it('normalizes the former 11px UI option to the supported 12px minimum', () => {
+    vi.stubGlobal('window', { location: { href: 'https://example.test/' } });
+    expect(normalizePwaSettings({ fontSize: 11 }).fontSize).toBe(12);
+  });
 });

@@ -6,8 +6,9 @@ import type { PwaConnectionSpec, TerminalTransportStatus } from './types';
 import { createEtSession } from '../et/bootstrap';
 import { readEtJournal } from '../et/sessionStore';
 import { getEtSession } from '../storage/indexedDb';
+import type { SessionStatusMeta } from '../settings/types';
 
-export type TransportStatusHandler = (status: TerminalTransportStatus, error?: string) => void;
+export type TransportStatusHandler = (status: TerminalTransportStatus, error?: string, meta?: SessionStatusMeta) => void;
 
 export type TerminalTransport = {
   connect(adapter: TerminalAdapter): Promise<void>;
@@ -99,7 +100,7 @@ export class SshDirectSocketsTransport implements TerminalTransport {
       identityId: this.spec.identityId,
       connectionArgs: this.spec.argstr,
       startupCommand: this.spec.startupCommand,
-      onStatus: (status, error) => this.onStatus(status, error),
+      onStatus: (status, error, meta) => this.onStatus(status, error, meta),
     });
     this.delegate.attachTerminal(adapter);
     await this.delegate.connect();

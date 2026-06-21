@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { readDiagnostics } from './diagnostics';
+import { readDiagnostics, resetDiagnosticsAssetCache } from './diagnostics';
 
 /**
  * Exercises the Mosh-related fields of the platform diagnostic path across the
@@ -17,6 +17,7 @@ function stubAssets(present: Set<string>): void {
 }
 
 afterEach(() => {
+  resetDiagnosticsAssetCache();
   vi.unstubAllGlobals();
   globalThis.fetch = originalFetch;
 });
@@ -53,5 +54,18 @@ describe('readDiagnostics — Mosh capability', () => {
     expect(diag.udp).toBe(true);
     expect(diag.moshAssets).toBe(true);
     expect(diag.moshReady).toBe(true);
+  });
+
+  it('memoizes asset probes for the page lifetime', async () => {
+    vi.stubGlobal('window', {});
+    const fetch = vi.fn(async () => ({ ok: true }) as Response);
+    vi.stubGlobal('fetch', fetch);
+
+    await readDiagnostics();
+    const firstProbeCount = fetch.mock.calls.length;
+    await readDiagnostics();
+
+    expect(firstProbeCount).toBeGreaterThan(0);
+    expect(fetch).toHaveBeenCalledTimes(firstProbeCount);
   });
 });

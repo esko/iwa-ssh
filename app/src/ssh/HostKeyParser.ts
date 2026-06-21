@@ -1,6 +1,7 @@
 const KEY_TYPE = 'ED25519|RSA|ECDSA|EC|DSA|SK-ED25519|SK-ECDSA';
 
-const FINGERPRINT_RE = new RegExp(`(${KEY_TYPE}) key fingerprint is (SHA256:[A-Za-z0-9+/]+=*)`, 'i');
+export const SSH_FINGERPRINT_PATTERN = 'SHA256:[A-Za-z0-9+/]+=*';
+const FINGERPRINT_RE = new RegExp(`(${KEY_TYPE}) key fingerprint is (${SSH_FINGERPRINT_PATTERN})`, 'i');
 const CONTINUE_PROMPT_RE =
   /(?:continue connecting \(yes\/no(?:\/\[fingerprint\])?\)|can't be established|are you sure you want to continue)/i;
 const PERMANENTLY_ADDED_RE = /Permanently added (.+?) to the list of known hosts/i;
@@ -8,7 +9,7 @@ const PERMANENTLY_ADDED_RE = /Permanently added (.+?) to the list of known hosts
 const HOST_KEY_CHANGED_RE = /REMOTE HOST IDENTIFICATION HAS CHANGED/i;
 const VERIFICATION_FAILED_RE = /Host key verification failed/i;
 const CHANGED_FINGERPRINT_RE = new RegExp(
-  `fingerprint for the (${KEY_TYPE}) key sent by the remote host is\\s+(SHA256:[A-Za-z0-9+/]+=*)`,
+  `fingerprint for the (${KEY_TYPE}) key sent by the remote host is\\s+(${SSH_FINGERPRINT_PATTERN})`,
   'i',
 );
 
@@ -21,14 +22,12 @@ export class HostKeyParser {
   private buffer = '';
   private hostKeyChangeHandled = false;
   private permanentlyAddedHandled = false;
-  private promptHandled = false;
   private readonly maxBuffer = 8192;
 
   reset(): void {
     this.buffer = '';
     this.hostKeyChangeHandled = false;
     this.permanentlyAddedHandled = false;
-    this.promptHandled = false;
   }
 
   parse(chunk: string): HostKeyEvent[] {
@@ -58,14 +57,17 @@ export class HostKeyParser {
       return events;
     }
 
-    if (!this.promptHandled) {
-      const fingerprintMatch = FINGERPRINT_RE.exec(this.buffer);
-      if (fingerprintMatch && CONTINUE_PROMPT_RE.test(this.buffer)) {
-        this.promptHandled = true;
-        const keyType = normalizeKeyType(fingerprintMatch[1]!);
-        const fingerprint = fingerprintMatch[2]!;
-        events.push({ type: 'HostKeyPromptDetected', fingerprint, keyType });
-      }
+    const fingerprintMatch = FINGERPRINT_RE.exec(this.buffer);
+    const fingerprintEnd = fingerprintMatch ? fingerprintMatch.index + fingerprintMatch[0].length : 0;
+    const continueMatch = fingerprintMatch ? CONTINUE_PROMPT_RE.exec(this.buffer.slice(fingerprintEnd)) : null;
+    if (fingerprintMatch && continueMatch) {
+      const promptEnd = fingerprintEnd + continueMatch.index + continueMatch[0].length;
+      const keyType = normalizeKeyType(fingerprintMatch[1]!);
+      const fingerprint = fingerprintMatch[2]!;
+      events.push({ type: 'HostKeyPromptDetected', fingerprint, keyType });
+      // Consume the recognized prompt so a later ProxyJump/target prompt can
+      // be detected without re-emitting this one.
+      this.buffer = this.buffer.slice(promptEnd);
     }
 
     return events;
