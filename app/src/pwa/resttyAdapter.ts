@@ -537,6 +537,20 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     this.settings = settings;
     const sources = await resolveFontSources(settings.fontFamily);
     await this.surface?.setFontSources?.(sources);
+    // restty's setFontSources updates cell metrics + schedules a paint but omits
+    // the WASM renderUpdate() that setFontSize performs, so already-painted cells
+    // keep stale glyphs (spacing changes, glyph shapes don't). Nudge each pane's
+    // font size to force a full re-render with the new font; the intermediate
+    // size never paints because both calls land before the next animation frame.
+    const px = settings.fontSize;
+    if (Number.isFinite(px)) {
+      for (const id of this.panes.keys()) {
+        const handle = this.surface?.pane?.(id);
+        if (!handle) continue;
+        handle.setFontSize(px + 1);
+        handle.setFontSize(px);
+      }
+    }
     this.syncLayout();
   }
 

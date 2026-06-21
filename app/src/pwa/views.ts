@@ -225,9 +225,16 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     });
     rowEl.addEventListener('contextmenu', (event) => {
       event.preventDefault();
+      event.stopPropagation();
       const profile = profiles.find((item) => item.id === rowEl.dataset.launchId);
       if (profile) showProfileMenu(event, profile, root);
     });
+  });
+
+  // Right-click anywhere else on the launcher opens new connection / settings.
+  root.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    showHomeMenu(event);
   });
 
   requiredElement<HTMLButtonElement>('[data-new]', root).addEventListener('click', () => openConnectionForm());
@@ -258,8 +265,19 @@ function showProfileMenu(event: MouseEvent, profile: Profile, root: HTMLElement)
         await renderHome(root);
       },
     },
+    { type: 'separator' },
+    { type: 'item', label: 'New connection', onSelect: () => openConnectionForm() },
+    { type: 'item', label: 'Settings', onSelect: () => openSettings() },
   ];
   showContextMenu(event.clientX, event.clientY, items);
+}
+
+/** Right-click on empty launcher space: new connection / settings. */
+function showHomeMenu(event: MouseEvent): void {
+  showContextMenu(event.clientX, event.clientY, [
+    { type: 'item', label: 'New connection', onSelect: () => openConnectionForm() },
+    { type: 'item', label: 'Settings', onSelect: () => openSettings() },
+  ]);
 }
 
 // -------------------------------------------------------- connection form --
