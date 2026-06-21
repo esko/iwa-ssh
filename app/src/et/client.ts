@@ -48,6 +48,14 @@ export type EtClientCallbacks = {
 
 const encoder = new TextEncoder();
 
+/**
+ * Environment applied to the remote shell through the ET InitialPayload. TERM
+ * is already carried by the etterminal registration string; COLORTERM advertises
+ * 24-bit colour (which ghostty-vt renders) so apps that only enable truecolor
+ * when COLORTERM is set do so over ET, matching the SSH/Mosh transports.
+ */
+export const ET_SESSION_ENVIRONMENT: Record<string, string> = { COLORTERM: 'truecolor' };
+
 export class EtClient {
   private session: EtSessionRecord;
   private readonly passkey: string;
@@ -162,7 +170,7 @@ export class EtClient {
     if (this.session.rxSequence !== 0 || this.session.txSequence !== 0) {
       throw new Error('ET server reported NEW_CLIENT for a previously used local session');
     }
-    const payload = toBinary(InitialPayloadSchema, create(InitialPayloadSchema, { jumphost: false, environmentvariables: {} }));
+    const payload = toBinary(InitialPayloadSchema, create(InitialPayloadSchema, { jumphost: false, environmentvariables: ET_SESSION_ENVIRONMENT }));
     await this.sendPacket(EtPacketType.INITIAL_PAYLOAD, payload);
     const packet = await this.readEncryptedPacket();
     if (packet.type !== EtPacketType.INITIAL_RESPONSE) throw new Error('ET server omitted InitialResponse');

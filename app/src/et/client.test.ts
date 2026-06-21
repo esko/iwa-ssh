@@ -4,7 +4,7 @@ import sodium from 'libsodium-wrappers';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ConnectResponseSchema, ConnectStatus, EtPacketType } from './proto/ET_pb';
 import { InitialResponseSchema } from './proto/ETerminal_pb';
-import { EtClient } from './client';
+import { EtClient, ET_SESSION_ENVIRONMENT } from './client';
 import { frameHandshake, framePacket } from './wire';
 import { resetIndexedDbConnection, saveEtSession, getEtSession, type EtSessionRecord } from '../storage/indexedDb';
 import { wrapEtPasskey } from './sessionStore';
@@ -72,5 +72,11 @@ describe('EtClient over Direct Sockets', () => {
     expect(await getEtSession('local')).toMatchObject({ rxSequence: 1, txSequence: 1, phase: 'active' });
     await client.detach();
     expect((await getEtSession('local'))?.phase).toBe('detached');
+  });
+
+  it('advertises truecolor to the remote shell via the InitialPayload env', () => {
+    // TERM rides the etterminal registration; COLORTERM must come through the
+    // ET environment channel so truecolor apps match the SSH/Mosh transports.
+    expect(ET_SESSION_ENVIRONMENT).toMatchObject({ COLORTERM: 'truecolor' });
   });
 });
