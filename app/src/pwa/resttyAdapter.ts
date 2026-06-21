@@ -618,8 +618,11 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   }
 
   // getBackend() resolves before wasmPromise finishes in restty init(); probe DA
-  // so keyboard IME handlers (which require wasm) are actually live.
-  private async waitForPaneReady(id: number, timeoutMs = 20_000): Promise<void> {
+  // so keyboard IME handlers (which require wasm) are actually live. This is a
+  // best-effort readiness nudge: if the reply is slow (cold GPU / software
+  // rendering) we warn and proceed rather than failing startup — the wasm path
+  // settles a beat later and the terminal is otherwise fully usable.
+  private async waitForPaneReady(id: number, timeoutMs = 8_000): Promise<void> {
     const bridge = this.panes.get(id)?.bridge;
     const handle = this.surface?.pane?.(id);
     if (!bridge || !handle) return;
@@ -632,7 +635,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
       await new Promise((r) => setTimeout(r, 50));
     }
     sub.dispose();
-    if (!daReply) throw new Error('restty wasm input path not ready (DA probe failed)');
+    if (!daReply) console.warn('[restty] DA probe did not reply in time; proceeding (input path should settle shortly)');
   }
 
   private syncLayout(): void {

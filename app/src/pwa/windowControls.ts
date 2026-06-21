@@ -31,10 +31,13 @@ const ICONS = {
   close: '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.4 4.4l7.2 7.2M11.6 4.4l-7.2 7.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
 };
 
-/** True when running as an installed/app window (not a normal browser tab). */
+/** True when the app owns the whole window (no OS-drawn title bar). */
 function isAppWindow(): boolean {
   if (new URLSearchParams(location.search).get('chrome') === 'force') return true;
-  return ['unframed', 'borderless', 'window-controls-overlay', 'standalone', 'tabbed', 'fullscreen'].some(
+  // Only the frameless modes: the OS draws no title bar, so the app must draw
+  // its own. In standalone/tabbed the OS still draws a caption, and adding ours
+  // there stacks a second title bar under the native one (device-confirmed).
+  return ['borderless', 'unframed'].some(
     (mode) => window.matchMedia(`(display-mode: ${mode})`).matches,
   );
 }
