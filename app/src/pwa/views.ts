@@ -335,6 +335,7 @@ function openConnectionForm(): void {
             <label class="field"><span>user</span><input name="user" placeholder="esko" autocomplete="off" spellcheck="false" required></label>
             <label class="field"><span>port</span><input name="port" type="number" min="1" max="65535" value="22"></label>
           </div>
+          <label class="field"><span>protocol</span><select name="protocol"><option value="ssh" selected>SSH</option><option value="mosh">Mosh</option></select></label>
           <label class="field"><span>ssh key — optional</span><textarea name="key" placeholder="paste a private key…" spellcheck="false"></textarea></label>
           <label class="field"><span>or choose a key file</span><input type="file" name="keyfile" accept=".pem,.key,text/plain,application/octet-stream"></label>
           <label class="field" data-pass hidden><span>key passphrase — encrypts the key on this device</span><input name="passphrase" type="password" autocomplete="off"></label>
@@ -367,6 +368,7 @@ function openConnectionForm(): void {
       const user = String(data.get('user') ?? '').trim();
       const port = Number(data.get('port') ?? 22) || 22;
       if (!host || !user) return;
+      const protocol = data.get('protocol') === 'mosh' ? 'mosh' : 'ssh';
       const settingsProfileId = String(data.get('sp') ?? '').trim() || undefined;
 
       const keyText = String(data.get('key') ?? '').trim();
@@ -394,7 +396,7 @@ function openConnectionForm(): void {
         cacheIdentityPassphrase(identityId, passphrase);
       }
 
-      const profile: Profile = { id: crypto.randomUUID(), name: `${user}@${host}`, protocol: 'ssh', host, port, username: user, identityId, settingsProfileId };
+      const profile: Profile = { id: crypto.randomUUID(), name: `${user}@${host}`, protocol, host, port, username: user, identityId, settingsProfileId };
       await saveProfile(profile);
       navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
     });
@@ -724,6 +726,7 @@ async function renderAboutTab(body: HTMLElement): Promise<void> {
     ['Direct Sockets', diag.directSockets],
     ['Private / UDP sockets', diag.directSocketsPrivate],
     ['nassh / wassh assets', diag.upstreamAssets],
+    ['Mosh (UDP + client)', diag.moshReady],
     ['Tabbed display mode', diag.tabbedDisplayMode],
   ];
   const host = body.querySelector<HTMLElement>('[data-diag]')!;
@@ -1383,7 +1386,7 @@ function renderTerminalConnect(root: HTMLElement): void {
     <div class="connect-page">
       <form id="terminalConnect">
         <div class="home-head"><span class="section-label">Connect</span></div>
-        <label class="field"><span>address</span><input id="terminalCommand" name="host" placeholder="user@192.168.1.60" autocomplete="off" spellcheck="false" autofocus></label>
+        <label class="field"><span>address</span><input id="terminalCommand" name="host" placeholder="user@192.168.1.60 or mosh user@host" autocomplete="off" spellcheck="false" autofocus></label>
         <div class="actions"><button class="btn" type="submit">Connect</button></div>
       </form>
     </div>
@@ -1392,8 +1395,13 @@ function renderTerminalConnect(root: HTMLElement): void {
     event.preventDefault();
     const raw = requiredElement<HTMLInputElement>('#terminalCommand', root).value.trim();
     if (!raw) return;
-    const at = raw.includes('@') ? raw.split('@') : [undefined, raw];
-    const params = new URLSearchParams({ protocol: 'ssh', host: at[1] ?? raw });
+    // Accept an optional leading `ssh `/`mosh ` token so Mosh is reachable from
+    // quick connect without a separate control; the rest is `[user@]host`.
+    const protoMatch = raw.match(/^(ssh|mosh)\s+(.+)$/i);
+    const protocol = protoMatch && protoMatch[1].toLowerCase() === 'mosh' ? 'mosh' : 'ssh';
+    const target = (protoMatch ? protoMatch[2] : raw).trim();
+    const at = target.includes('@') ? target.split('@') : [undefined, target];
+    const params = new URLSearchParams({ protocol, host: at[1] ?? target });
     if (at[0]) params.set('username', at[0]);
     appendSpikeRendererParams(params);
     navigate(`/terminal.html?${params.toString()}`);

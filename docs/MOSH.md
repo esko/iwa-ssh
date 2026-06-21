@@ -4,10 +4,13 @@ Mosh support is implemented through upstream nassh and wassh. This repo must not
 
 ## Runtime Flow
 
-1. User selects Mosh in the SSH/Mosh dialog or profile.
-2. The connection is represented as `protocol: 'mosh'`.
-3. `NasshRuntime` invokes the upstream nassh mosh command path.
-4. Upstream nassh starts the remote `mosh-server` over SSH.
+1. User selects Mosh from a profile, the New connection dialog (protocol
+   selector), or quick connect (`mosh user@host`).
+2. The connection is represented as `protocol: 'mosh'` (`specFromQuery`).
+3. `SshDirectSocketsTransport` gates on `checkMoshPrerequisites` (UDPSocket +
+   `mosh-client.wasm`) and routes through `NasshCommandBridge` with
+   `protocol: 'mosh'`, which drives the upstream nassh mosh command path.
+4. Upstream nassh starts the remote `mosh-server` over a bootstrap SSH session.
 5. `mosh-client.wasm` runs locally through wassh.
 6. UDP traffic uses wassh socket support and the browser/IWA `UDPSocket` capability.
 

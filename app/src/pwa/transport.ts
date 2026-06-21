@@ -59,18 +59,18 @@ export class SshDirectSocketsTransport implements TerminalTransport {
   ) {}
 
   async connect(adapter: TerminalAdapter): Promise<void> {
-    if (this.spec.protocol === 'mosh') {
-      // Surface the specific platform gap (UDP / mosh-client.wasm) through the
-      // transport status path. The nassh mosh command-path runtime is not wired
-      // yet — tracked in #44 (device-gated acceptance).
+    const isMosh = this.spec.protocol === 'mosh';
+
+    if (isMosh) {
+      // Surface the specific platform gap (missing UDPSocket / mosh-client.wasm)
+      // through the transport status path before we attempt the bootstrap SSH
+      // handshake. NasshCommandBridge re-checks this, but gating here keeps the
+      // diagnostic message identical whether or not upstream assets are present.
       const gate = await checkMoshPrerequisites();
-      this.onStatus(
-        'error',
-        gate.ok
-          ? 'Mosh runtime is not implemented yet; SSH is the supported transport (see #44).'
-          : gate.message,
-      );
-      return;
+      if (!gate.ok) {
+        this.onStatus('error', gate.message);
+        return;
+      }
     }
 
     const ready = await areUpstreamAssetsReady();
@@ -86,7 +86,9 @@ export class SshDirectSocketsTransport implements TerminalTransport {
     }
 
     this.delegate = new NasshCommandBridge({
-      protocol: 'ssh',
+      // Mosh reuses the upstream nassh mosh command path (bootstrap SSH →
+      // mosh-server → mosh-client.wasm over UDP); see ADR 0005.
+      protocol: isMosh ? 'mosh' : 'ssh',
       host: this.spec.hostname,
       port: this.spec.port ?? 22,
       username: this.spec.username ?? '',
