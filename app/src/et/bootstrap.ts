@@ -33,6 +33,24 @@ class CaptureTerminal implements TerminalAdapter {
   getOutput(): string { return this.output; }
 }
 
+/**
+ * OpenSSH prints maintenance warnings to the same stream as command output —
+ * notably `hostfile_replace_entries: hostkeys_foreach: No such file or
+ * directory` when it updates a not-yet-existent known_hosts file, and the
+ * `Warning: Permanently added ...` host-key notice. These are benign and must
+ * not be mistaken for an etterminal failure (the bare "No such file" substring
+ * otherwise trips the error scan and aborts a working connection).
+ */
+const BENIGN_SSH_NOISE =
+  /^(?:hostfile_replace_entries|hostkeys_foreach|update_known_hosts|Warning: Permanently added)\b.*$/gim;
+
+const ET_BOOTSTRAP_FAILURE = /command not found|No such file|Error connecting to router|\bFATAL\b/i;
+
+/** True when the captured SSH output indicates the etterminal bootstrap failed. */
+export function isEtBootstrapFailure(output: string): boolean {
+  return ET_BOOTSTRAP_FAILURE.test(output.replace(BENIGN_SSH_NOISE, ''));
+}
+
 function bootstrapError(output: string, clientId: string, passkey: string): Error {
   const redacted = output
     .replaceAll(clientId, '[client-id]')
@@ -91,7 +109,7 @@ export async function createEtSession(spec: PwaConnectionSpec): Promise<string> 
   const timeout = window.setTimeout(() => rejectOutput(bootstrapError(terminal.getOutput(), clientId, passkey)), 30_000);
   const subscription = terminal.onOutput((output) => {
     if (output.includes(expected)) resolveOutput();
-    else if (/command not found|No such file|Error connecting to router|\bFATAL\b/i.test(output)) {
+    else if (isEtBootstrapFailure(output)) {
       rejectOutput(bootstrapError(output, clientId, passkey));
     }
   });
