@@ -22,6 +22,9 @@ type AcwWindow = Window & {
 };
 
 const TITLEBAR_ID = 'app-titlebar';
+/** Slot in the caption (left of the window controls) the terminal tab strip
+ *  moves into when the window is unframed. Empty on non-tabbed pages. */
+export const CAPTION_TABS_SLOT_ID = 'app-titlebar-tabs';
 
 // 16×16 glyphs, centered, using currentColor so they follow the theme.
 const ICONS = {
@@ -90,6 +93,7 @@ function mountCaption(): void {
   bar.id = TITLEBAR_ID;
   bar.className = 'titlebar';
   bar.innerHTML = `
+    <div class="titlebar-tabs" id="${CAPTION_TABS_SLOT_ID}"></div>
     <div class="titlebar-drag"><span class="titlebar-title"></span></div>
     <div class="win-controls">
       <button class="win-btn" type="button" data-act="minimize" aria-label="Minimize">${ICONS.minimize}</button>
@@ -97,6 +101,9 @@ function mountCaption(): void {
       <button class="win-btn win-close" type="button" data-act="close" aria-label="Close">${ICONS.close}</button>
     </div>`;
   document.body.prepend(bar);
+  // Let the terminal view relocate its tab strip into the caption slot now that
+  // it exists (the caption can mount after the terminal renders).
+  window.dispatchEvent(new CustomEvent('app-caption-mounted'));
 
   // Mirror the document title into the caption (ChromeOS shows the window title).
   const titleEl = bar.querySelector<HTMLElement>('.titlebar-title')!;

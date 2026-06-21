@@ -36,6 +36,7 @@ import {
 import { profileToSpec, recordConnection, specFromQuery, specToQuery } from './profileModel';
 import { shouldPassThroughSystemShortcut } from './shortcuts';
 import { showContextMenu, type ContextMenuItem } from './contextMenu';
+import { CAPTION_TABS_SLOT_ID } from './windowControls';
 import { createTransport, type TerminalTransport } from './transport';
 import type { PwaConnectionSpec, PwaTerminalSettings, TerminalTransportStatus } from './types';
 
@@ -50,6 +51,7 @@ let activeSessionId: string | null = null;
 let tabStrip: HTMLElement | null = null;
 let sessionsHost: HTMLElement | null = null;
 let sharedStatus: HTMLElement | null = null;
+let captionCleanup: (() => void) | null = null;
 
 /** One restty split pane: its own transport bound to the pane's sink (ADR 0008). */
 type PaneConn = {
@@ -717,6 +719,13 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
   sharedStatus = requiredElement<HTMLElement>('#status', root);
   tabStrip.addEventListener('click', onTabStripClick);
 
+  // Move the tab strip inline into the unframed caption (left of the window
+  // controls) when it exists; re-run if the caption mounts after this render.
+  placeTabStrip();
+  const onCaptionMounted = (): void => placeTabStrip();
+  window.addEventListener('app-caption-mounted', onCaptionMounted);
+  captionCleanup = () => window.removeEventListener('app-caption-mounted', onCaptionMounted);
+
   // Tab/split keys must be claimed before the system pass-through (which would
   // otherwise stopImmediatePropagation Ctrl+T/Ctrl+W/Ctrl+Shift+W to ChromeOS).
   // In the unframed app window the app owns these (ADR 0008); every other key
@@ -916,6 +925,16 @@ function closeSession(session: TermSession): void {
 async function openTab(spec: PwaConnectionSpec): Promise<void> {
   const session = await createSession(spec);
   setActiveSession(session.id);
+}
+
+/** Host the tab strip in the unframed caption slot when present, else the shell. */
+function placeTabStrip(): void {
+  if (!tabStrip) return;
+  const slot = document.getElementById(CAPTION_TABS_SLOT_ID);
+  const host = slot ?? document.querySelector('.term-shell');
+  if (!host || tabStrip.parentElement === host) return;
+  if (slot) slot.append(tabStrip);
+  else host.prepend(tabStrip);
 }
 
 function renderTabs(): void {
@@ -1288,6 +1307,8 @@ export function disposeTerminal(): void {
   sessions.length = 0;
   fontSyncCleanup?.();
   fontSyncCleanup = null;
+  captionCleanup?.();
+  captionCleanup = null;
   appliedFontSelection = null;
   activeTerminal = null;
   activeSpec = null;

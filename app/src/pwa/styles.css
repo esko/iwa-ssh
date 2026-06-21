@@ -1066,6 +1066,38 @@ html.app-chrome .term-shell {
   pointer-events: none;
 }
 
+/* Tab strip hosted inline in the caption (left of the window controls). */
+.titlebar-tabs {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.titlebar-tabs .term-tabs {
+  height: var(--titlebar-h);
+  padding: 5px 4px;
+  border-bottom: 0;
+  background: transparent;
+  align-items: center;
+}
+
+.titlebar-tabs .term-tab {
+  height: 30px;
+  border-radius: 8px;
+}
+
+.titlebar-tabs .term-tab-new {
+  align-self: center;
+}
+
+/* Two or more tabs replace the window title in the caption (ChromeOS style). */
+.titlebar:has(.term-tab + .term-tab) .titlebar-title {
+  display: none;
+}
+
 .win-controls {
   display: flex;
   align-items: stretch;
