@@ -4,6 +4,7 @@ import type { PwaTerminalSettings } from './types';
 import { DEFAULT_FONT_ID, bundledFontForSelection, isCustomSelection, customSelectionId } from './terminalFonts';
 import { getCustomFontData } from './customFontStore';
 import { getThemePalette } from './themes';
+import { deviceAttributeReply } from './deviceAttributes';
 import type { TerminalPalette } from './types';
 
 type Rgb = { r: number; g: number; b: number };
@@ -195,6 +196,13 @@ class PaneBridge implements TerminalAdapter {
     const text = typeof data === 'string' ? data : this.decoder.decode(data, { stream: true });
     this.owner.captureOsc(this, text);
     this.callbacks?.onData?.(text);
+    // ghostty-vt does not reply to the DA1 query through the PtyTransport, so
+    // answer it at the boundary (fish hangs ~10s otherwise). Only meaningful
+    // once a transport is listening on the input path.
+    if (this.connected) {
+      const reply = deviceAttributeReply(text);
+      if (reply) this.emitInput(reply);
+    }
   }
 
   onInput(cb: (data: string) => void): TerminalSubscription {
