@@ -90,6 +90,39 @@ function activeSession(): TermSession | null {
   return sessions.find((s) => s.id === activeSessionId) ?? null;
 }
 
+// Per-window tab persistence (sessionStorage survives reload, not relaunch).
+const TAB_LAYOUT_KEY = 'iwa-ssh-tab-layout';
+type SavedTabLayout = { specs: PwaConnectionSpec[]; activeIndex: number };
+
+/** Identity of a connection, so a fresh launch doesn't inherit stale tabs. */
+function specKey(spec: PwaConnectionSpec | null | undefined): string {
+  return spec ? `${spec.protocol}:${spec.username ?? ''}@${spec.hostname}:${spec.port ?? 22}` : '';
+}
+
+function saveTabLayout(): void {
+  try {
+    if (sessions.length === 0) {
+      sessionStorage.removeItem(TAB_LAYOUT_KEY);
+      return;
+    }
+    const activeIndex = Math.max(0, sessions.findIndex((s) => s.id === activeSessionId));
+    const layout: SavedTabLayout = { specs: sessions.map((s) => s.spec), activeIndex };
+    sessionStorage.setItem(TAB_LAYOUT_KEY, JSON.stringify(layout));
+  } catch {
+    /* sessionStorage unavailable — persistence is best-effort */
+  }
+}
+
+function loadTabLayout(): SavedTabLayout | null {
+  try {
+    const raw = sessionStorage.getItem(TAB_LAYOUT_KEY);
+    const parsed = raw ? (JSON.parse(raw) as SavedTabLayout) : null;
+    return parsed && Array.isArray(parsed.specs) && parsed.specs.length > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Resolved settings for the focused tab (Keyboard/Behavior toggles read live). */
 function currentSettings(): PwaTerminalSettings {
   return resolveSettings(activeSpec?.settingsProfileId);
@@ -743,8 +776,17 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
   window.addEventListener('storage', onSettingsStorage);
   fontSyncCleanup = () => window.removeEventListener('storage', onSettingsStorage);
 
-  const session = await createSession(spec);
-  setActiveSession(session.id);
+  // Restore this window's tabs on reload/crash when they belong to the same
+  // connection (sessionStorage is per-window); otherwise start a single tab.
+  const layout = loadTabLayout();
+  if (layout && specKey(layout.specs[0]) === specKey(spec)) {
+    for (const saved of layout.specs) await createSession(saved);
+    const active = sessions[Math.min(layout.activeIndex, sessions.length - 1)] ?? sessions[0];
+    if (active) setActiveSession(active.id);
+  } else {
+    const session = await createSession(spec);
+    setActiveSession(session.id);
+  }
 }
 
 /** Build a fully-connected session (its own renderer + transport) in a new tab. */
@@ -891,6 +933,7 @@ function setActiveSession(id: string): void {
   document.title = session.title;
   updateSharedStatus(session, session.status);
   renderTabs();
+  saveTabLayout();
   session.terminal.focus();
   session.terminal.fit?.();
 }
@@ -914,6 +957,7 @@ function closeSession(session: TermSession): void {
   session.container.remove();
   sessions.splice(index, 1);
   if (sessions.length === 0) {
+    saveTabLayout(); // clears the saved layout so the next launch starts fresh
     navigate('/');
     return;
   }
@@ -921,6 +965,7 @@ function closeSession(session: TermSession): void {
     setActiveSession(sessions[Math.min(index, sessions.length - 1)].id);
   } else {
     renderTabs();
+    saveTabLayout();
   }
 }
 
@@ -1010,6 +1055,7 @@ function reorderTab(fromId: string, toId: string | null, clientX: number): void 
   }
   sessions.splice(Math.min(to, sessions.length), 0, moved);
   renderTabs();
+  saveTabLayout();
 }
 
 function onTabStripClick(event: MouseEvent): void {
