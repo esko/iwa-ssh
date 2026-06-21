@@ -437,7 +437,12 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   }
 
   private handleActivePaneChange(id: number): void {
-    if (id >= 0) this.activePaneId = id;
+    if (id < 0) return;
+    this.activePaneId = id;
+    // Surface the newly-focused pane's title so the tab follows the active split
+    // (empty falls back to the connection target in the view layer).
+    const title = this.panes.get(id)?.title ?? '';
+    this.titleListeners.forEach((cb) => cb(title));
   }
 
   private connectPane(id: number): void {
@@ -462,6 +467,8 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   /** Inject output into the active pane (used by reconnect's clear-screen). */
   write(data: string | Uint8Array): void {
     const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
+    const bridge = this.panes.get(this.activePaneId)?.bridge;
+    if (bridge) this.captureOsc(bridge, text); // keep title/cwd in sync with injected output
     this.activeHandle()?.sendInput(text, 'pty');
   }
 

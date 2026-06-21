@@ -718,6 +718,7 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
   sessionsHost = requiredElement<HTMLElement>('.term-sessions', root);
   sharedStatus = requiredElement<HTMLElement>('#status', root);
   tabStrip.addEventListener('click', onTabStripClick);
+  installTabDragReorder(tabStrip);
 
   // Move the tab strip inline into the unframed caption (left of the window
   // controls) when it exists; re-run if the caption mounts after this render.
@@ -835,6 +836,7 @@ function onPaneStatus(session: TermSession, paneId: number, state: TerminalTrans
   conn.status = state;
   session.status = state;
   if (session.id === activeSessionId) updateSharedStatus(session, state, error);
+  renderTabs();
   // A clean disconnect closes that pane (the tab ends with its last pane);
   // errors stay readable, and a reconnect's own cycle is ignored.
   if (state === 'disconnected' && !conn.reconnecting && prev !== 'error') {
@@ -937,18 +939,77 @@ function placeTabStrip(): void {
   else host.prepend(tabStrip);
 }
 
+/** Tab status = worst across its panes (error > connecting > connected). */
+function tabStatus(session: TermSession): TerminalTransportStatus {
+  if (session.panes.size === 0) return session.status;
+  const states = [...session.panes.values()].map((c) => c.status);
+  if (states.includes('error')) return 'error';
+  if (states.some((s) => s === 'connecting' || s === 'disconnecting')) return 'connecting';
+  if (states.every((s) => s === 'connected')) return 'connected';
+  return session.status;
+}
+
 function renderTabs(): void {
   if (!tabStrip) return;
   tabStrip.dataset.count = String(sessions.length);
   const tabs = sessions
-    .map(
-      (s) => `<div class="term-tab" role="tab" data-id="${s.id}" aria-selected="${s.id === activeSessionId}" title="${escapeHTML(s.title)}">
+    .map((s) => {
+      const paneCount = s.terminal instanceof ResttyTerminalAdapter ? s.panes.size : 1;
+      const splits = paneCount > 1 ? `<span class="term-tab-panes" title="${paneCount} panes">⊞${paneCount}</span>` : '';
+      return `<div class="term-tab" role="tab" draggable="true" data-id="${s.id}" aria-selected="${s.id === activeSessionId}" title="${escapeHTML(s.title)}">
+        <span class="term-tab-status" data-state="${escapeHTML(tabStatus(s))}" aria-hidden="true"></span>
         <span class="term-tab-title">${escapeHTML(s.title)}</span>
+        ${splits}
         <span class="term-tab-close" data-close="${s.id}" role="button" aria-label="Close tab">×</span>
-      </div>`,
-    )
+      </div>`;
+    })
     .join('');
   tabStrip.innerHTML = `${tabs}<button class="term-tab-new" type="button" data-newtab aria-label="New tab">+</button>`;
+}
+
+let dragTabId: string | null = null;
+
+/** Drag-to-reorder tabs within the strip (ADR 0008 polish). */
+function installTabDragReorder(strip: HTMLElement): void {
+  strip.addEventListener('dragstart', (event) => {
+    const tab = (event.target as HTMLElement).closest<HTMLElement>('.term-tab');
+    if (!tab?.dataset.id || !event.dataTransfer) return;
+    dragTabId = tab.dataset.id;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', dragTabId);
+    tab.classList.add('term-tab-dragging');
+  });
+  strip.addEventListener('dragover', (event) => {
+    if (!dragTabId) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  });
+  strip.addEventListener('drop', (event) => {
+    if (!dragTabId) return;
+    event.preventDefault();
+    const target = (event.target as HTMLElement).closest<HTMLElement>('.term-tab');
+    reorderTab(dragTabId, target?.dataset.id ?? null, event.clientX);
+    dragTabId = null;
+  });
+  strip.addEventListener('dragend', () => {
+    dragTabId = null;
+    strip.querySelector('.term-tab-dragging')?.classList.remove('term-tab-dragging');
+  });
+}
+
+/** Move tab `fromId` to where `toId` sits (after it when dropped on its right half). */
+function reorderTab(fromId: string, toId: string | null, clientX: number): void {
+  const from = sessions.findIndex((s) => s.id === fromId);
+  if (from < 0) return;
+  const [moved] = sessions.splice(from, 1);
+  let to = toId ? sessions.findIndex((s) => s.id === toId) : sessions.length;
+  if (to < 0) to = sessions.length;
+  if (toId && tabStrip) {
+    const rect = tabStrip.querySelector<HTMLElement>(`.term-tab[data-id="${toId}"]`)?.getBoundingClientRect();
+    if (rect && clientX > rect.left + rect.width / 2) to += 1;
+  }
+  sessions.splice(Math.min(to, sessions.length), 0, moved);
+  renderTabs();
 }
 
 function onTabStripClick(event: MouseEvent): void {
