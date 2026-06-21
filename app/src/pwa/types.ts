@@ -43,6 +43,8 @@ export type PwaTerminalSettings = {
   captureShortcuts: boolean;
   /** Ask for confirmation before closing a tab whose session is connected. */
   confirmClose: boolean;
+  /** Auto-close a tab/pane when its session ends (off keeps it for reading). */
+  closeOnExit: boolean;
 };
 
 export type PwaConnectionSpec = {

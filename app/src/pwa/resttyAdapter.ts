@@ -289,6 +289,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   private readonly openedPanes = new Set<number>();
   private pendingOpen: PaneBridge[] = [];
   private wheelForwardCleanup: (() => void) | null = null;
+  private redispatchingWheel = false;
   private pointerFocusCleanup: (() => void) | null = null;
   private settings: PwaTerminalSettings | null = null;
 
@@ -669,11 +670,12 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
       }
       return null;
     };
-    const dispatchCanvasWheel = (canvas: HTMLElement, source: WheelEvent, shiftKey: boolean): void => {
+    const dispatchCanvasWheel = (canvas: HTMLElement, source: WheelEvent, shiftKey: boolean, scale = 1): void => {
+      this.redispatchingWheel = true;
       canvas.dispatchEvent(
         new WheelEvent('wheel', {
-          deltaX: source.deltaX,
-          deltaY: source.deltaY,
+          deltaX: source.deltaX * scale,
+          deltaY: source.deltaY * scale,
           deltaZ: source.deltaZ,
           deltaMode: source.deltaMode,
           clientX: source.clientX,
@@ -686,15 +688,24 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
           cancelable: true,
         }),
       );
+      this.redispatchingWheel = false;
+    };
+
+    const sensitivity = (): number => {
+      const s = this.settings?.scrollSensitivity ?? 1;
+      return Number.isFinite(s) && s > 0 ? s : 1;
     };
 
     const onCanvasWheelCapture = (event: WheelEvent): void => {
+      if (this.redispatchingWheel) return; // our own re-dispatched event
       const mouse = this.activeHandle()?.getMouseStatus?.();
-      if (!event.shiftKey && mouse?.active) {
-        event.stopImmediatePropagation();
-        event.preventDefault();
-        dispatchCanvasWheel(event.currentTarget as HTMLElement, event, true);
-      }
+      const unhijack = !event.shiftKey && !!mouse?.active;
+      const sens = sensitivity();
+      // Default path (no mouse-reporting, sensitivity 1) is left entirely alone.
+      if (!unhijack && sens === 1) return;
+      event.stopImmediatePropagation();
+      event.preventDefault();
+      dispatchCanvasWheel(event.currentTarget as HTMLElement, event, unhijack ? true : event.shiftKey, sens);
     };
 
     const onRootWheelCapture = (event: WheelEvent): void => {
@@ -705,7 +716,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
       pushWheelLog({ deltaY: event.deltaY, forwarded: true });
       event.stopImmediatePropagation();
       event.preventDefault();
-      dispatchCanvasWheel(canvas, event, event.shiftKey || !!mouse?.active);
+      dispatchCanvasWheel(canvas, event, event.shiftKey || !!mouse?.active, sensitivity());
     };
 
     canvases.forEach((canvas) =>

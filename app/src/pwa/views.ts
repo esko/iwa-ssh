@@ -444,6 +444,10 @@ export function openSettings(initial: SettingsTab = 'appearance'): void {
     let activeTab: SettingsTab = initial;
     let activeProfileId = profiles[0].id;
     const render = (): void => {
+      // Bump a generation token so a slower async tab render (Appearance awaits
+      // the custom-font list) can detect it was superseded by a quick tab switch
+      // and skip clobbering the body it no longer owns.
+      body.dataset.gen = String(Number(body.dataset.gen ?? '0') + 1);
       modal.querySelectorAll<HTMLElement>('[data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === activeTab)));
       renderSettingsTab(body, activeTab, activeProfileId);
     };
@@ -555,6 +559,12 @@ function renderBehaviorTab(body: HTMLElement, profileId: string): void {
       hint: 'Ctrl+W or the tab × ask first while a session is live.',
       value: s.confirmClose,
     },
+    {
+      name: 'closeOnExit',
+      label: 'Close the tab when the session ends',
+      hint: 'Off keeps the terminal open so you can read the final output.',
+      value: s.closeOnExit,
+    },
   ]);
 }
 
@@ -578,7 +588,10 @@ async function renderAppearanceTab(body: HTMLElement, profileId: string): Promis
   const opts = (values: (string | number)[], current: string | number): string =>
     values.map((v) => `<option value="${v}"${String(v) === String(current) ? ' selected' : ''}>${v}</option>`).join('');
 
+  const gen = body.dataset.gen;
   const customFonts = await listCustomFonts().catch((): CustomFontMeta[] => []);
+  // A quick tab switch during the await means this render no longer owns the body.
+  if (body.dataset.gen !== gen) return;
   const bundledIds = new Set(BUNDLED_FONTS.map((f) => f.id));
   const selectedFont = isCustomSelection(s.fontFamily)
     ? customFonts.some((f) => customSelection(f.id) === s.fontFamily)
@@ -642,6 +655,7 @@ README  <span style="color:${p.magenta}">.env</span></span>`;
     ${setRow('Cursor blink', `<select name="cursorBlink">${opts(['on', 'off'], s.cursorBlink ? 'on' : 'off')}</select>`)}
     <div class="group-title">Window</div>
     ${setRow('Padding', `<select class="control-narrow" name="terminalPadding">${opts([0, 4, 8, 12, 16, 24], s.terminalPadding)}</select>`, 'Space around the terminal canvas')}
+    ${setRow('Scroll speed', `<select class="control-narrow" name="scrollSensitivity">${opts([0.5, 0.75, 1, 1.5, 2], s.scrollSensitivity)}</select>`, 'Trackpad / wheel scrollback multiplier')}
     ${setRow('Scrollback', `<select name="scrollback">${opts([1000, 5000, 10000, 20000], s.scrollback)}</select>`)}
   `;
 
@@ -695,6 +709,7 @@ README  <span style="color:${p.magenta}">.env</span></span>`;
         cursorStyle: get('cursorStyle'),
         cursorBlink: get('cursorBlink') === 'on',
         terminalPadding: Number(get('terminalPadding')),
+        scrollSensitivity: Number(get('scrollSensitivity')),
         scrollback: Number(get('scrollback')),
       });
     }),
@@ -880,8 +895,9 @@ function onPaneStatus(session: TermSession, paneId: number, state: TerminalTrans
   if (session.id === activeSessionId) updateSharedStatus(session, state, error);
   renderTabs();
   // A clean disconnect closes that pane (the tab ends with its last pane);
-  // errors stay readable, and a reconnect's own cycle is ignored.
-  if (state === 'disconnected' && !conn.reconnecting && prev !== 'error') {
+  // errors stay readable, a reconnect's own cycle is ignored, and "keep open"
+  // (closeOnExit off) leaves the ended pane in place for reading.
+  if (state === 'disconnected' && !conn.reconnecting && prev !== 'error' && resolveSettings(session.spec.settingsProfileId).closeOnExit) {
     window.setTimeout(() => {
       if (conn.reconnecting || !session.panes.has(paneId)) return;
       if (session.panes.size <= 1) closeSession(session);
@@ -895,9 +911,9 @@ function onSessionStatus(session: TermSession, state: TerminalTransportStatus, e
   session.status = state;
   if (session.id === activeSessionId) updateSharedStatus(session, state, error);
   renderTabs();
-  // A clean disconnect ends the tab; errors stay so they can be read, and a
-  // reconnect's own disconnect/connect cycle is ignored.
-  if (state === 'disconnected' && !session.reconnecting && prev !== 'error') {
+  // A clean disconnect ends the tab; errors stay so they can be read, a
+  // reconnect's own cycle is ignored, and "keep open" leaves the ended tab.
+  if (state === 'disconnected' && !session.reconnecting && prev !== 'error' && resolveSettings(session.spec.settingsProfileId).closeOnExit) {
     window.setTimeout(() => {
       if (!session.reconnecting) closeSession(session);
     }, 700);
