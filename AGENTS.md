@@ -20,6 +20,7 @@ Mosh remains a follow-up transport after SSH over Direct Sockets is stable. Do n
 - Read `docs/LEGACY_PWA_PIVOT_PRD.md`, `docs/LEGACY_PWA_PIVOT_PLAN.md`, `docs/RESET_PRD.md`, `docs/ARCHITECTURE.md`, `docs/UPSTREAM_SYNC.md`, and the relevant ADR before changing reset work.
 - Keep upstream-copied runtime files mechanically refreshed by `scripts/fetch-upstream-assets.mjs`; document local patches there or in `docs/UPSTREAM_SYNC.md`.
 - Put IWA/Direct Sockets adaptations in thin adapter, transport, or polyfill modules. Do not push app-specific concerns into Ghostty renderer modules.
+- Every change to the installed IWA—including app code, runtime assets, manifests, packaging, or behavior—must bump the IWA version in the same change. Run `npm run bump-version` and verify `package.json`, `package-lock.json`, and both web manifests all report the new version before handing off.
 - Check `git status --short` before edits and do not overwrite unrelated local changes.
 - Use separate git worktrees for parallel implementation slices or subagent-owned coding work. Name worktrees after the issue or slice, keep each worktree scoped to one reset issue when possible, and merge results back only after review and verification.
 - Verify with the smallest relevant command first, then run broader checks before handing off.
