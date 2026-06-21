@@ -3,6 +3,7 @@ import { NasshCommandBridge } from '../ssh/NasshCommandBridge';
 import { saveEtSession, type EtSessionRecord } from '../storage/indexedDb';
 import type { PwaConnectionSpec } from '../pwa/types';
 import { wrapEtPasskey } from './sessionStore';
+import { buildEtBootstrapCommand } from './bootstrapCommand';
 
 const ALPHANUMERIC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -29,6 +30,16 @@ class CaptureTerminal implements TerminalAdapter {
     this.listeners.add(listener);
     return { dispose: () => this.listeners.delete(listener) };
   }
+  getOutput(): string { return this.output; }
+}
+
+function bootstrapError(output: string, clientId: string, passkey: string): Error {
+  const redacted = output
+    .replaceAll(clientId, '[client-id]')
+    .replaceAll(passkey, '[passkey]')
+    .trim()
+    .slice(-2000);
+  return new Error(redacted ? `etterminal registration failed:\n${redacted}` : 'Timed out waiting for etterminal registration');
 }
 
 export async function createEtSession(spec: PwaConnectionSpec): Promise<string> {
@@ -70,16 +81,19 @@ export async function createEtSession(spec: PwaConnectionSpec): Promise<string> 
 
   const terminal = new CaptureTerminal();
   const expected = `IDPASSKEY:${clientId}/${passkey}`;
-  const command = `echo '${clientId}/${passkey}_xterm-256color' | etterminal`;
+  const command = buildEtBootstrapCommand(clientId, passkey);
   let resolveOutput!: () => void;
   let rejectOutput!: (error: Error) => void;
   const outputReady = new Promise<void>((resolve, reject) => {
     resolveOutput = resolve;
     rejectOutput = reject;
   });
-  const timeout = window.setTimeout(() => rejectOutput(new Error('Timed out waiting for etterminal registration')), 30_000);
+  const timeout = window.setTimeout(() => rejectOutput(bootstrapError(terminal.getOutput(), clientId, passkey)), 30_000);
   const subscription = terminal.onOutput((output) => {
     if (output.includes(expected)) resolveOutput();
+    else if (/command not found|No such file|Error connecting to router|\bFATAL\b/i.test(output)) {
+      rejectOutput(bootstrapError(output, clientId, passkey));
+    }
   });
   const bridge = new NasshCommandBridge({
     protocol: 'ssh',
