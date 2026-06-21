@@ -1,12 +1,13 @@
 import type { Profile } from '../settings/types';
 
-export type TerminalProtocol = 'ssh' | 'mosh';
+export type TerminalProtocol = 'ssh' | 'mosh' | 'et';
 
 export type TerminalConnectionSpec = {
   protocol: TerminalProtocol;
   username?: string;
   hostname: string;
   port?: number;
+  etPort?: number;
   args: string[];
   argstr?: string;
   profileId?: string;
@@ -21,6 +22,7 @@ export function profileToConnectionSpec(profile: Profile): TerminalConnectionSpe
     username: profile.username,
     hostname: profile.host,
     port: profile.port,
+    ...(profile.protocol === 'et' ? { etPort: profile.etPort ?? 2022 } : {}),
     args: [],
     argstr: profile.connectionArgs,
     profileId: profile.id,
@@ -41,7 +43,8 @@ export function normalizeConnectionSpec(spec: TerminalConnectionSpec): TerminalC
     protocol: spec.protocol,
     username: spec.username?.trim() || undefined,
     hostname: spec.hostname.trim(),
-    port: spec.port ?? (spec.protocol === 'ssh' ? 22 : undefined),
+    port: spec.port ?? (spec.protocol === 'ssh' || spec.protocol === 'et' ? 22 : undefined),
+    ...(spec.protocol === 'et' ? { etPort: spec.etPort ?? 2022 } : {}),
     args: [...spec.args],
     argstr: spec.argstr?.trim() || undefined,
     profileId: spec.profileId?.trim() || undefined,

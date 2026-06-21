@@ -131,6 +131,19 @@ try {
     startupCommand: undefined,
     rawCommand: 'mosh "abc@a b c@example.com"',
   });
+  assert.deepEqual(parseTerminalConnectionCommand('et user@example.com'), {
+    protocol: 'et',
+    username: 'user',
+    hostname: 'example.com',
+    port: 22,
+    etPort: 2022,
+    args: [],
+    argstr: undefined,
+    profileId: undefined,
+    identityId: undefined,
+    startupCommand: undefined,
+    rawCommand: 'et user@example.com',
+  });
 
   // Profile -> connection spec round trip preserves connection intent.
   const profile = {

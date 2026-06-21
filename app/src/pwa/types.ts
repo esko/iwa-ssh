@@ -48,10 +48,13 @@ export type PwaTerminalSettings = {
 };
 
 export type PwaConnectionSpec = {
-  protocol: 'ssh' | 'mosh' | 'echo';
+  protocol: 'ssh' | 'mosh' | 'et' | 'echo';
   username?: string;
   hostname: string;
   port?: number;
+  etPort?: number;
+  /** Opaque local resume handle. Never contains ET wire credentials. */
+  etSessionId?: string;
   args: string[];
   argstr?: string;
   profileId?: string;

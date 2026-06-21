@@ -1,0 +1,314 @@
+import { create, fromBinary, toBinary } from '@bufbuild/protobuf';
+import {
+  CatchupBufferSchema,
+  ConnectRequestSchema,
+  ConnectResponseSchema,
+  ConnectStatus,
+  EtPacketType,
+  SequenceHeaderSchema,
+} from './proto/ET_pb';
+import {
+  InitialPayloadSchema,
+  InitialResponseSchema,
+  TerminalBufferSchema,
+  TerminalInfoSchema,
+  TerminalPacketType,
+} from './proto/ETerminal_pb';
+import {
+  getEtSession,
+  listEtOutboundFrames,
+  pruneEtOutboundFrames,
+  saveEtOutboundFrame,
+  type EtSessionRecord,
+} from '../storage/indexedDb';
+import { checkpointEtControl, checkpointEtOutput, unwrapEtPasskey, updateEtSession } from './sessionStore';
+import {
+  decryptEtPayload,
+  encryptEtPayload,
+  ET_PROTOCOL_VERSION,
+  EtStreamReader,
+  frameHandshake,
+  framePacket,
+  parseCatchupPacket,
+  serializeCatchupPacket,
+  type EtWirePacket,
+} from './wire';
+
+type SocketConnection = {
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+  close(): Promise<void>;
+};
+
+export type EtClientCallbacks = {
+  onOutput(data: Uint8Array): void;
+  onStatus(status: 'connecting' | 'connected' | 'disconnected' | 'error', error?: string): void;
+  onStale(): void;
+};
+
+const encoder = new TextEncoder();
+
+export class EtClient {
+  private session: EtSessionRecord;
+  private readonly passkey: string;
+  private readonly callbacks: EtClientCallbacks;
+  private socket: SocketConnection | null = null;
+  private reader: EtStreamReader | null = null;
+  private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  private stopped = false;
+  private reconnecting = false;
+  private keepaliveTimer: ReturnType<typeof setInterval> | undefined;
+  private lastKeepalive = 0;
+  private sendQueue: Promise<void> = Promise.resolve();
+  private inputBuffer = '';
+  private inputFlush: Promise<void> | null = null;
+
+  private constructor(session: EtSessionRecord, passkey: string, callbacks: EtClientCallbacks) {
+    this.session = session;
+    this.passkey = passkey;
+    this.callbacks = callbacks;
+  }
+
+  static async create(sessionId: string, callbacks: EtClientCallbacks): Promise<EtClient> {
+    const session = await getEtSession(sessionId);
+    if (!session) throw new Error('Saved ET session was not found');
+    if (session.protocolVersion !== ET_PROTOCOL_VERSION || session.storageFormatVersion !== 1) {
+      throw new Error('Saved ET session uses an unsupported protocol format');
+    }
+    return new EtClient(session, await unwrapEtPasskey(session), callbacks);
+  }
+
+  async connect(): Promise<void> {
+    this.stopped = false;
+    this.callbacks.onStatus('connecting');
+    try {
+      await this.openAndHandshake();
+      this.callbacks.onStatus('connected');
+      this.startKeepalive();
+      void this.readLoop();
+    } catch (error) {
+      await this.handleConnectionLoss(error);
+    }
+  }
+
+  sendInput(data: string): Promise<void> {
+    this.inputBuffer += data;
+    if (!this.inputFlush) {
+      this.inputFlush = new Promise<void>((resolve, reject) => {
+        queueMicrotask(() => {
+          const buffered = this.inputBuffer;
+          this.inputBuffer = '';
+          this.inputFlush = null;
+          const encoded = encoder.encode(buffered);
+          const chunks: Uint8Array[] = [];
+          for (let offset = 0; offset < encoded.byteLength; offset += 16 * 1024) chunks.push(encoded.slice(offset, offset + 16 * 1024));
+          void chunks.reduce(
+            (pending, chunk) => pending.then(() => {
+              const payload = toBinary(TerminalBufferSchema, create(TerminalBufferSchema, { buffer: chunk }));
+              return this.sendPacket(TerminalPacketType.TERMINAL_BUFFER, payload);
+            }),
+            Promise.resolve(),
+          ).then(resolve, reject);
+        });
+      });
+    }
+    return this.inputFlush;
+  }
+
+  async resize(cols: number, rows: number): Promise<void> {
+    if (cols < 1 || rows < 1) return;
+    this.session = await updateEtSession(this.session.id, { cols, rows });
+    const payload = toBinary(TerminalInfoSchema, create(TerminalInfoSchema, { id: this.session.clientId, row: rows, column: cols, width: 0, height: 0 }));
+    await this.sendPacket(TerminalPacketType.TERMINAL_INFO, payload);
+  }
+
+  async detach(): Promise<void> {
+    this.stopped = true;
+    this.stopKeepalive();
+    await this.closeSocket();
+    this.session = await updateEtSession(this.session.id, { phase: 'detached' });
+    this.callbacks.onStatus('disconnected');
+  }
+
+  private async openAndHandshake(): Promise<void> {
+    const Socket = (globalThis as typeof globalThis & { TCPSocket?: typeof window.TCPSocket }).TCPSocket;
+    if (!Socket) throw new Error('Direct Sockets (TCPSocket) is unavailable');
+    const socket = new Socket(this.session.host, this.session.etPort);
+    this.socket = await socket.opened;
+    this.reader = new EtStreamReader(this.socket.readable);
+    this.writer = this.socket.writable.getWriter();
+
+    const request = toBinary(ConnectRequestSchema, create(ConnectRequestSchema, {
+      clientId: this.session.clientId,
+      version: ET_PROTOCOL_VERSION,
+    }));
+    await this.write(frameHandshake(request));
+    const response = fromBinary(ConnectResponseSchema, await this.reader.handshake());
+    if (response.status === ConnectStatus.INVALID_KEY) {
+      this.session = await updateEtSession(this.session.id, { phase: 'stale', lastError: response.error || 'ET server forgot this session' });
+      this.callbacks.onStale();
+      throw new Error(response.error || 'The remote ET session no longer exists');
+    }
+    if (response.status === ConnectStatus.MISMATCHED_PROTOCOL) {
+      throw new Error(response.error || `ET protocol mismatch (client ${ET_PROTOCOL_VERSION})`);
+    }
+    if (response.status === ConnectStatus.NEW_CLIENT) await this.initializeNewSession();
+    else if (response.status === ConnectStatus.RETURNING_CLIENT) await this.recoverSession();
+    else throw new Error(response.error || `Unexpected ET connect status ${response.status}`);
+    this.session = await updateEtSession(this.session.id, { phase: 'active', lastError: undefined });
+  }
+
+  private async initializeNewSession(): Promise<void> {
+    if (this.session.rxSequence !== 0 || this.session.txSequence !== 0) {
+      throw new Error('ET server reported NEW_CLIENT for a previously used local session');
+    }
+    const payload = toBinary(InitialPayloadSchema, create(InitialPayloadSchema, { jumphost: false, environmentvariables: {} }));
+    await this.sendPacket(EtPacketType.INITIAL_PAYLOAD, payload);
+    const packet = await this.readEncryptedPacket();
+    if (packet.type !== EtPacketType.INITIAL_RESPONSE) throw new Error('ET server omitted InitialResponse');
+    const response = fromBinary(InitialResponseSchema, packet.payload);
+    if (response.error) throw new Error(response.error);
+    if (this.session.startupCommand) await this.sendInput(`${this.session.startupCommand}\r`);
+  }
+
+  private async recoverSession(): Promise<void> {
+    if (!this.reader) throw new Error('ET reader is unavailable');
+    const localSequence = toBinary(SequenceHeaderSchema, create(SequenceHeaderSchema, { sequenceNumber: this.session.rxSequence }));
+    await this.write(frameHandshake(localSequence));
+    const remote = fromBinary(SequenceHeaderSchema, await this.reader.handshake());
+    if (remote.sequenceNumber < 0 || remote.sequenceNumber > this.session.txSequence) throw new Error('ET peer returned an invalid sequence');
+    await pruneEtOutboundFrames(this.session.id, remote.sequenceNumber);
+    const frames = (await listEtOutboundFrames(this.session.id)).filter((frame) => frame.sequence > remote.sequenceNumber);
+    if (frames.length > 0 && frames[0].sequence !== remote.sequenceNumber + 1) {
+      throw new Error('ET peer is too far behind the retained 64 MiB recovery buffer');
+    }
+    const catchup = toBinary(CatchupBufferSchema, create(CatchupBufferSchema, { buffer: frames.map((frame) => frame.bytes) }));
+    await this.write(frameHandshake(catchup));
+    const incoming = fromBinary(CatchupBufferSchema, await this.reader.handshake());
+    for (const bytes of incoming.buffer) await this.acceptEncryptedPacket(parseCatchupPacket(bytes));
+  }
+
+  private async sendPacket(type: number, plaintext: Uint8Array): Promise<void> {
+    const task = this.sendQueue.then(() => this.sendPacketNow(type, plaintext));
+    this.sendQueue = task.catch(() => undefined);
+    return task;
+  }
+
+  private async sendPacketNow(type: number, plaintext: Uint8Array): Promise<void> {
+    const sequence = this.session.txSequence + 1;
+    const encrypted = await encryptEtPayload(this.passkey, sequence, plaintext);
+    const packet = { encrypted: true, type, payload: encrypted };
+    const serialized = serializeCatchupPacket(packet);
+    this.session = await saveEtOutboundFrame({
+      sessionId: this.session.id,
+      sequence,
+      bytes: serialized,
+      size: serialized.byteLength,
+    }, Boolean(this.writer));
+    if (this.writer) await this.write(framePacket(packet));
+  }
+
+  private async readLoop(): Promise<void> {
+    try {
+      while (!this.stopped && this.reader) await this.acceptEncryptedPacket(await this.reader.packet());
+    } catch (error) {
+      await this.handleConnectionLoss(error);
+    }
+  }
+
+  private async readEncryptedPacket(): Promise<EtWirePacket> {
+    if (!this.reader) throw new Error('ET reader is unavailable');
+    const packet = await this.reader.packet();
+    const sequence = this.session.rxSequence + 1;
+    if (!packet.encrypted) throw new Error('ET peer sent an unencrypted packet');
+    const payload = await decryptEtPayload(this.passkey, sequence, packet.payload);
+    this.session = await checkpointEtControl(this.session.id, sequence);
+    return { ...packet, encrypted: false, payload };
+  }
+
+  private async acceptEncryptedPacket(packet: EtWirePacket): Promise<void> {
+    const sequence = this.session.rxSequence + 1;
+    if (!packet.encrypted) throw new Error('ET peer sent an unencrypted packet');
+    const payload = await decryptEtPayload(this.passkey, sequence, packet.payload);
+    if (packet.type === TerminalPacketType.TERMINAL_BUFFER) {
+      const terminal = fromBinary(TerminalBufferSchema, payload).buffer;
+      this.session = await checkpointEtOutput(this.session.id, sequence, terminal);
+      this.callbacks.onOutput(terminal);
+    } else {
+      this.session = await checkpointEtControl(this.session.id, sequence);
+      if (packet.type === TerminalPacketType.KEEP_ALIVE) this.lastKeepalive = Date.now();
+    }
+  }
+
+  private startKeepalive(): void {
+    this.stopKeepalive();
+    this.lastKeepalive = Date.now();
+    this.keepaliveTimer = globalThis.setInterval(() => {
+      if (Date.now() - this.lastKeepalive > 11_000) {
+        void this.handleConnectionLoss(new Error('ET keepalive timed out'));
+        return;
+      }
+      void this.sendPacket(TerminalPacketType.KEEP_ALIVE, new Uint8Array()).catch((error) => this.handleConnectionLoss(error));
+    }, 5_000);
+  }
+
+  private stopKeepalive(): void {
+    globalThis.clearInterval(this.keepaliveTimer);
+    this.keepaliveTimer = undefined;
+  }
+
+  private async handleConnectionLoss(error: unknown): Promise<void> {
+    if (this.stopped || this.reconnecting) return;
+    this.reconnecting = true;
+    this.stopKeepalive();
+    await this.closeSocket();
+    const message = error instanceof Error ? error.message : String(error);
+    if (this.session.phase === 'stale') {
+      this.callbacks.onStatus('error', message);
+      this.reconnecting = false;
+      return;
+    }
+    this.callbacks.onStatus('connecting', message);
+    const delays = [0, 1_000, 2_000, 4_000, 8_000, 10_000];
+    let attempt = 0;
+    while (!this.stopped) {
+      const delay = delays[Math.min(attempt, delays.length - 1)] + Math.floor(Math.random() * 250);
+      await new Promise((resolve) => globalThis.setTimeout(resolve, delay));
+      if (this.stopped) break;
+      try {
+        await this.openAndHandshake();
+        this.reconnecting = false;
+        this.callbacks.onStatus('connected');
+        this.startKeepalive();
+        void this.readLoop();
+        return;
+      } catch (nextError) {
+        if ((this.session.phase as string) === 'stale') {
+          this.callbacks.onStatus('error', nextError instanceof Error ? nextError.message : String(nextError));
+          this.reconnecting = false;
+          return;
+        }
+        await this.closeSocket();
+        attempt += 1;
+      }
+    }
+    this.reconnecting = false;
+  }
+
+  private async write(bytes: Uint8Array): Promise<void> {
+    if (!this.writer) throw new Error('ET writer is unavailable');
+    await this.writer.write(bytes);
+  }
+
+  private async closeSocket(): Promise<void> {
+    const reader = this.reader;
+    const writer = this.writer;
+    const socket = this.socket;
+    this.reader = null;
+    this.writer = null;
+    this.socket = null;
+    await reader?.cancel();
+    writer?.releaseLock();
+    await socket?.close().catch(() => undefined);
+  }
+}

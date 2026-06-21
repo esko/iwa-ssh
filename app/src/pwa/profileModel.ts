@@ -10,6 +10,7 @@ export function profileToSpec(profile: Profile): PwaConnectionSpec {
     username: profile.username,
     hostname: profile.host,
     port: profile.port,
+    etPort: profile.etPort,
     args: [],
     argstr: profile.connectionArgs,
     profileId: profile.id,
@@ -21,7 +22,9 @@ export function profileToSpec(profile: Profile): PwaConnectionSpec {
 
 export function specTitle(spec: PwaConnectionSpec): string {
   const user = spec.username ? `${spec.username}@` : '';
-  const port = spec.port && spec.port !== 22 ? `:${spec.port}` : '';
+  const displayPort = spec.protocol === 'et' ? spec.etPort : spec.port;
+  const defaultPort = spec.protocol === 'et' ? 2022 : 22;
+  const port = displayPort && displayPort !== defaultPort ? `:${displayPort}` : '';
   return `${spec.protocol} ${user}${spec.hostname}${port}`;
 }
 
@@ -31,6 +34,8 @@ export function specToQuery(spec: PwaConnectionSpec): string {
   if (spec.username) params.set('username', spec.username);
   params.set('host', spec.hostname);
   if (spec.port) params.set('port', String(spec.port));
+  if (spec.etPort) params.set('etPort', String(spec.etPort));
+  if (spec.etSessionId) params.set('resume', spec.etSessionId);
   if (spec.argstr) params.set('args', spec.argstr);
   if (spec.profileId) params.set('profile', spec.profileId);
   if (spec.identityId) params.set('identity', spec.identityId);
@@ -40,7 +45,8 @@ export function specToQuery(spec: PwaConnectionSpec): string {
 }
 
 export function specFromQuery(query: URLSearchParams): PwaConnectionSpec | null {
-  const protocol = query.get('protocol') === 'mosh' ? 'mosh' : query.get('protocol') === 'echo' ? 'echo' : 'ssh';
+  const rawProtocol = query.get('protocol');
+  const protocol = rawProtocol === 'mosh' ? 'mosh' : rawProtocol === 'et' ? 'et' : rawProtocol === 'echo' ? 'echo' : 'ssh';
   const hostname = query.get('host')?.trim();
   if (!hostname) return null;
   const port = Number(query.get('port') ?? '');
@@ -48,7 +54,9 @@ export function specFromQuery(query: URLSearchParams): PwaConnectionSpec | null 
     protocol,
     username: query.get('username')?.trim() || undefined,
     hostname,
-    port: Number.isFinite(port) && port > 0 ? port : protocol === 'ssh' ? 22 : undefined,
+    port: Number.isFinite(port) && port > 0 ? port : protocol === 'ssh' || protocol === 'et' ? 22 : undefined,
+    etPort: Number(query.get('etPort')) > 0 ? Number(query.get('etPort')) : protocol === 'et' ? 2022 : undefined,
+    etSessionId: query.get('resume')?.trim() || undefined,
     args: [],
     argstr: query.get('args')?.trim() || undefined,
     profileId: query.get('profile')?.trim() || undefined,
@@ -84,6 +92,6 @@ async function saveProfileLastConnected(profileId: string, lastConnectedAt: numb
   await saveProfile({ ...profile, lastConnectedAt });
 }
 
-function connectionKey(spec: Pick<PwaConnectionSpec, 'protocol' | 'username' | 'hostname' | 'port'>): string {
-  return `${spec.protocol}:${spec.username ?? ''}@${spec.hostname}:${spec.port ?? ''}`;
+function connectionKey(spec: Pick<PwaConnectionSpec, 'protocol' | 'username' | 'hostname' | 'port' | 'etPort'>): string {
+  return `${spec.protocol}:${spec.username ?? ''}@${spec.hostname}:${spec.port ?? ''}:${spec.etPort ?? ''}`;
 }

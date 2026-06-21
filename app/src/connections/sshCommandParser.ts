@@ -105,8 +105,8 @@ function extractPort(args: string): number | undefined {
 export function parseTerminalConnectionCommand(input: string): TerminalConnectionSpec | null {
   const tokens = shellTokens(input.trim());
   const first = tokens[0]?.value.toLowerCase();
-  const protocol: TerminalProtocol = first === 'mosh' ? 'mosh' : 'ssh';
-  const command = first === 'ssh' || first === 'mosh'
+  const protocol: TerminalProtocol = first === 'mosh' ? 'mosh' : first === 'et' ? 'et' : 'ssh';
+  const command = first === 'ssh' || first === 'mosh' || first === 'et'
     ? input.slice((tokens[0]?.index ?? 0) + (tokens[0]?.raw.length ?? 0)).trim()
     : input.trim();
 

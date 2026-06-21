@@ -3,6 +3,9 @@ import { NasshCommandBridge } from '../ssh/NasshCommandBridge';
 import { checkMoshPrerequisites } from '../ssh/moshGate';
 import { areUpstreamAssetsReady } from '../ssh/upstreamAssets';
 import type { PwaConnectionSpec, TerminalTransportStatus } from './types';
+import { createEtSession } from '../et/bootstrap';
+import { readEtJournal } from '../et/sessionStore';
+import { getEtSession } from '../storage/indexedDb';
 
 export type TransportStatusHandler = (status: TerminalTransportStatus, error?: string) => void;
 
@@ -10,6 +13,7 @@ export type TerminalTransport = {
   connect(adapter: TerminalAdapter): Promise<void>;
   disconnect(): Promise<void>;
   dispose(): void;
+  getPersistentSessionId?(): string | undefined;
 };
 
 export class EchoTransport implements TerminalTransport {
@@ -111,7 +115,144 @@ export class SshDirectSocketsTransport implements TerminalTransport {
   }
 }
 
+export class EtDirectSocketsTransport implements TerminalTransport {
+  private input: TerminalSubscription | null = null;
+  private resize: TerminalSubscription | null = null;
+  private worker: Worker | null = null;
+  private sessionId: string | undefined;
+  private disposed = false;
+  private releaseOwnership: (() => void) | null = null;
+  private stopping: Promise<void> | null = null;
+
+  constructor(
+    private readonly spec: PwaConnectionSpec,
+    private readonly onStatus: TransportStatusHandler,
+  ) {
+    this.sessionId = spec.etSessionId;
+  }
+
+  getPersistentSessionId(): string | undefined {
+    return this.sessionId;
+  }
+
+  async connect(adapter: TerminalAdapter): Promise<void> {
+    this.disposed = false;
+    this.onStatus('connecting');
+    if (!this.sessionId) this.sessionId = await createEtSession(this.spec);
+    const sessionId = this.sessionId;
+    await this.acquireOwnership(sessionId);
+
+    const stored = await getEtSession(sessionId);
+    if (stored?.journalTruncated) adapter.write('\r\n\x1b[33m[Earlier ET output was truncated at the 64 MiB replay limit.]\x1b[0m\r\n');
+    for (const chunk of await readEtJournal(sessionId)) adapter.write(chunk);
+    const worker = new Worker(new URL('../et/worker.ts', import.meta.url), { type: 'module', name: `et-${sessionId}` });
+    this.worker = worker;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        worker.onmessage = (event: MessageEvent<Record<string, unknown>>) => {
+          const message = event.data;
+          if (message.type === 'output' && message.data instanceof Uint8Array) adapter.write(message.data);
+          else if (message.type === 'status') {
+            const status = String(message.status) as TerminalTransportStatus;
+            this.onStatus(status, typeof message.error === 'string' ? message.error : undefined);
+            if (status === 'connected') resolve();
+          } else if (message.type === 'stale') {
+            const error = new Error('The remote Eternal Terminal session has ended.');
+            this.onStatus('error', error.message);
+            reject(error);
+          } else if (message.type === 'error') {
+            const error = new Error(String(message.error ?? 'ET worker failed'));
+            this.onStatus('error', error.message);
+            reject(error);
+          }
+        };
+        worker.onerror = () => reject(new Error('The Eternal Terminal worker stopped unexpectedly.'));
+        worker.postMessage({ type: 'connect', sessionId });
+      });
+    } catch (error) {
+      worker.terminate();
+      this.worker = null;
+      this.releaseOwnership?.();
+      this.releaseOwnership = null;
+      throw error;
+    }
+    this.input = adapter.onInput((data) => worker.postMessage({ type: 'input', data }));
+    this.resize = adapter.onResize((cols, rows) => worker.postMessage({ type: 'resize', cols, rows }));
+    const size = adapter.getSize();
+    worker.postMessage({ type: 'resize', cols: size.cols, rows: size.rows });
+  }
+
+  async disconnect(): Promise<void> {
+    this.onStatus('disconnecting');
+    this.input?.dispose();
+    this.resize?.dispose();
+    this.input = null;
+    this.resize = null;
+    this.stopping = this.stopWorker();
+    await this.stopping;
+    this.stopping = null;
+    this.releaseOwnership?.();
+    this.releaseOwnership = null;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.input?.dispose();
+    this.resize?.dispose();
+    this.input = null;
+    this.resize = null;
+    const worker = this.worker;
+    const release = this.releaseOwnership;
+    this.worker = null;
+    this.releaseOwnership = null;
+    if (this.stopping) {
+      void this.stopping.finally(() => release?.());
+    } else if (worker) {
+      worker.postMessage({ type: 'detach' });
+      globalThis.setTimeout(() => worker.terminate(), 500);
+      globalThis.setTimeout(() => release?.(), 500);
+    } else {
+      release?.();
+    }
+  }
+
+  private async acquireOwnership(sessionId: string): Promise<void> {
+    if (!navigator.locks) return;
+    let resolveResult!: (owned: boolean) => void;
+    const result = new Promise<boolean>((resolve) => { resolveResult = resolve; });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    void navigator.locks.request(`iwa-ssh-et:${sessionId}`, { ifAvailable: true }, async (lock) => {
+      resolveResult(Boolean(lock));
+      if (lock) await held;
+    }).catch(() => resolveResult(false));
+    if (!(await result)) throw new Error('This Eternal Terminal session is already open in another tab or window.');
+    if (this.disposed) release();
+    else this.releaseOwnership = release;
+  }
+
+  private async stopWorker(): Promise<void> {
+    const worker = this.worker;
+    this.worker = null;
+    if (!worker) return;
+    await new Promise<void>((resolve) => {
+      const timeout = globalThis.setTimeout(resolve, 1_000);
+      const previous = worker.onmessage;
+      worker.onmessage = (event) => {
+        previous?.call(worker, event);
+        if ((event.data as { type?: string }).type === 'detached') {
+          globalThis.clearTimeout(timeout);
+          resolve();
+        }
+      };
+      worker.postMessage({ type: 'detach' });
+    });
+    worker.terminate();
+  }
+}
+
 export function createTransport(spec: PwaConnectionSpec, onStatus: TransportStatusHandler): TerminalTransport {
+  if (spec.protocol === 'et') return new EtDirectSocketsTransport(spec, onStatus);
   return spec.protocol === 'echo'
     ? new EchoTransport(spec, onStatus, {
         banner: `\x1b[1;36miwa-ssh Ghostty echo\x1b[0m\r\nTarget: ${spec.username ?? 'user'}@${spec.hostname}`

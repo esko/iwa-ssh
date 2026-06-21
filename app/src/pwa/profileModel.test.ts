@@ -64,4 +64,31 @@ describe('profile to terminal query mapping', () => {
 
     expect(spec).toBeNull();
   });
+
+  it('round-trips Eternal Terminal bootstrap and daemon ports without credentials', () => {
+    const profile: Profile = {
+      id: 'et-profile',
+      name: 'Durable shell',
+      protocol: 'et',
+      host: 'example.com',
+      port: 2222,
+      etPort: 2023,
+      username: 'alice',
+    };
+    const query = specToQuery(profileToSpec(profile));
+    expect(query).not.toContain('passkey');
+    expect(specFromQuery(new URLSearchParams(query))).toMatchObject({
+      protocol: 'et',
+      port: 2222,
+      etPort: 2023,
+    });
+  });
+
+  it('defaults Eternal Terminal to SSH 22 and ET 2022', () => {
+    expect(specFromQuery(new URLSearchParams('protocol=et&host=h'))).toMatchObject({
+      protocol: 'et',
+      port: 22,
+      etPort: 2022,
+    });
+  });
 });

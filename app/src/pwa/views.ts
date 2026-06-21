@@ -1,5 +1,5 @@
 import type { Profile } from '../settings/types';
-import { deleteProfile, listProfiles, saveIdentity, saveProfile } from '../storage/indexedDb';
+import { deleteProfile, forgetEtSession, getEtSession, listEtSessionSummaries, listProfiles, saveIdentity, saveProfile } from '../storage/indexedDb';
 import { encryptPrivateKey } from '../security/KeyCrypto';
 import { cacheIdentityPassphrase } from '../ssh/IdentityPassphrase';
 import { escapeHTML, formatTime, requiredElement } from './dom';
@@ -79,6 +79,8 @@ type TermSession = {
   appliedFont: string;
   reconnecting: boolean;
   titleSub: TerminalSubscription | null;
+  /** Durable ET handle for this tab's primary pane only. */
+  resumeEtSessionId?: string;
 };
 
 const sessions: TermSession[] = [];
@@ -106,7 +108,10 @@ function saveTabLayout(): void {
       return;
     }
     const activeIndex = Math.max(0, sessions.findIndex((s) => s.id === activeSessionId));
-    const layout: SavedTabLayout = { specs: sessions.map((s) => s.spec), activeIndex };
+    const layout: SavedTabLayout = {
+      specs: sessions.map((s) => ({ ...s.spec, etSessionId: s.resumeEtSessionId })),
+      activeIndex,
+    };
     sessionStorage.setItem(TAB_LAYOUT_KEY, JSON.stringify(layout));
   } catch {
     /* sessionStorage unavailable — persistence is best-effort */
@@ -207,7 +212,9 @@ function setThemeColor(color: string): void {
 
 function connectionTarget(spec: PwaConnectionSpec): string {
   const user = spec.username ? `${spec.username}@` : '';
-  const port = spec.port && spec.port !== 22 ? `:${spec.port}` : '';
+  const displayPort = spec.protocol === 'et' ? spec.etPort : spec.port;
+  const defaultPort = spec.protocol === 'et' ? 2022 : 22;
+  const port = displayPort && displayPort !== defaultPort ? `:${displayPort}` : '';
   return `${user}${spec.hostname}${port}`;
 }
 
@@ -234,11 +241,17 @@ function openOverlay(build: (close: () => void) => HTMLElement): void {
 export async function renderHome(root: HTMLElement): Promise<void> {
   setThemeColor('#000000');
   document.title = 'iwa-ssh';
-  const profiles = await listProfiles();
+  const [profiles, etSessions] = await Promise.all([listProfiles(), listEtSessionSummaries()]);
 
   root.innerHTML = `
     <div class="home">
       <div>
+        ${etSessions.length ? `<div class="home-head"><span class="section-label">Active sessions</span></div>
+        <div class="conn-list">${etSessions.map((session) => `
+          <button class="conn-row" type="button" data-resume-id="${escapeHTML(session.id)}">
+            <span class="conn-target">${escapeHTML(`${session.username}@${session.host}:${session.etPort}`)}</span>
+            <span class="conn-meta">${escapeHTML(session.phase)}</span>
+          </button>`).join('')}</div>` : ''}
         <div class="home-head">
           <span class="section-label">Connections</span>
           <button class="icon-btn" type="button" data-settings aria-label="Settings" title="Settings">${GEAR_SVG}</button>
@@ -252,6 +265,30 @@ export async function renderHome(root: HTMLElement): Promise<void> {
       </div>
     </div>
   `;
+
+  root.querySelectorAll<HTMLElement>('[data-resume-id]').forEach((rowEl) => {
+    rowEl.addEventListener('click', () => navigate(`/terminal.html?resume=${encodeURIComponent(rowEl.dataset.resumeId ?? '')}`));
+    rowEl.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const id = rowEl.dataset.resumeId;
+      if (!id) return;
+      showContextMenu(event.clientX, event.clientY, [
+        { type: 'item', label: 'Resume', onSelect: () => navigate(`/terminal.html?resume=${encodeURIComponent(id)}`) },
+        { type: 'item', label: 'Open in new window', onSelect: () => openWindow(`/terminal.html?resume=${encodeURIComponent(id)}`) },
+        { type: 'separator' },
+        {
+          type: 'item',
+          label: 'Forget local session',
+          onSelect: async () => {
+            if (!window.confirm('Forget this local ET session? The remote shell may continue running.')) return;
+            await forgetEtSession(id);
+            await renderHome(root);
+          },
+        },
+      ]);
+    });
+  });
 
   root.querySelectorAll<HTMLElement>('[data-launch-id]').forEach((rowEl) => {
     rowEl.addEventListener('click', () => {
@@ -278,7 +315,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
 
 function profileRow(profile: Profile): string {
   const target = connectionTarget(profileToSpec(profile));
-  const meta = profile.lastConnectedAt ? formatTime(profile.lastConnectedAt) : 'ssh';
+  const meta = profile.lastConnectedAt ? formatTime(profile.lastConnectedAt) : profile.protocol ?? 'ssh';
   return `
     <button class="conn-row" type="button" data-launch-id="${escapeHTML(profile.id)}">
       <span class="conn-target">${escapeHTML(target)}</span>
@@ -335,7 +372,8 @@ function openConnectionForm(): void {
             <label class="field"><span>user</span><input name="user" placeholder="esko" autocomplete="off" spellcheck="false" required></label>
             <label class="field"><span>port</span><input name="port" type="number" min="1" max="65535" value="22"></label>
           </div>
-          <label class="field"><span>protocol</span><select name="protocol"><option value="ssh" selected>SSH</option><option value="mosh">Mosh</option></select></label>
+          <label class="field"><span>protocol</span><select name="protocol"><option value="ssh" selected>SSH</option><option value="et">Eternal Terminal</option><option value="mosh">Mosh</option></select></label>
+          <label class="field" data-et-port hidden><span>ET port</span><input name="etPort" type="number" min="1" max="65535" value="2022"></label>
           <label class="field"><span>ssh key — optional</span><textarea name="key" placeholder="paste a private key…" spellcheck="false"></textarea></label>
           <label class="field"><span>or choose a key file</span><input type="file" name="keyfile" accept=".pem,.key,text/plain,application/octet-stream"></label>
           <label class="field" data-pass hidden><span>key passphrase — encrypts the key on this device</span><input name="passphrase" type="password" autocomplete="off"></label>
@@ -354,6 +392,11 @@ function openConnectionForm(): void {
     const errEl = modal.querySelector<HTMLElement>('[data-err]')!;
     const keyArea = form.querySelector<HTMLTextAreaElement>('[name="key"]')!;
     const keyFile = form.querySelector<HTMLInputElement>('[name="keyfile"]')!;
+    const protocolField = form.querySelector<HTMLSelectElement>('[name="protocol"]')!;
+    const etPortField = form.querySelector<HTMLElement>('[data-et-port]')!;
+    const syncProtocolFields = (): void => { etPortField.hidden = protocolField.value !== 'et'; };
+    protocolField.addEventListener('change', syncProtocolFields);
+    syncProtocolFields();
     const revealPass = (): void => {
       passField.hidden = !(keyArea.value.trim() || (keyFile.files?.length ?? 0) > 0);
     };
@@ -368,7 +411,8 @@ function openConnectionForm(): void {
       const user = String(data.get('user') ?? '').trim();
       const port = Number(data.get('port') ?? 22) || 22;
       if (!host || !user) return;
-      const protocol = data.get('protocol') === 'mosh' ? 'mosh' : 'ssh';
+      const protocol = data.get('protocol') === 'mosh' ? 'mosh' : data.get('protocol') === 'et' ? 'et' : 'ssh';
+      const etPort = protocol === 'et' ? Number(data.get('etPort') ?? 2022) || 2022 : undefined;
       const settingsProfileId = String(data.get('sp') ?? '').trim() || undefined;
 
       const keyText = String(data.get('key') ?? '').trim();
@@ -396,7 +440,7 @@ function openConnectionForm(): void {
         cacheIdentityPassphrase(identityId, passphrase);
       }
 
-      const profile: Profile = { id: crypto.randomUUID(), name: `${user}@${host}`, protocol, host, port, username: user, identityId, settingsProfileId };
+      const profile: Profile = { id: crypto.randomUUID(), name: `${user}@${host}`, protocol, host, port, etPort, username: user, identityId, settingsProfileId };
       await saveProfile(profile);
       navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
     });
@@ -749,6 +793,29 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
   const query = new URLSearchParams(window.location.search);
   terminalQuery = query;
   let spec = specFromQuery(query);
+  const resumeId = query.get('resume')?.trim();
+  if (resumeId) {
+    const saved = await getEtSession(resumeId);
+    if (saved && (saved.phase === 'active' || saved.phase === 'detached')) {
+      spec = {
+        protocol: 'et',
+        username: saved.username,
+        hostname: saved.host,
+        port: saved.sshPort,
+        etPort: saved.etPort,
+        etSessionId: saved.id,
+        args: [],
+        argstr: saved.connectionArgs,
+        profileId: saved.profileId,
+        identityId: saved.identityId,
+        settingsProfileId: saved.settingsProfileId,
+        startupCommand: saved.startupCommand,
+      };
+    } else {
+      root.innerHTML = '<div class="connect-page"><p class="set-hint">This Eternal Terminal session is no longer resumable. Return to the launcher and forget it.</p></div>';
+      return;
+    }
+  }
   if (query.get('profile')) {
     const profile = (await listProfiles()).find((item) => item.id === query.get('profile'));
     if (profile) spec = profileToSpec(profile);
@@ -809,6 +876,8 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
 
 /** Build a fully-connected session (its own renderer + transport) in a new tab. */
 async function createSession(spec: PwaConnectionSpec): Promise<TermSession> {
+  const resumeEtSessionId = spec.etSessionId;
+  spec = { ...spec, etSessionId: undefined };
   const settings = resolveSettings(spec.settingsProfileId);
   await ensureTerminalFontLoaded(settings);
 
@@ -840,6 +909,7 @@ async function createSession(spec: PwaConnectionSpec): Promise<TermSession> {
     appliedFont: settings.fontFamily,
     reconnecting: false,
     titleSub: null,
+    resumeEtSessionId,
   };
   session.titleSub = terminal.onTitle((value) => {
     session.title = value.trim() || connectionTarget(spec);
@@ -858,8 +928,9 @@ async function createSession(spec: PwaConnectionSpec): Promise<TermSession> {
     session.paneSubs.push(terminal.onPaneClose((id) => closePaneConn(session, id)));
     session.paneSubs.push(terminal.onPaneOpen((sink) => void openPaneConn(session, sink)));
   } else {
-    session.transport = createTransport(spec, (state, error) => onSessionStatus(session, state, error));
+    session.transport = createTransport({ ...spec, etSessionId: session.resumeEtSessionId }, (state, error) => onSessionStatus(session, state, error));
     await session.transport.connect(terminal);
+    session.resumeEtSessionId = session.transport.getPersistentSessionId?.();
   }
   terminal.fit?.();
   return session;
@@ -873,10 +944,15 @@ async function openPaneConn(session: TermSession, sink: ResttyPaneSink): Promise
     sink,
     status: 'connecting',
     reconnecting: false,
-    transport: createTransport(session.spec, (state, error) => onPaneStatus(session, sink.paneId, state, error)),
+    transport: createTransport(
+      { ...session.spec, etSessionId: session.panes.size === 0 ? session.resumeEtSessionId : undefined },
+      (state, error) => onPaneStatus(session, sink.paneId, state, error),
+    ),
   };
   session.panes.set(sink.paneId, conn);
   await conn.transport.connect(sink);
+  if (session.panes.size === 1) session.resumeEtSessionId = conn.transport.getPersistentSessionId?.();
+  saveTabLayout();
 }
 
 /** Tear down a closed restty pane's transport; the last pane closing ends the tab. */
@@ -897,6 +973,10 @@ function onPaneStatus(session: TermSession, paneId: number, state: TerminalTrans
   session.status = state;
   if (session.id === activeSessionId) updateSharedStatus(session, state, error);
   renderTabs();
+  if (state === 'connected' && session.panes.keys().next().value === paneId) {
+    session.resumeEtSessionId = conn.transport.getPersistentSessionId?.() ?? session.resumeEtSessionId;
+    saveTabLayout();
+  }
   // A clean disconnect closes that pane (the tab ends with its last pane);
   // errors stay readable, a reconnect's own cycle is ignored, and "keep open"
   // (closeOnExit off) leaves the ended pane in place for reading.
@@ -914,6 +994,10 @@ function onSessionStatus(session: TermSession, state: TerminalTransportStatus, e
   session.status = state;
   if (session.id === activeSessionId) updateSharedStatus(session, state, error);
   renderTabs();
+  if (state === 'connected') {
+    session.resumeEtSessionId = session.transport?.getPersistentSessionId?.() ?? session.resumeEtSessionId;
+    saveTabLayout();
+  }
   // A clean disconnect ends the tab; errors stay so they can be read, a
   // reconnect's own cycle is ignored, and "keep open" leaves the ended tab.
   if (state === 'disconnected' && !session.reconnecting && prev !== 'error' && resolveSettings(session.spec.settingsProfileId).closeOnExit) {
@@ -1397,8 +1481,8 @@ function renderTerminalConnect(root: HTMLElement): void {
     if (!raw) return;
     // Accept an optional leading `ssh `/`mosh ` token so Mosh is reachable from
     // quick connect without a separate control; the rest is `[user@]host`.
-    const protoMatch = raw.match(/^(ssh|mosh)\s+(.+)$/i);
-    const protocol = protoMatch && protoMatch[1].toLowerCase() === 'mosh' ? 'mosh' : 'ssh';
+    const protoMatch = raw.match(/^(ssh|mosh|et)\s+(.+)$/i);
+    const protocol = protoMatch && protoMatch[1].toLowerCase() === 'mosh' ? 'mosh' : protoMatch && protoMatch[1].toLowerCase() === 'et' ? 'et' : 'ssh';
     const target = (protoMatch ? protoMatch[2] : raw).trim();
     const at = target.includes('@') ? target.split('@') : [undefined, target];
     const params = new URLSearchParams({ protocol, host: at[1] ?? target });

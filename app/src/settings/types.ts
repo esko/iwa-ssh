@@ -84,9 +84,11 @@ export type AppSettings = {
 export type Profile = {
   id: string;
   name: string;
-  protocol?: 'ssh' | 'mosh';
+  protocol?: 'ssh' | 'mosh' | 'et';
   host: string;
   port: number;
+  /** Eternal Terminal daemon port; `port` remains the SSH bootstrap port. */
+  etPort?: number;
   username: string;
   identityId?: string;
   connectionArgs?: string;

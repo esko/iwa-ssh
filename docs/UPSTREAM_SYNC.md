@@ -9,6 +9,7 @@ This repo copies selected Chromium libapps assets into `app/upstream/` so the IW
 - `upstream/libapps/wassh/`
 - `upstream/libapps/wasi-js-bindings/`
 - `upstream/libapps/ssh_client/` plugin output
+- Eternal Terminal protobuf schemas pinned by `scripts/fetch-et-protocol.mjs`
 
 Initialize or refresh the submodule first:
 
@@ -34,6 +35,12 @@ Run:
 
 ```bash
 npm run fetch-assets
+```
+
+Refresh the ET v6 schemas and their checked-in TypeScript codecs separately:
+
+```bash
+npm run fetch:et-protocol
 ```
 
 The command should be repeatable. It should fail loudly when required upstream inputs are missing or when a documented patch can no longer be applied.
@@ -82,4 +89,3 @@ Keep this ledger current as generated patches are added:
 | --- | --- | --- | --- |
 | wassh Direct Sockets adaptation | `scripts/fetch-upstream-assets.mjs` | IWA socket compatibility | fetch script should verify expected socket symbols before patching |
 | nassh locale/bootstrap adaptation | `scripts/fetch-upstream-assets.mjs` and `app/src/ssh/` | Runtime messages without extension packaging | typecheck and SSH smoke |
-
