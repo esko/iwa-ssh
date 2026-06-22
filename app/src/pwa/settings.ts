@@ -22,6 +22,9 @@ export const DEFAULT_PWA_SETTINGS: PwaTerminalSettings = {
   cursorStyle: 'block',
   terminalPadding: 0,
   scrollSensitivity: 1,
+  fontSmoothing: 'smooth',
+  fontHinting: 'light',
+  ligatures: true,
   captureShortcuts: true,
   confirmClose: false,
   closeOnExit: true,
@@ -47,6 +50,8 @@ export function normalizePwaSettings(value: Partial<PwaTerminalSettings> | Recor
   const accent = value.accent === 'blue' || value.accent === 'amber' ? value.accent : 'green';
   const density = value.density === 'compact' ? value.density : 'comfortable';
   const cursorStyle = value.cursorStyle === 'underline' || value.cursorStyle === 'bar' ? value.cursorStyle : 'block';
+  const fontSmoothing = value.fontSmoothing === 'grayscale' ? 'grayscale' : 'smooth';
+  const fontHinting = value.fontHinting === 'off' || value.fontHinting === 'normal' ? value.fontHinting : 'light';
   const terminalPadding = Number(value.terminalPadding);
   let theme: TerminalTheme = { preset: 'dark' };
 
@@ -99,6 +104,9 @@ export function normalizePwaSettings(value: Partial<PwaTerminalSettings> | Recor
     cursorStyle,
     terminalPadding: Number.isFinite(terminalPadding) ? clamp(Math.round(terminalPadding), 0, 32) : DEFAULT_PWA_SETTINGS.terminalPadding,
     scrollSensitivity: Number.isFinite(scrollSensitivity) ? clamp(scrollSensitivity, 0.5, 2) : DEFAULT_PWA_SETTINGS.scrollSensitivity,
+    fontSmoothing,
+    fontHinting,
+    ligatures: typeof value.ligatures === 'boolean' ? value.ligatures : DEFAULT_PWA_SETTINGS.ligatures,
     captureShortcuts: typeof value.captureShortcuts === 'boolean' ? value.captureShortcuts : DEFAULT_PWA_SETTINGS.captureShortcuts,
     confirmClose: typeof value.confirmClose === 'boolean' ? value.confirmClose : DEFAULT_PWA_SETTINGS.confirmClose,
     closeOnExit: typeof value.closeOnExit === 'boolean' ? value.closeOnExit : DEFAULT_PWA_SETTINGS.closeOnExit,

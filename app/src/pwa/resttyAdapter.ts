@@ -41,6 +41,25 @@ function buildResttyTheme(p: TerminalPalette): unknown {
   };
 }
 
+/**
+ * Map the app's font-rendering settings to restty's atlas knobs. These are
+ * constructor-time options (no per-pane runtime setters on the surface), so they
+ * take effect for newly opened tabs/panes — see the Rendering settings note.
+ */
+function renderOptions(settings: PwaTerminalSettings): {
+  alphaBlending: 'native' | 'linear-corrected';
+  fontHinting: boolean;
+  fontHintTarget: 'auto' | 'light' | 'normal';
+  ligatures: boolean;
+} {
+  return {
+    alphaBlending: settings.fontSmoothing === 'grayscale' ? 'native' : 'linear-corrected',
+    fontHinting: settings.fontHinting !== 'off',
+    fontHintTarget: settings.fontHinting === 'normal' ? 'normal' : 'light',
+    ligatures: settings.ligatures,
+  };
+}
+
 /** DECSCUSR sequence for cursor shape + blink. */
 function cursorSequence(style: 'block' | 'bar' | 'underline', blink: boolean): string {
   const steady = style === 'block' ? 2 : style === 'underline' ? 4 : 6;
@@ -59,36 +78,60 @@ function cursorSequence(style: 'block' | 'bar' | 'underline', blink: boolean): s
  * trackpad scrollback never moves. Loading our own font over the bundle origin
  * (allowed by the IWA CSP `connect-src 'self'`) guarantees a non-zero cell
  * height, which is what actually restores scrolling. Box-drawing/powerline
- * glyphs are rendered programmatically by restty, so a Nerd Font is not needed.
+ * glyphs are drawn programmatically by restty, but icon glyphs (the wider Nerd
+ * Font range used by prompts like starship/powerlevel10k) are not — so a
+ * Symbols Nerd Font is bundled and appended as the final fallback below, making
+ * icons render regardless of which text font the user selects.
  */
 type ResttyFontSource =
   | { type: 'url'; url: string; label: string }
   | { type: 'buffer'; data: ArrayBuffer; label: string };
 
-/** JetBrains Mono — the default and the always-present fallback. */
+/** JetBrains Mono — the default and the always-present text fallback. */
 const BUNDLED_FALLBACK: ResttyFontSource[] = [
   { type: 'url', url: '/fonts/JetBrainsMono-Regular.ttf', label: 'JetBrains Mono' },
   { type: 'url', url: '/fonts/JetBrainsMono-Bold.ttf', label: 'JetBrains Mono Bold' },
 ];
 
 /**
+ * Symbols-only Nerd Font (monospaced) appended last so icon glyphs the text
+ * fonts lack fall through to it. Same-origin, so the IWA CSP allows it.
+ *
+ * `label` is load-bearing: restty's font picker classifies a source as a
+ * Nerd-symbol font by matching the label against its NERD_SYMBOL_FONT_HINTS
+ * regexes (`/symbols nerd font/i`, `/nerd fonts symbols/i`), then routes Nerd
+ * codepoints to it. "Symbols Nerd Font" matches; do not rename it to something
+ * that fails those patterns or icons will silently render from the text font.
+ * (cf. wiedymi/restty#22, which adds space-less fallbacks for URL-derived labels.)
+ */
+const NERD_SYMBOLS_FALLBACK: ResttyFontSource = {
+  type: 'url',
+  url: '/fonts/SymbolsNerdFontMono-Regular.ttf',
+  label: 'Symbols Nerd Font',
+};
+
+/**
  * Resolve a font selection (bundled id or `custom:<id>`) to restty fontSources.
  * The selected font is tried first; JetBrains Mono is always appended so a real
- * font always loads (cellH > 0) even if a custom buffer is missing or a bundled
- * URL fails. Box-drawing/powerline glyphs are drawn programmatically by restty,
- * so a Nerd Font is not required.
+ * text font always loads (cellH > 0) even if a custom buffer is missing or a
+ * bundled URL fails, and the Symbols Nerd Font is the last fallback so icon
+ * glyphs render with any selected font.
  */
 async function resolveFontSources(selection: string): Promise<ResttyFontSource[]> {
+  const withFallbacks = (sources: ResttyFontSource[]): ResttyFontSource[] => [
+    ...sources,
+    NERD_SYMBOLS_FALLBACK,
+  ];
   if (isCustomSelection(selection)) {
     const data = await getCustomFontData(customSelectionId(selection)).catch(() => undefined);
-    if (data) return [{ type: 'buffer', data, label: 'Custom font' }, ...BUNDLED_FALLBACK];
-    return BUNDLED_FALLBACK;
+    if (data) return withFallbacks([{ type: 'buffer', data, label: 'Custom font' }, ...BUNDLED_FALLBACK]);
+    return withFallbacks(BUNDLED_FALLBACK);
   }
   const font = bundledFontForSelection(selection);
-  if (font.id === DEFAULT_FONT_ID) return BUNDLED_FALLBACK;
+  if (font.id === DEFAULT_FONT_ID) return withFallbacks(BUNDLED_FALLBACK);
   const sources: ResttyFontSource[] = [{ type: 'url', url: font.regular, label: font.family }];
   if (font.bold) sources.push({ type: 'url', url: font.bold, label: `${font.family} Bold` });
-  return [...sources, ...BUNDLED_FALLBACK];
+  return withFallbacks([...sources, ...BUNDLED_FALLBACK]);
 }
 
 /** Trim the device wheel ring (kept for the debug HUD; no network egress). */
@@ -321,6 +364,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
       appOptions: (ctx: { id: number }) => ({
         ptyTransport: adapter.registerPane(ctx.id),
         fontSources,
+        ...renderOptions(settings),
         autoResize: true,
         attachCanvasEvents: true,
         // restty touch pan is armed on pointerdown only in long-press/drag modes
