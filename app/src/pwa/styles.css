@@ -1064,9 +1064,11 @@ html.app-chrome .term-shell {
   align-items: stretch;
   align-self: center;
   height: 26px;
-  margin-left: 4px;
+  margin-left: 6px;
   border-radius: 6px;
   overflow: hidden;
+  /* Lighter pill so the control stands out against the dark caption. */
+  background: rgba(255, 255, 255, 0.09);
 }
 
 .term-tab-new,
@@ -1076,7 +1078,7 @@ html.app-chrome .term-shell {
   border: 0;
   padding: 0;
   background: transparent;
-  color: var(--muted);
+  color: var(--fg);
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
@@ -1087,17 +1089,13 @@ html.app-chrome .term-shell {
 
 .term-tab-newmenu {
   width: 18px;
-}
-
-/* Hairline divider between the two halves, hidden until the group is hovered. */
-.term-tab-newgroup:hover .term-tab-newmenu {
-  box-shadow: inset 1px 0 0 var(--line);
+  /* Always-visible hairline split between the two halves. */
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.14);
 }
 
 .term-tab-new:hover,
 .term-tab-newmenu:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--fg);
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .term-tab-new svg,
