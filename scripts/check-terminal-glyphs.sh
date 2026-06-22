@@ -71,8 +71,10 @@ fi
 
 section '4. Powerline separators'
 printf '%s\n' 'plain:      ││  each separator should occupy one cell'
+printf '%s\n' 'round:      ││  filled half circles should join the neighboring cell'
 if [[ $color -eq 1 ]]; then
   printf '\033[48;5;167m\033[38;5;232m   esko \033[38;5;167m\033[48;5;222m\033[38;5;232m ~/src \033[38;5;222m\033[48;5;110m\033[38;5;232m  main \033[38;5;110m\033[49m%s\n' "$reset"
+  printf '\033[38;5;167m\033[49m\033[48;5;167m\033[38;5;232m LEFT ROUND \033[38;5;167m\033[49m%s  no seam at either join\n' "$reset"
   printf '\033[48;5;25m\033[38;5;231m LEFT \033[38;5;25m\033[48;5;81m\033[38;5;232m MIDDLE \033[38;5;81m\033[48;5;213m\033[38;5;232m RIGHT \033[38;5;213m\033[49m%s\n' "$reset"
   printf '%s%sNo colored pixels should appear on this line.%s\n' "$dim" "$muted" "$reset"
 else

@@ -7,6 +7,7 @@ import { getThemePalette } from './themes';
 import { deviceAttributeReply } from './deviceAttributes';
 import type { TerminalPalette } from './types';
 import { clipboardImageToPng, encodeKittyPng } from './kittyImage';
+import { scrollbackBytesForLines } from './scrollback';
 
 type Rgb = { r: number; g: number; b: number };
 
@@ -373,20 +374,26 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     const term = new Terminal({
       // Per-pane app options: every pane (the first and every split) gets its
       // own PtyTransport bridge keyed by the pane id restty assigns it.
-      appOptions: (ctx: { id: number }) => ({
-        ptyTransport: adapter.registerPane(ctx.id),
-        fontSources,
-        ...renderOptions(settings),
-        autoResize: true,
-        attachCanvasEvents: true,
-        // restty touch pan is armed on pointerdown only in long-press/drag modes
-        // (see bind-pointer-events.ts); "off" disables touch scroll entirely.
-        touchSelectionMode: 'long-press',
-        maxScrollbackBytes: Math.max(1_000_000, settings.scrollback * 200),
-        callbacks: {
-          onGridSize: (cols: number, rows: number) => adapter.panes.get(ctx.id)?.bridge.emitResize(cols, rows),
-        },
-      }),
+      appOptions: (ctx: { id: number }) => {
+        // Restty consumes this limit only when a pane core is created. Use the
+        // latest settings so splits opened after a settings change get the new
+        // capacity; existing panes keep their history and current limit.
+        const paneSettings = adapter.settings ?? settings;
+        return {
+          ptyTransport: adapter.registerPane(ctx.id),
+          fontSources,
+          ...renderOptions(paneSettings),
+          autoResize: true,
+          attachCanvasEvents: true,
+          // restty touch pan is armed on pointerdown only in long-press/drag modes
+          // (see bind-pointer-events.ts); "off" disables touch scroll entirely.
+          touchSelectionMode: 'long-press',
+          maxScrollbackBytes: scrollbackBytesForLines(paneSettings.scrollback),
+          callbacks: {
+            onGridSize: (cols: number, rows: number) => adapter.panes.get(ctx.id)?.bridge.emitResize(cols, rows),
+          },
+        };
+      },
       // Built-in split keybindings stay off; the app drives splits explicitly so
       // it can bind a transport to each new pane (Ctrl+Shift+D/E in views.ts).
       shortcuts: false,

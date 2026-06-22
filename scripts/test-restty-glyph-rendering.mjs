@@ -24,6 +24,17 @@ for (const relative of bundles) {
     console.error(`FAIL ${relative}: Powerline rows are not sampled inside the cell`);
     failed = true;
   }
+
+  const hasCellJoinedRoundCaps =
+    /e === "round_right"/.test(patched) &&
+    /e === "round_left"/.test(patched) &&
+    /Math\.sqrt\(Math\.max\(0, 1 - Math\.pow\(i \* 2 - 1, 2\)\)\)/.test(patched) &&
+    /case 57524: return u\("round_right"\), !0;/.test(patched) &&
+    /case 57526: return u\("round_left"\), !0;/.test(patched);
+  if (!hasCellJoinedRoundCaps) {
+    console.error(`FAIL ${relative}: filled Powerline half circles do not join the cell edge`);
+    failed = true;
+  }
 }
 
 const adapter = readFileSync(join(root, 'app/src/pwa/resttyAdapter.ts'), 'utf8');
@@ -34,4 +45,4 @@ if (!iconScale || Number(iconScale) > 0.85) {
 }
 
 if (failed) process.exit(1);
-console.log('PASS Restty Powerline sampling stays cell-bounded and Nerd icons stay text-sized');
+console.log('PASS Restty Powerline shapes stay cell-bounded and joined; Nerd icons stay text-sized');

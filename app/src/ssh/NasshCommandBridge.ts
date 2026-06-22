@@ -193,6 +193,8 @@ export class NasshCommandBridge {
 
     instance.secureInput = async (message, bufLen, echo) => {
       log.ssh.debug('secureInput requested', { echo, bufLen });
+      const hostKeyResponse = await this.hostKeyGuard?.consumePendingHostKeyResponse();
+      if (hostKeyResponse) return hostKeyResponse.slice(0, bufLen);
       const input = await showSecureInputPrompt(message, bufLen, echo);
       if (input === null) {
         log.ssh.warn('secureInput cancelled');
@@ -315,15 +317,13 @@ export class NasshCommandBridge {
 
     if (change.fingerprint) {
       this.sessionTrustedFingerprints.add(change.fingerprint);
-      if (choice === 'always') {
-        await saveKnownHost({
-          host,
-          port,
-          keyType: change.keyType ?? 'ssh-ed25519',
-          fingerprint: change.fingerprint,
-          trustedAt: Date.now(),
-        });
-      }
+      await saveKnownHost({
+        host,
+        port,
+        keyType: change.keyType ?? 'ssh-ed25519',
+        fingerprint: change.fingerprint,
+        trustedAt: Date.now(),
+      });
     }
 
     log.session.info('reconnecting after host key change', { host, port });

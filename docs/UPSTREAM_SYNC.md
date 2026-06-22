@@ -73,12 +73,15 @@ Forbidden patch reasons:
 
 Restty is a separately pinned renderer dependency under `vendor/restty/`, not a
 copied libapps asset. `scripts/restty-renderer-patches.ts` contains one temporary
-Vite transform for Restty 0.1.37: Powerline triangles used endpoint-inclusive
+Vite transform for Restty 0.1.37. Powerline triangles used endpoint-inclusive
 sampling, drawing their final one-pixel row at `cellTop + cellHeight` (outside
-the cell) while leaving rounding-dependent gaps between rows. The transform
-samples pixel centers and writes exactly one row per rounded cell-height pixel.
-It fails the build if the pinned bundle changes, and should be removed when the
-next pinned Restty release includes the upstream correction.
+the cell) while leaving rounding-dependent gaps between rows. Filled Powerline
+half circles (`U+E0B4` and `U+E0B6`) had no procedural cases at all, so they
+fell back to font-atlas glyph constraints that could leave a seam against the
+adjacent colored cell. The transform samples pixel centers, writes exactly one
+row per rounded cell-height pixel, and draws the filled half circles from the
+cell boundary. It fails the build if the pinned bundle changes, and should be
+removed when the next pinned Restty release includes the upstream corrections.
 
 ## Refresh Procedure
 

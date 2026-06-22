@@ -13,10 +13,10 @@
   --surface-2: #292c34;
   --fg: #e7e9ee;
   --muted: #9aa0ab;
-  --faint: #6b7079;
-  /* Section eyebrows: readable but still quiet — brighter than --faint, which
-     was failing contrast on the near-black body. */
-  --label: #868c97;
+  /* Quietest *legible* text: meta, hints, eyebrows, placeholders. Tuned to
+     ~5.3:1 on the body so it passes WCAG AA (the old #6b7079 was ~3.6:1 and
+     failed). Decorative-only glyphs may sit lower. */
+  --faint: #868c97;
   --line: rgba(255, 255, 255, 0.07);
   --line-2: rgba(255, 255, 255, 0.12);
   /* Keyboard-focus ring: visible against the dark surfaces (the old --line-2
@@ -42,6 +42,36 @@
    This wins it back. */
 [hidden] {
   display: none !important;
+}
+
+/* Subtle scrollbars everywhere (launcher, settings modal + profile aside, menus)
+   so an overflowing panel never shows a jarring default bar on the dark theme.
+   The restty canvas manages its own scrollback and is unaffected. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* Bundled monospace fonts (app/public/fonts/, same-origin so the IWA CSP allows
@@ -94,11 +124,17 @@ a {
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--label);
+  color: var(--faint);
 }
 
 /* ------------------------------------------------------------------ home -- */
 
+/* A narrow centered column gives the launcher symmetric framing instead of a
+   top-left float, and the footer pins to the bottom so the page reads composed
+   top-to-bottom rather than trailing off into the void.
+
+   The scroll container is full-width (not the column) so the scrollbar sits at
+   the viewport edge, never floating mid-page beside a 560px column. */
 .home {
   box-sizing: border-box;
   /* body is overflow:hidden (for the terminal page), so the launcher must be its
@@ -106,9 +142,17 @@ a {
   min-height: 100vh;
   max-height: 100vh;
   overflow-y: auto;
-  max-width: 880px;
-  margin: 0 auto;
-  padding: clamp(40px, 9vh, 88px) 24px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 26px;
+  width: 100%;
+  padding: clamp(36px, 9vh, 92px) 24px 18px;
+}
+
+/* Every section of the launcher is the same centered column width. */
+.home > * {
+  width: min(560px, 100%);
 }
 
 /* Brand lockup — anchors the launcher so it reads composed, not floating. */
@@ -116,7 +160,6 @@ a {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 0 4px 30px;
   color: var(--fg);
 }
 
@@ -141,74 +184,196 @@ a {
   color: var(--muted);
 }
 
-.home-grid {
-  display: grid;
-  grid-template-columns: 1fr minmax(220px, 300px);
-  gap: 36px;
-  align-items: start;
-}
-
-.home-col-side {
+/* One launcher section: tight internal grouping, generous gaps between. */
+.home-section {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-left: 28px;
-  border-left: 1px solid var(--line);
+  gap: 8px;
 }
 
-/* Stack the launcher when the window gets narrow. */
-@media (max-width: 720px) {
-  .home {
-    max-width: 480px;
-  }
-  .home-grid {
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
-  .home-col-side {
-    padding-left: 0;
-    border-left: 0;
-    border-top: 1px solid var(--line);
-    padding-top: 16px;
-    margin-top: 8px;
-  }
+/* Search / quick-launch. */
+.home-filter {
+  position: relative;
+  display: flex;
+  align-items: center;
 }
 
-.side-link {
+.filter-icon {
+  position: absolute;
+  left: 12px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--faint);
+  pointer-events: none;
+}
+
+.filter-input {
+  width: 100%;
+  padding: 10px 38px 10px 35px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background-color: rgba(0, 0, 0, 0.22);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.filter-input::placeholder {
+  color: var(--faint);
+}
+
+.filter-input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.32);
+  background-color: rgba(0, 0, 0, 0.32);
+}
+
+.filter-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+/* The "/" hint disappears once the field is focused/typing. */
+.filter-kbd {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--faint);
+  font: 600 11px var(--mono);
+  transition: opacity 0.12s ease;
+}
+
+.filter-input:focus ~ .filter-kbd {
+  opacity: 0;
+}
+
+.conn-none {
+  margin: 10px 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* First-run empty state — the activation moment. */
+.home-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 15px;
+  padding: 4px 4px 2px;
+}
+
+.empty-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--fg);
+  text-wrap: balance;
+}
+
+.empty-sub {
+  margin: 0;
+  max-width: 48ch;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+.empty-hint {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--faint);
+}
+
+.btn-lg {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  padding: 11px 18px;
+  font-size: 13.5px;
+}
+
+.btn-plus {
+  display: inline-grid;
+  place-items: center;
+  margin-left: -2px;
+}
+
+.btn-plus svg {
+  display: block;
+}
+
+/* Footer — Settings on the left, a quiet SSH-keys disclosure on the right. */
+.home-foot {
+  margin-top: auto;
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
-  padding: 11px 12px;
-  margin-bottom: 6px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--fg);
-  text-align: left;
-  cursor: pointer;
-  font-size: 14px;
-  transition: background 0.14s ease, border-color 0.14s ease;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
 }
 
-.side-link:hover,
-.side-link:focus-visible {
+.foot-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.foot-link:hover,
+.foot-link:focus-visible {
+  color: var(--fg);
   background: var(--surface);
-  border-color: var(--line);
   outline: none;
 }
 
-.side-link-icon {
+.foot-link[data-toggle-keys] {
+  margin-left: auto;
+}
+
+.foot-link[aria-expanded='true'] {
+  color: var(--fg);
+}
+
+.foot-icon {
   display: inline-grid;
   place-items: center;
   color: var(--muted);
 }
 
-.side-empty {
-  margin: 4px 8px;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--faint);
+.foot-link:hover .foot-icon,
+.foot-link[aria-expanded='true'] .foot-icon {
+  color: var(--fg);
+}
+
+/* Collapsed-by-default SSH keys list. */
+.keys-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .home {
+    gap: 20px;
+    padding-top: clamp(28px, 6vh, 56px);
+  }
 }
 
 .conn-row-static {
@@ -384,27 +549,6 @@ a {
 
 .conn-add:hover {
   color: var(--fg);
-}
-
-.home-foot {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 16px;
-}
-
-.link-quiet {
-  background: none;
-  border: 0;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.link-quiet:hover {
-  color: var(--fg);
-  background: var(--surface);
 }
 
 /* --------------------------------------------------------------- controls -- */
@@ -770,6 +914,48 @@ textarea {
   letter-spacing: 0.02em;
   word-break: break-all;
   color: var(--fg);
+}
+
+.prompt-warning {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid rgba(232, 184, 92, 0.3);
+  border-radius: var(--radius-sm);
+  background: rgba(232, 184, 92, 0.08);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.known-host-details {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.known-host-details__row {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.known-host-details dt {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.known-host-details dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--fg);
+  font-size: 12px;
+}
+
+.known-host-details .prompt-fingerprint {
+  margin: -4px 0;
 }
 
 .set-row {

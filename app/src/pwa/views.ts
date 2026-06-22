@@ -62,6 +62,8 @@ let tabStrip: HTMLElement | null = null;
 let sessionsHost: HTMLElement | null = null;
 let sharedStatus: HTMLElement | null = null;
 let captionCleanup: (() => void) | null = null;
+/** Removes the launcher's document-level "/" focus shortcut before each re-render. */
+let homeKeydownCleanup: (() => void) | null = null;
 
 /** One restty split pane: its own transport bound to the pane's sink (ADR 0008). */
 type PaneConn = {
@@ -172,6 +174,11 @@ const CHEVRON_DOWN_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="
 // Launcher brand mark: a terminal tile with a prompt chevron + cursor. Neutral
 // (no accent) so it obeys the Color-Means-Status rule.
 const BRAND_MARK = `<svg width="30" height="30" viewBox="0 0 30 30" fill="none" aria-hidden="true"><rect x="1.25" y="1.25" width="27.5" height="27.5" rx="8" fill="rgba(255,255,255,0.04)" stroke="currentColor" stroke-opacity="0.18"></rect><path d="M9 11.5 12.5 15 9 18.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path><path d="M15 18.5h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path></svg>`;
+const SEARCH_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>`;
+const KEY_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"></circle><path d="m10.5 12.5 7-7"></path><path d="m17 4 3 3"></path><path d="m14 7 3 3"></path></svg>`;
+
+/** Show the connection filter once the saved list is long enough to scan. */
+const FILTER_MIN = 4;
 const TRASH_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6M14 11v6"></path></svg>`;
 
 /** Small uppercase transport badge (SSH / ET / MOSH). */
@@ -251,8 +258,53 @@ function openOverlay(build: (close: () => void) => HTMLElement): void {
 export async function renderHome(root: HTMLElement): Promise<void> {
   setThemeColor('#000000');
   document.title = 'iwa-ssh';
+  homeKeydownCleanup?.();
+  homeKeydownCleanup = null;
   await purgeStaleEtSessions();
   const [profiles, etSessions, identities] = await Promise.all([listProfiles(), listEtSessionSummaries(), listIdentities()]);
+
+  const isFirstRun = profiles.length === 0 && etSessions.length === 0;
+  // Show the filter once the list is long enough to be worth scanning; below
+  // that it's just chrome over a glanceable list.
+  const showFilter = profiles.length >= FILTER_MIN;
+
+  const activeSessionsSection = etSessions.length
+    ? `<section class="home-section">
+        <div class="home-head"><span class="section-label">Active sessions</span></div>
+        <div class="conn-list">${etSessions.map(etSessionRow).join('')}</div>
+      </section>`
+    : '';
+
+  const connectionsSection = isFirstRun
+    ? `<section class="home-empty">
+        <h1 class="empty-title">Connect to your first server</h1>
+        <p class="empty-sub">iwa-ssh speaks SSH, Eternal Terminal, and Mosh over Direct Sockets — saved connections land here.</p>
+        <button class="btn btn-lg" type="button" data-new><span class="btn-plus">${PLUS_SVG}</span>New connection</button>
+        <p class="empty-hint">Tip: right-click a saved connection for quick actions.</p>
+      </section>`
+    : `<section class="home-section">
+        ${showFilter
+          ? `<div class="home-filter">
+              <span class="filter-icon">${SEARCH_SVG}</span>
+              <input type="search" class="filter-input" placeholder="Search connections" autocomplete="off" spellcheck="false" aria-label="Search connections" data-filter>
+              <kbd class="filter-kbd" aria-hidden="true">/</kbd>
+            </div>`
+          : ''}
+        <div class="conn-list" data-conn-list>
+          ${profiles.map(profileRow).join('')}
+          <p class="conn-none" data-filter-empty hidden>No connections match.</p>
+        </div>
+        <button class="conn-row conn-add" type="button" data-new>
+          <span class="conn-target"><span class="plus">+</span>New connection</span>
+        </button>
+      </section>`;
+
+  const keysPanel = identities.length
+    ? `<div class="keys-panel" data-keys-panel hidden>
+        <div class="home-head"><span class="section-label">SSH keys</span></div>
+        <div class="conn-list">${identities.map(keyRow).join('')}</div>
+      </div>`
+    : '';
 
   root.innerHTML = `
     <div class="home">
@@ -260,31 +312,19 @@ export async function renderHome(root: HTMLElement): Promise<void> {
         <span class="home-mark">${BRAND_MARK}</span>
         <span class="home-wordmark">iwa<span class="home-wordmark-dim">-ssh</span></span>
       </header>
-      <div class="home-grid">
-        <div class="home-col-main">
-          ${etSessions.length ? `<div class="home-head"><span class="section-label">Active sessions</span></div>
-          <div class="conn-list">${etSessions.map(etSessionRow).join('')}</div>` : ''}
-          <div class="home-head">
-            <span class="section-label">Connections</span>
-          </div>
-          <div class="conn-list">
-            ${profiles.map(profileRow).join('')}
-            <button class="conn-row conn-add" type="button" data-new>
-              <span class="conn-target"><span class="plus">+</span>New connection</span>
-            </button>
-          </div>
-        </div>
-        <aside class="home-col-side">
-          <button class="side-link" type="button" data-settings>
-            <span class="side-link-icon">${GEAR_SVG}</span>
-            <span class="side-link-label">Settings</span>
-          </button>
-          <div class="home-head"><span class="section-label">SSH keys</span></div>
-          <div class="conn-list">
-            ${identities.length ? identities.map(keyRow).join('') : '<p class="side-empty">Keys are added when you create a connection.</p>'}
-          </div>
-        </aside>
-      </div>
+      ${activeSessionsSection}
+      ${connectionsSection}
+      ${keysPanel}
+      <footer class="home-foot">
+        <button class="foot-link" type="button" data-settings>
+          <span class="foot-icon">${GEAR_SVG}</span>Settings
+        </button>
+        ${identities.length
+          ? `<button class="foot-link" type="button" data-toggle-keys aria-expanded="false">
+              <span class="foot-icon">${KEY_SVG}</span>${identities.length} ${identities.length === 1 ? 'key' : 'keys'}
+            </button>`
+          : ''}
+      </footer>
     </div>
   `;
 
@@ -359,6 +399,52 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     showHomeMenu(event);
   });
 
+  // Type-to-filter / quick-launch. Narrows the saved list as you type; Enter
+  // launches the top match, Escape clears, and "/" focuses it from anywhere.
+  const filterInput = root.querySelector<HTMLInputElement>('[data-filter]');
+  if (filterInput) {
+    const launchRows = [...root.querySelectorAll<HTMLElement>('[data-conn-list] [data-launch-id]')];
+    const noMatch = root.querySelector<HTMLElement>('[data-filter-empty]');
+    const applyFilter = (query: string): void => {
+      const needle = query.trim().toLowerCase();
+      let visible = 0;
+      for (const rowEl of launchRows) {
+        const show = !needle || (rowEl.dataset.search ?? '').includes(needle);
+        rowEl.hidden = !show;
+        if (show) visible += 1;
+      }
+      if (noMatch) noMatch.hidden = visible > 0;
+    };
+    filterInput.addEventListener('input', () => applyFilter(filterInput.value));
+    filterInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        launchRows.find((rowEl) => !rowEl.hidden)?.click();
+      } else if (event.key === 'Escape' && filterInput.value) {
+        event.stopPropagation();
+        filterInput.value = '';
+        applyFilter('');
+      }
+    });
+    const focusFilter = (event: KeyboardEvent): void => {
+      const typingTarget = event.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
+      if (event.key === '/' && !typingTarget && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        filterInput.focus();
+      }
+    };
+    document.addEventListener('keydown', focusFilter);
+    homeKeydownCleanup = () => document.removeEventListener('keydown', focusFilter);
+  }
+
+  // Footer SSH-keys disclosure: keep key management out of the way until asked.
+  const keysToggle = root.querySelector<HTMLButtonElement>('[data-toggle-keys]');
+  const keysPanelEl = root.querySelector<HTMLElement>('[data-keys-panel]');
+  keysToggle?.addEventListener('click', () => {
+    const open = keysPanelEl?.hidden ?? false;
+    if (keysPanelEl) keysPanelEl.hidden = !open;
+    keysToggle.setAttribute('aria-expanded', String(open));
+  });
+
   requiredElement<HTMLButtonElement>('[data-new]', root).addEventListener('click', () => openConnectionForm());
   requiredElement<HTMLButtonElement>('[data-settings]', root).addEventListener('click', () => openSettings());
 }
@@ -388,8 +474,9 @@ function profileRow(profile: Profile): string {
   const primary = profileDisplayName(profile);
   const named = primary !== target;
   const secondary = named ? target : profile.lastConnectedAt ? formatTime(profile.lastConnectedAt) : '';
+  const search = `${primary} ${target} ${profile.protocol ?? 'ssh'}`.toLowerCase();
   return `
-    <div class="conn-row" data-launch-id="${escapeHTML(profile.id)}" role="button" tabindex="0">
+    <div class="conn-row" data-launch-id="${escapeHTML(profile.id)}" data-search="${escapeHTML(search)}" role="button" tabindex="0">
       ${protocolPill(profile.protocol)}
       <span class="conn-body">
         <span class="conn-target">${escapeHTML(primary)}</span>
@@ -597,7 +684,7 @@ export function openSettings(initial: SettingsTab = 'appearance'): void {
             <h2 class="aside-title">Settings</h2>
             <span class="aside-label">Profile</span>
             ${pills}
-            <button class="sp-new" type="button" data-add-profile><span class="plus" style="width:20px;height:20px;border:1px solid var(--line-2);border-radius:5px;display:inline-grid;place-items:center">+</span>New profile</button>
+            <button class="sp-new" type="button" data-add-profile><span class="plus" style="width:20px;height:20px;border:1px solid var(--line-2);border-radius:6px;display:inline-grid;place-items:center">+</span>New profile</button>
             <div class="aside-sep"></div>
             <nav class="aside-nav">
               ${TABS.map((t) => `<button class="nav-item" type="button" role="tab" data-tab="${t.id}" aria-selected="${t.id === initial}">${t.label}</button>`).join('')}
@@ -874,7 +961,7 @@ README  <span style="color:${p.magenta}">.env</span></span>`;
     <div class="group-title">Window</div>
     ${setRow('Padding', `<select class="control-narrow" name="terminalPadding">${opts([0, 4, 8, 12, 16, 24], s.terminalPadding)}</select>`, 'Space around the terminal canvas')}
     ${setRow('Scroll speed', `<select class="control-narrow" name="scrollSensitivity">${opts([0.5, 0.75, 1, 1.5, 2], s.scrollSensitivity)}</select>`, 'Trackpad / wheel scrollback multiplier')}
-    ${setRow('Scrollback', `<select name="scrollback">${opts([1000, 5000, 10000, 20000], s.scrollback)}</select>`)}
+    ${setRow('Scrollback', `<select name="scrollback">${opts([1000, 5000, 10000, 20000], s.scrollback)}</select>`, 'Line history for new tabs and panes')}
   `;
 
   const fontMsg = body.querySelector<HTMLElement>('#fontMsg');

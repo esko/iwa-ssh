@@ -164,12 +164,12 @@ export async function listEtSessions(): Promise<EtSessionRecord[]> {
   return rows.filter((row) => row.phase !== 'ended').sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export type EtSessionSummary = Pick<EtSessionRecord, 'id' | 'host' | 'username' | 'etPort' | 'phase' | 'createdAt' | 'updatedAt'>;
+export type EtSessionSummary = Pick<EtSessionRecord, 'id' | 'host' | 'username' | 'etPort' | 'phase' | 'profileId' | 'createdAt' | 'updatedAt'>;
 
 export async function listEtSessionSummaries(): Promise<EtSessionSummary[]> {
   return (await listEtSessions())
     .filter((row) => row.phase === 'active' || row.phase === 'detached')
-    .map(({ id, host, username, etPort, phase, createdAt, updatedAt }) => ({ id, host, username, etPort, phase, createdAt, updatedAt }));
+    .map(({ id, host, username, etPort, phase, profileId, createdAt, updatedAt }) => ({ id, host, username, etPort, phase, profileId, createdAt, updatedAt }));
 }
 
 /** Forget sessions the server can no longer resume (INVALID_KEY → 'stale'). */

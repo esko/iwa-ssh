@@ -7,7 +7,7 @@ colors:
   surface-2: "#292c34"
   fg: "#e7e9ee"
   muted: "#9aa0ab"
-  faint: "#6b7079"
+  faint: "#868c97"
   line: "#ffffff12"
   line-2: "#ffffff1f"
   term-bg: "#000000"
@@ -136,7 +136,7 @@ The only saturated colors in the system. Each maps to a specific, scannable mean
 The working ramp. Every surface and every piece of text is one of these.
 - **Surface** (`#1f2127`) / **Surface-2** (`#292c34`): raised panels — modals, context menus, the status pill — and selected/hover states. Surface carries a subtle gradient (`linear-gradient(180deg, #24262d 0%, #1d1f24 100%)`).
 - **Muted** (`#9aa0ab`): secondary text — metadata, control labels, inactive nav items.
-- **Faint** (`#6b7079`): tertiary text — hints, eyebrow labels, chevrons, placeholders.
+- **Faint** (`#868c97`): the quietest *legible* text — meta, hints, eyebrow labels, placeholders. Tuned to ~5.3:1 on the body so it still passes WCAG AA; never drop tertiary text below this. Purely decorative glyphs (the row chevron, the `/` hint) may sit lower.
 - **Line** (`rgba(255,255,255,0.07)`) / **Line-2** (`rgba(255,255,255,0.12)`): hairline dividers and borders. Borders are always white-at-low-alpha over the dark surface, never a gray fill.
 
 ### Named Rules
@@ -187,13 +187,16 @@ Depth is **lifted on demand**: surfaces in the normal flow (launcher rows, setti
 ### Named Rules
 **The No-Light-Slab Rule.** The Quiet Cockpit has no near-white button. The primary action earns emphasis through a *raised dark* surface — lighter fill, brighter hairline, inset highlight, heavier weight — never by inverting to a light fill. A white button would out-shine the terminal, which is forbidden.
 
+### Launcher (signature surface)
+A single **centered column** (`min(560px, 100%)`), not a multi-column dashboard — symmetric framing instead of a top-left float. The scroll container is full-width so the scrollbar sits at the viewport edge (never mid-page beside the column), and scrollbars everywhere are thinned to a rounded Line-2 thumb on a transparent track. Brand lockup at top; a footer (`margin-top: auto`) pins Settings + a quiet SSH-keys disclosure to the bottom so the page reads composed top-to-bottom. Once the saved list reaches ~4, a **search / quick-launch** field appears (leading magnifier, a `/` `<kbd>` hint that focuses it from anywhere, Enter launches the top match). The **first-run empty state** is the activation moment, not a void: a "Connect to your first server" headline, one line naming the transports, a raised-dark primary CTA, and a right-click hint.
+
 ### Connection rows (signature component)
 The launcher's core element. A full-width flush row (`13px 14px`, transparent at rest) that fills with Surface and a hairline border on hover. A `›` chevron fades and slides in from the right on hover; rows carrying inline edit/delete actions suppress the chevron and reveal the action buttons instead. A leading transport **pill** (`.conn-pill`, 999px radius, 10px/700 uppercase) tags ET/Mosh in their accent colors; the row body is a tight two-line stack of target (14px/500) and meta (12px Faint).
 
 ### Inputs / Fields
 - **Style:** translucent black fill (`rgba(0,0,0,0.22)`), Line-2 border, 8px radius, 13px text. Labels sit above as 12px Muted spans.
 - **Focus:** border brightens to `rgba(255,255,255,0.32)` and the fill deepens to `rgba(0,0,0,0.32)` — no glow, no color shift.
-- **Placeholder:** Faint (`#6b7079`).
+- **Placeholder:** Faint (`#868c97`).
 - **Select caret:** native arrow suppressed (`appearance: none`); a Muted chevron is drawn at a fixed `right 11px center` so placement is consistent across every OS, with `padding-right` reserving its space.
 
 ### Modals & overlays
@@ -210,6 +213,7 @@ A flat two-column layout: a 200px aside (nav list + profile pills, faint-black t
 ### Do:
 - **Do** keep saturated color tied to meaning — ET cyan, Mosh green, amber/red status, and nothing else.
 - **Do** cap chrome ink at Soft White (`#e7e9ee`); reserve pure white for the terminal foreground.
+- **Do** keep every *text* role at WCAG AA (≥4.5:1) — Faint is the floor at ~5.3:1. Drop below it only for purely decorative glyphs (chevron, kbd hint), never for words a user reads.
 - **Do** keep surfaces flat in-flow and add the Floating shadow only to true overlays (modal, context menu, status pill).
 - **Do** use Inter for every label, button, and field; keep monospace strictly inside the terminal and its preview chips.
 - **Do** build hierarchy from weight and ink-lightness — the largest type in the system is a 16px title.
