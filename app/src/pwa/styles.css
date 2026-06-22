@@ -1064,34 +1064,45 @@ html.app-chrome .term-shell {
   align-items: stretch;
   align-self: center;
   height: 26px;
-  border-radius: 8px;
+  margin-left: 4px;
+  border-radius: 6px;
   overflow: hidden;
 }
 
 .term-tab-new,
 .term-tab-newmenu {
+  display: grid;
+  place-items: center;
   border: 0;
+  padding: 0;
   background: transparent;
   color: var(--muted);
-  line-height: 1;
   cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .term-tab-new {
-  width: 30px;
-  font-size: 18px;
+  width: 28px;
 }
 
 .term-tab-newmenu {
-  width: 20px;
-  font-size: 12px;
-  border-left: 1px solid var(--line);
+  width: 18px;
+}
+
+/* Hairline divider between the two halves, hidden until the group is hovered. */
+.term-tab-newgroup:hover .term-tab-newmenu {
+  box-shadow: inset 1px 0 0 var(--line);
 }
 
 .term-tab-new:hover,
 .term-tab-newmenu:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.1);
   color: var(--fg);
+}
+
+.term-tab-new svg,
+.term-tab-newmenu svg {
+  display: block;
 }
 
 .term-status {
