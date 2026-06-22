@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DA1_REPLY } from '../pwa/deviceAttributes';
 import {
   isTerminalAutoReplyOnly,
+  stripInboundTerminalProbes,
   stripTerminalAutoReplies,
   TerminalQueryScanner,
   terminalQueryReplies,
@@ -48,6 +49,49 @@ describe('TerminalQueryScanner', () => {
     const scanner = new TerminalQueryScanner();
     expect(scanner.ingest(ICAT_DIRECT_QUERY).kittyReplies).toEqual(['\x1b_Gi=1;OK\x1b\\']);
     expect(scanner.ingest(ICAT_DIRECT_QUERY).kittyReplies).toEqual([]);
+  });
+
+  it('defers DA1 during icat detect until the direct probe is answered', () => {
+    const scanner = new TerminalQueryScanner();
+    scanner.ingest(ICAT_FILE_QUERY);
+    expect(scanner.ingest('\x1b[c')).toEqual({ kittyReplies: [], sendDa1: false });
+    expect(scanner.ingest(ICAT_DIRECT_QUERY)).toEqual({
+      kittyReplies: ['\x1b_Gi=1;OK\x1b\\'],
+      sendDa1: false,
+    });
+    expect(scanner.ingest('\x1b[c')).toEqual({ kittyReplies: [], sendDa1: true });
+  });
+
+  it('still answers standalone DA1 for fish when no kitty probe was seen', () => {
+    const scanner = new TerminalQueryScanner();
+    expect(scanner.ingest('\x1b[c')).toEqual({ kittyReplies: [], sendDa1: true });
+  });
+
+  it('matches icat detect split across four ET packets', () => {
+    const scanner = new TerminalQueryScanner();
+    const writes: string[] = [];
+    const push = (chunk: string) => {
+      const { kittyReplies, sendDa1 } = scanner.ingest(chunk);
+      writes.push(...kittyReplies);
+      if (sendDa1) writes.push(DA1_REPLY);
+    };
+    push(ICAT_DIRECT_QUERY);
+    push(ICAT_FILE_QUERY);
+    push(ICAT_MEMORY_QUERY);
+    push('\x1b[c');
+    expect(writes.indexOf('\x1b_Gi=1;OK\x1b\\')).toBeLessThan(writes.indexOf(DA1_REPLY));
+  });
+});
+
+describe('stripInboundTerminalProbes', () => {
+  it('removes kitty probes and DA1 queries before Restty renders ET output', () => {
+    const raw = `prompt${ICAT_DIRECT_QUERY}\x1b[c`;
+    expect(new TextDecoder().decode(stripInboundTerminalProbes(raw))).toBe('prompt');
+  });
+
+  it('removes echoed auto-replies so worker fast-path acks do not appear at the prompt', () => {
+    const echoed = `prompt\x1b_Gi=1;OK\x1b\\${DA1_REPLY}more`;
+    expect(new TextDecoder().decode(stripInboundTerminalProbes(echoed))).toBe('promptmore');
   });
 });
 

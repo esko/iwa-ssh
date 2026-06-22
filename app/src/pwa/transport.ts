@@ -10,7 +10,7 @@ import type { SessionStatusMeta } from '../settings/types';
 import { RemoteImageUploader } from '../ssh/RemoteImageUploader';
 import { connectNasshSftpSidecar, isSftpSubsystemUnavailable } from '../ssh/NasshSftpSidecar';
 import { uploadViaNasshExec } from '../ssh/NasshExecUploader';
-import { isTerminalAutoReplyOnly, stripTerminalAutoReplies } from '../terminal/terminalAutoReplies';
+import { isTerminalAutoReplyOnly, stripInboundTerminalProbes, stripTerminalAutoReplies } from '../terminal/terminalAutoReplies';
 
 export type TransportStatusHandler = (status: TerminalTransportStatus, error?: string, meta?: SessionStatusMeta) => void;
 
@@ -168,7 +168,7 @@ export class EtDirectSocketsTransport implements TerminalTransport {
     const sessionId = this.sessionId;
     let ended = false;
     const controller = createEtWorkerController(sessionId, (event) => {
-      if (event.type === 'output') adapter.write(event.data);
+      if (event.type === 'output') adapter.write(stripInboundTerminalProbes(event.data));
       else if (event.type === 'status') this.onStatus(event.status, event.error);
       else if (event.type === 'stale') {
         ended = true;

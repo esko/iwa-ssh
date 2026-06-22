@@ -16,9 +16,10 @@ export const DA1_REPLY = '\x1b[?62;22c';
 
 // CSI c or CSI 0 c, not preceded by a private/intermediate marker (`>`, `=`,
 // `?`), so DA2/DA3 queries and DA replies (`CSI ? … c`) are left untouched.
-const DA1_QUERY = /\x1b\[0?c/;
+export const DA1_QUERY = /\x1b\[0?c/g;
 
 /** The DA1 reply if `chunk` contains a Primary DA query, otherwise `null`. */
 export function deviceAttributeReply(chunk: string): string | null {
+  DA1_QUERY.lastIndex = 0;
   return DA1_QUERY.test(chunk) ? DA1_REPLY : null;
 }

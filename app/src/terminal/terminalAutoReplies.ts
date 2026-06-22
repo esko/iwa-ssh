@@ -1,11 +1,12 @@
-import { DA1_REPLY, deviceAttributeReply } from '../pwa/deviceAttributes';
+import { DA1_QUERY, DA1_REPLY, deviceAttributeReply } from '../pwa/deviceAttributes';
 
 /** One kitty graphics command ending in ST or BEL. */
 const KITTY_COMMAND = /\x1b_G([^\\]*?)(?:;[^\x1b\\]*)?(?:\x1b\\|\x07)/g;
 const KITTY_ACK = /\x1b_Gi=\d+;(OK|EINVAL:[^\x1b\\]*)\x1b\\/g;
 const DSR_REPLY = /\x1b\[\d+;\d+R/g;
-const QUERY_ACTION = /(?:^|,)a=q(?:,|$)/;
-const IMAGE_ID = /(?:^|,)i=(\d+)(?:,|$)/;
+/** kitten serializes query action as `a=q`; some builds use the enum value `a=2`. */
+const QUERY_ACTION = /(?:^|,)a=(?:q|2)(?:,|;|$)/;
+const IMAGE_ID = /(?:^|,)i=(\d+)(?:,|;|$)/;
 
 function kittyQueryReply(id: string): string {
   return id === '1'
@@ -21,26 +22,33 @@ function decodeChunk(chunk: Uint8Array | string): string {
 export class TerminalQueryScanner {
   private carry = '';
   private answeredKittyIds = new Set<string>();
+  private sawKittyProbe = false;
 
   ingest(chunk: Uint8Array | string): { kittyReplies: string[]; sendDa1: boolean } {
-    this.carry = (this.carry + decodeChunk(chunk)).slice(-8192);
+    const chunkText = decodeChunk(chunk);
+    this.carry = (this.carry + chunkText).slice(-8192);
     const kittyReplies: string[] = [];
 
     for (const match of this.carry.matchAll(KITTY_COMMAND)) {
       const control = match[1];
       if (!QUERY_ACTION.test(control)) continue;
+      this.sawKittyProbe = true;
       const id = IMAGE_ID.exec(control)?.[1];
       if (!id || this.answeredKittyIds.has(id)) continue;
       this.answeredKittyIds.add(id);
       kittyReplies.push(kittyQueryReply(id));
     }
 
-    return { kittyReplies, sendDa1: deviceAttributeReply(this.carry) !== null };
+    const sendDa1 = deviceAttributeReply(chunkText) !== null
+      && (this.answeredKittyIds.has('1') || !this.sawKittyProbe);
+
+    return { kittyReplies, sendDa1 };
   }
 
   reset(): void {
     this.carry = '';
     this.answeredKittyIds.clear();
+    this.sawKittyProbe = false;
   }
 }
 
@@ -49,6 +57,21 @@ export function terminalQueryReplies(chunk: Uint8Array | string): string[] {
   const scanner = new TerminalQueryScanner();
   const { kittyReplies, sendDa1 } = scanner.ingest(chunk);
   return sendDa1 ? [...kittyReplies, DA1_REPLY] : kittyReplies;
+}
+
+/**
+ * Remove remote kitty/DA1 probes before Restty renders ET output. Probes are
+ * answered in the ET worker; forwarding them causes visible control-character
+ * garbage and races Restty's delayed DA1 shim against icat detect.
+ */
+export function stripInboundTerminalProbes(chunk: Uint8Array | string): Uint8Array {
+  const stripped = decodeChunk(chunk)
+    .replaceAll(KITTY_COMMAND, '')
+    .replaceAll(KITTY_ACK, '')
+    .replace(DA1_QUERY, '')
+    .replaceAll(DA1_REPLY, '')
+    .replaceAll(DSR_REPLY, '');
+  return new TextEncoder().encode(stripped);
 }
 
 /** Remove terminal-generated query replies so duplicate late acks are not sent to ET. */
