@@ -250,13 +250,23 @@ export class EtClient {
     const encrypted = await encryptEtPayload(this.passkey, sequence, plaintext);
     const packet = { encrypted: true, type, payload: encrypted };
     const serialized = serializeCatchupPacket(packet);
-    this.session = await saveEtOutboundFrame({
+    const persistence = saveEtOutboundFrame({
       sessionId: this.session.id,
       sequence,
       bytes: serialized,
       size: serialized.byteLength,
     }, Boolean(this.writer));
-    if (this.writer) await this.write(framePacket(packet));
+    try {
+      // Interactive terminal replies (DA/DSR/Kitty queries) are latency
+      // sensitive. Start the recovery checkpoint first, but do not hold the
+      // live socket write behind IndexedDB; otherwise short-lived probes can
+      // exit before their replies reach the remote PTY.
+      if (this.writer) await this.write(framePacket(packet));
+    } catch (error) {
+      await persistence.catch(() => undefined);
+      throw error;
+    }
+    this.session = await persistence;
   }
 
   private async readLoop(): Promise<void> {
