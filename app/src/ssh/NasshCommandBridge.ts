@@ -58,6 +58,13 @@ export function composeSshArgstr(connectionArgs: string | undefined, remoteComma
   return base ? `${base} -- ${command}` : `-- ${command}`;
 }
 
+export const NASSH_ENVIRONMENT = {
+  TERM: 'xterm-256color',
+  COLORTERM: 'truecolor',
+  LANG: 'en_US.UTF-8',
+  LC_CTYPE: 'en_US.UTF-8',
+} as const;
+
 async function loadNasshModules(): Promise<NasshCommandModule & NasshJsModule> {
   if (!nasshModulesPromise) {
     nasshModulesPromise = (async () => {
@@ -178,10 +185,7 @@ export class NasshCommandBridge {
       io: this.ioShim.io,
       syncStorage,
       terminalLocation: noopLocation,
-      environment: {
-        TERM: 'xterm-256color',
-        COLORTERM: 'truecolor',
-      },
+      environment: { ...NASSH_ENVIRONMENT },
       onExit: (code) => {
         this.handleExit(code, 'nassh');
       },

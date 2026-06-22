@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionStatusMeta } from '../settings/types';
-import { composeSshArgstr, NasshCommandBridge } from './NasshCommandBridge';
+import { composeSshArgstr, NASSH_ENVIRONMENT, NasshCommandBridge } from './NasshCommandBridge';
 
 describe('composeSshArgstr', () => {
   it('returns trimmed extra args when there is no remote command', () => {
@@ -15,13 +15,21 @@ describe('composeSshArgstr', () => {
     );
   });
 });
-
 type ExitHarness = {
   handleExit(code: number, source: 'nassh' | 'nassh-exit' | 'wassh'): void;
   ioShim: { dispose(): void } | null;
   resizeSubscription: { dispose(): void } | null;
   hostKeyGuard: { reset(): void } | null;
 };
+
+describe('NasshCommandBridge environment', () => {
+  it('sends a UTF-8 locale for non-interactive Mosh bootstrap commands', () => {
+    expect(NASSH_ENVIRONMENT).toMatchObject({
+      LANG: 'en_US.UTF-8',
+      LC_CTYPE: 'en_US.UTF-8',
+    });
+  });
+});
 
 describe('NasshCommandBridge exit lifecycle', () => {
   it('reports a transport exit once and releases terminal subscriptions', () => {
