@@ -5,7 +5,7 @@ import { areUpstreamAssetsReady } from '../ssh/upstreamAssets';
 import type { PwaConnectionSpec, TerminalTransportStatus } from './types';
 import { createEtSession } from '../et/bootstrap';
 import { readEtJournal } from '../et/sessionStore';
-import { getEtSession } from '../storage/indexedDb';
+import { forgetEtSession, getEtSession } from '../storage/indexedDb';
 import type { SessionStatusMeta } from '../settings/types';
 
 export type TransportStatusHandler = (status: TerminalTransportStatus, error?: string, meta?: SessionStatusMeta) => void;
@@ -198,6 +198,9 @@ export class EtDirectSocketsTransport implements TerminalTransport {
             ended = true;
             adapter.write('\r\n\x1b[2m[Eternal Terminal session ended.]\x1b[0m\r\n');
             this.onStatus('disconnected', undefined, { disconnectReason: 'normal-exit' });
+            // Unresumable: free its row, recovery frames, and journal now rather
+            // than waiting for the next launcher purge (the journal can be 64 MiB).
+            void forgetEtSession(sessionId).catch(() => undefined);
             resolve();
           } else if (message.type === 'error') {
             const error = new Error(String(message.error ?? 'ET worker failed'));
