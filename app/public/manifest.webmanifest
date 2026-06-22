@@ -3,7 +3,7 @@
   "name": "iwa-ssh",
   "short_name": "iwa-ssh",
   "description": "ChromeOS IWA SSH client",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

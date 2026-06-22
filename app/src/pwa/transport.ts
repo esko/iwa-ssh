@@ -165,13 +165,23 @@ export class EtDirectSocketsTransport implements TerminalTransport {
     this.onStatus('connecting');
     if (!this.sessionId) this.sessionId = await createEtSession(this.spec);
     const sessionId = this.sessionId;
-    await this.acquireOwnership(sessionId);
+    try {
+      await this.acquireOwnership(sessionId);
+    } catch (error) {
+      // Single-attach lock conflict (session open elsewhere): a normal state,
+      // not a crash. Surface it in the terminal and stop here.
+      const message = error instanceof Error ? error.message : String(error);
+      adapter.write(`\r\n\x1b[33m${message}\x1b[0m\r\n`);
+      this.onStatus('error', message);
+      return;
+    }
 
     const stored = await getEtSession(sessionId);
     if (stored?.journalTruncated) adapter.write('\r\n\x1b[33m[Earlier ET output was truncated at the 64 MiB replay limit.]\x1b[0m\r\n');
     for (const chunk of await readEtJournal(sessionId)) adapter.write(chunk);
     const worker = createEtWorker(`et-${sessionId}`);
     this.worker = worker;
+    let ended = false;
     try {
       await new Promise<void>((resolve, reject) => {
         worker.onmessage = (event: MessageEvent<Record<string, unknown>>) => {
@@ -182,9 +192,13 @@ export class EtDirectSocketsTransport implements TerminalTransport {
             this.onStatus(status, typeof message.error === 'string' ? message.error : undefined);
             if (status === 'connected') resolve();
           } else if (message.type === 'stale') {
-            const error = new Error('The remote Eternal Terminal session has ended.');
-            this.onStatus('error', error.message);
-            reject(error);
+            // The remote shell exited (or the server forgot the session): a clean,
+            // unresumable end — report it as a normal exit so the tab closes via
+            // closeOnExit, not a scary error.
+            ended = true;
+            adapter.write('\r\n\x1b[2m[Eternal Terminal session ended.]\x1b[0m\r\n');
+            this.onStatus('disconnected', undefined, { disconnectReason: 'normal-exit' });
+            resolve();
           } else if (message.type === 'error') {
             const error = new Error(String(message.error ?? 'ET worker failed'));
             this.onStatus('error', error.message);
@@ -201,6 +215,9 @@ export class EtDirectSocketsTransport implements TerminalTransport {
       this.releaseOwnership = null;
       throw error;
     }
+    // Session ended during the initial exchange (resumed a now-dead session):
+    // don't wire input/resize to a finished worker.
+    if (ended || this.disposed) return;
     this.input = adapter.onInput((data) => worker.postMessage({ type: 'input', data }));
     this.resize = adapter.onResize((cols, rows) => worker.postMessage({ type: 'resize', cols, rows }));
     const size = adapter.getSize();

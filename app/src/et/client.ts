@@ -138,7 +138,11 @@ export class EtClient {
     this.stopped = true;
     this.stopKeepalive();
     await this.closeSocket();
-    this.session = await updateEtSession(this.session.id, { phase: 'detached' });
+    // Never resurrect a session the server already ended/forgot — otherwise a
+    // dead session reappears on the launcher as 'detached' and resuming errors.
+    if (this.session.phase !== 'stale' && this.session.phase !== 'ended') {
+      this.session = await updateEtSession(this.session.id, { phase: 'detached' });
+    }
     this.callbacks.onStatus('disconnected');
   }
 
@@ -300,7 +304,7 @@ export class EtClient {
     await this.closeSocket();
     const message = error instanceof Error ? error.message : String(error);
     if (this.session.phase === 'stale') {
-      this.callbacks.onStatus('error', message);
+      // onStale() already signaled the clean end; don't also raise an error.
       this.reconnecting = false;
       return;
     }
@@ -318,9 +322,9 @@ export class EtClient {
         this.startKeepalive();
         void this.readLoop();
         return;
-      } catch (nextError) {
+      } catch {
         if ((this.session.phase as string) === 'stale') {
-          this.callbacks.onStatus('error', nextError instanceof Error ? nextError.message : String(nextError));
+          // INVALID_KEY during reconnect → the session ended (onStale fired).
           this.reconnecting = false;
           return;
         }

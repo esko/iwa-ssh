@@ -1593,7 +1593,10 @@ function copyPath(): void {
 }
 
 function duplicateSession(): void {
-  if (activeSpec) void openTab(activeSpec);
+  if (!activeSpec) return;
+  // Duplicating an ET session starts a fresh session (new bootstrap); reusing the
+  // same etSessionId would hit the single-attach lock ("open in another tab").
+  void openTab({ ...activeSpec, etSessionId: undefined });
 }
 
 async function reconnect(): Promise<void> {

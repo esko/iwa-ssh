@@ -80,6 +80,23 @@ describe('EtClient over Direct Sockets', () => {
     expect(ET_SESSION_ENVIRONMENT).toMatchObject({ COLORTERM: 'truecolor' });
   });
 
+  it('detach does not resurrect a stale (server-ended) session', async () => {
+    await sodium.ready;
+    const passkey = '12345678901234567890123456789012';
+    const wrapped = await wrapEtPasskey(passkey);
+    const now = Date.now();
+    await saveEtSession({
+      id: 'local', clientId: '1234567890123456', host: 'host', sshPort: 22, etPort: 2022,
+      username: 'user', wrappedPasskey: wrapped.ciphertext, passkeyIv: wrapped.iv,
+      phase: 'stale', protocolVersion: 6, storageFormatVersion: 1, rxSequence: 0,
+      txSequence: 0, txAcknowledged: 0, outboundBytes: 0, journalBytes: 0,
+      journalTruncated: false, cols: 80, rows: 24, createdAt: now, updatedAt: now,
+    });
+    const client = await EtClient.create('local', { onOutput() {}, onStatus() {}, onStale() {} });
+    await client.detach();
+    expect((await getEtSession('local'))?.phase).toBe('stale');
+  });
+
   it('reconnects after the live connection drops instead of stranding', async () => {
     await sodium.ready;
     const passkey = '12345678901234567890123456789012';
