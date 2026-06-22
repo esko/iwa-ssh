@@ -81,12 +81,10 @@ type TermSession = {
   container: HTMLElement;
   surface: HTMLElement;
   terminal: ResttyTerminalAdapter;
-  /** restty per-pane transports, keyed by restty pane id. */
   panes: Map<number, PaneConn>;
   paneSubs: TerminalSubscription[];
   appliedFont: string;
   titleSub: TerminalSubscription | null;
-  /** Durable ET handle for this tab's primary pane only. */
   resumeEtSessionId?: string;
 };
 
