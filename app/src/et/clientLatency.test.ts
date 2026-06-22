@@ -17,7 +17,8 @@ vi.mock('./sessionStore', async (importOriginal) => ({
 }));
 
 import { EtClient } from './client';
-import { terminalQueryReplies } from '../terminal/terminalAutoReplies';
+
+const ICAT_PROBE = '\x1b_Ga=q,t=d,f=24,s=1,v=1,S=3,i=1;MTIz\x1b\\';
 
 const session = (): EtSessionRecord => ({
   id: 'local', clientId: '1234567890123456', host: 'host', sshPort: 22, etPort: 2022,
@@ -46,6 +47,7 @@ describe('EtClient live terminal latency', () => {
     ) => EtClient)(current, '12345678901234567890123456789012', {
       onOutput, onStatus() {}, onStale() {},
     });
+    (client as unknown as { sendInput: () => Promise<void> }).sendInput = vi.fn(async () => undefined);
     const query = new TextEncoder().encode('\x1b_Gi=1,a=q,t=d,f=24,s=1,v=1;AAAA\x1b\\');
     const plaintext = toBinary(TerminalBufferSchema, create(TerminalBufferSchema, { buffer: query }));
     const nonce = new Uint8Array(24);
@@ -109,7 +111,7 @@ describe('EtClient live terminal latency', () => {
     });
     (client as unknown as { sendInput: typeof sendInput }).sendInput = sendInput;
 
-    const probes = new TextEncoder().encode('\x1b_Gi=1,a=q,t=d;AAAA\x1b\\\x1b[c');
+    const probes = new TextEncoder().encode(`${ICAT_PROBE}\x1b[c`);
     const plaintext = toBinary(TerminalBufferSchema, create(TerminalBufferSchema, { buffer: probes }));
     const nonce = new Uint8Array(24);
     nonce[0] = 1;
@@ -123,8 +125,9 @@ describe('EtClient live terminal latency', () => {
       acceptEncryptedPacket(packet: { encrypted: boolean; type: number; payload: Uint8Array }): Promise<void>;
     }).acceptEncryptedPacket({ encrypted: true, type: TerminalPacketType.TERMINAL_BUFFER, payload: encrypted });
 
-    await vi.waitFor(() => expect(sendInput).toHaveBeenCalledTimes(terminalQueryReplies(probes).length));
-    expect(sendInput.mock.calls.map(([reply]) => reply)).toEqual(terminalQueryReplies(probes));
+    await vi.waitFor(() => expect(sendInput).toHaveBeenCalledTimes(2));
+    expect(sendInput.mock.calls[0]?.[0]).toBe('\x1b_Gi=1;OK\x1b\\');
+    expect(sendInput.mock.calls[1]?.[0]).toBe('\x1b[?62;22c');
 
     try {
       releaseCheckpoint({ ...current, rxSequence: 1 });

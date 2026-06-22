@@ -34,7 +34,8 @@ import {
   type EtWirePacket,
 } from './wire';
 import type { TerminalViewport } from '../terminal/TerminalAdapter';
-import { terminalQueryReplies } from '../terminal/terminalAutoReplies';
+import { DA1_REPLY } from '../pwa/deviceAttributes';
+import { TerminalQueryScanner } from '../terminal/terminalAutoReplies';
 
 type SocketConnection = {
   readable: ReadableStream<Uint8Array>;
@@ -84,6 +85,7 @@ export class EtClient {
   private keepaliveTimer: ReturnType<typeof setInterval> | undefined;
   private lastKeepalive = 0;
   private sendQueue: Promise<void> = Promise.resolve();
+  private readonly queryScanner = new TerminalQueryScanner();
 
   private constructor(session: EtSessionRecord, passkey: string, callbacks: EtClientCallbacks) {
     this.session = session;
@@ -284,8 +286,12 @@ export class EtClient {
     const payload = await decryptEtPayload(this.passkey, sequence, packet.payload);
     if (packet.type === TerminalPacketType.TERMINAL_BUFFER) {
       const terminal = fromBinary(TerminalBufferSchema, payload).buffer;
-      for (const reply of terminalQueryReplies(terminal)) {
-        void this.sendInput(reply);
+      const { kittyReplies, sendDa1 } = this.queryScanner.ingest(terminal);
+      if (kittyReplies.length) {
+        await this.sendInput(kittyReplies.join(''));
+      }
+      if (sendDa1) {
+        await this.sendInput(DA1_REPLY);
       }
       const checkpoint = checkpointEtOutput(this.session.id, sequence, terminal);
       try {
