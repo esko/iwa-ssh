@@ -79,4 +79,59 @@ describe('EtClient over Direct Sockets', () => {
     // ET environment channel so truecolor apps match the SSH/Mosh transports.
     expect(ET_SESSION_ENVIRONMENT).toMatchObject({ COLORTERM: 'truecolor' });
   });
+
+  it('reconnects after the live connection drops instead of stranding', async () => {
+    await sodium.ready;
+    const passkey = '12345678901234567890123456789012';
+    const wrapped = await wrapEtPasskey(passkey);
+    const now = Date.now();
+    await saveEtSession({
+      id: 'local', clientId: '1234567890123456', host: 'host', sshPort: 22, etPort: 2022,
+      username: 'user', wrappedPasskey: wrapped.ciphertext, passkeyIv: wrapped.iv,
+      phase: 'detached', protocolVersion: 6, storageFormatVersion: 1, rxSequence: 0,
+      txSequence: 0, txAcknowledged: 0, outboundBytes: 0, journalBytes: 0,
+      journalTruncated: false, cols: 80, rows: 24, createdAt: now, updatedAt: now,
+    });
+
+    const response = frameHandshake(toBinary(ConnectResponseSchema, create(ConnectResponseSchema, { status: ConnectStatus.NEW_CLIENT })));
+    const initialPlaintext = toBinary(InitialResponseSchema, create(InitialResponseSchema));
+    const nonce = new Uint8Array(24); nonce[0] = 1; nonce[23] = 1;
+    const initialCiphertext = sodium.crypto_secretbox_easy(initialPlaintext, nonce, new TextEncoder().encode(passkey));
+    const initial = framePacket({ encrypted: true, type: EtPacketType.INITIAL_RESPONSE, payload: initialCiphertext });
+
+    let socketCount = 0;
+    let firstController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    class FakeSocket {
+      opened: Promise<{ readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array>; close: () => Promise<void> }>;
+      constructor() {
+        socketCount += 1;
+        if (socketCount === 1) {
+          const readable = new ReadableStream<Uint8Array>({ start(c) { firstController = c; c.enqueue(concat(response, initial)); } });
+          const writable = new WritableStream<Uint8Array>({ write() {}, abort() {} });
+          this.opened = Promise.resolve({ readable, writable, close: async () => {} });
+        } else {
+          // Reconnect attempt: still "offline" — reject so the loop backs off.
+          this.opened = Promise.reject(new Error('still offline'));
+          this.opened.catch(() => undefined);
+        }
+      }
+      async close(): Promise<void> {}
+    }
+    (globalThis as unknown as { window: Window }).window = globalThis as unknown as Window;
+    window.TCPSocket = FakeSocket as unknown as typeof window.TCPSocket;
+
+    const statuses: string[] = [];
+    const client = await EtClient.create('local', { onOutput() {}, onStatus(status) { statuses.push(status); }, onStale() {} });
+    await client.connect();
+    expect(statuses).toContain('connected');
+    expect(socketCount).toBe(1);
+
+    // Drop the live connection mid-session; closeSocket must not throw and the
+    // reconnect loop must open a fresh socket rather than stranding.
+    firstController!.error(new Error('network dropped'));
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(socketCount).toBeGreaterThanOrEqual(2);
+
+    await client.detach();
+  });
 });

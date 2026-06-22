@@ -48,6 +48,9 @@ export type EtClientCallbacks = {
 
 const encoder = new TextEncoder();
 
+/** Abort a connect/handshake attempt that hangs (e.g. offline) so it can retry. */
+const ET_CONNECT_TIMEOUT_MS = 12_000;
+
 /**
  * Environment applied to the remote shell through the ET InitialPayload. TERM
  * is already carried by the etterminal registration string; COLORTERM advertises
@@ -61,6 +64,7 @@ export class EtClient {
   private readonly passkey: string;
   private readonly callbacks: EtClientCallbacks;
   private socket: SocketConnection | null = null;
+  private rawSocket: { close(): Promise<void> } | null = null;
   private reader: EtStreamReader | null = null;
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private stopped = false;
@@ -90,7 +94,7 @@ export class EtClient {
     this.stopped = false;
     this.callbacks.onStatus('connecting');
     try {
-      await this.openAndHandshake();
+      await this.openWithTimeout();
       this.callbacks.onStatus('connected');
       this.startKeepalive();
       void this.readLoop();
@@ -138,10 +142,34 @@ export class EtClient {
     this.callbacks.onStatus('disconnected');
   }
 
+  /**
+   * `openAndHandshake` with a deadline. `socket.opened` and the handshake reads
+   * have no inherent timeout, so an attempt made while offline can hang forever
+   * and stall the reconnect loop. On timeout we reject; the caller closes the
+   * (hung) socket and retries with a fresh one.
+   */
+  private async openWithTimeout(): Promise<void> {
+    const attempt = this.openAndHandshake();
+    // Swallow a late rejection if the timeout wins, so it isn't unhandled.
+    attempt.catch(() => undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        attempt,
+        new Promise<never>((_, reject) => {
+          timer = globalThis.setTimeout(() => reject(new Error('ET connection attempt timed out')), ET_CONNECT_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      globalThis.clearTimeout(timer);
+    }
+  }
+
   private async openAndHandshake(): Promise<void> {
     const Socket = (globalThis as typeof globalThis & { TCPSocket?: typeof window.TCPSocket }).TCPSocket;
     if (!Socket) throw new Error('Direct Sockets (TCPSocket) is unavailable');
     const socket = new Socket(this.session.host, this.session.etPort);
+    this.rawSocket = socket;
     this.socket = await socket.opened;
     this.reader = new EtStreamReader(this.socket.readable);
     this.writer = this.socket.writable.getWriter();
@@ -284,7 +312,7 @@ export class EtClient {
       await new Promise((resolve) => globalThis.setTimeout(resolve, delay));
       if (this.stopped) break;
       try {
-        await this.openAndHandshake();
+        await this.openWithTimeout();
         this.reconnecting = false;
         this.callbacks.onStatus('connected');
         this.startKeepalive();
@@ -308,15 +336,26 @@ export class EtClient {
     await this.writer.write(bytes);
   }
 
+  /**
+   * Tear down the current connection. Must never throw: it runs on the
+   * connection-loss path before the reconnect loop, so a throw here (e.g. a
+   * writer with a pending hung write) would strand the session in `reconnecting`
+   * and it would never recover. `writer.abort()` rejects any pending write and
+   * releases the lock; `rawSocket.close()` is the real TCPSocket close (the
+   * opened-info `socket` has no usable `close()` on Direct Sockets).
+   */
   private async closeSocket(): Promise<void> {
     const reader = this.reader;
     const writer = this.writer;
     const socket = this.socket;
+    const rawSocket = this.rawSocket;
     this.reader = null;
     this.writer = null;
     this.socket = null;
-    await reader?.cancel();
-    writer?.releaseLock();
-    await socket?.close().catch(() => undefined);
+    this.rawSocket = null;
+    await reader?.cancel().catch(() => undefined);
+    await writer?.abort().catch(() => undefined);
+    await socket?.close?.().catch(() => undefined);
+    await rawSocket?.close().catch(() => undefined);
   }
 }
