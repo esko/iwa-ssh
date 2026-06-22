@@ -29,14 +29,14 @@ describe('HostKeyGuard', () => {
   });
 
   it('routes a host-key decision through secureInput without also injecting tty input', async () => {
-    let decide!: (trusted: boolean) => void;
-    ensureHostTrusted.mockReturnValueOnce(new Promise<boolean>((resolve) => { decide = resolve; }));
+    let decide!: (choice: 'once' | 'always' | 'trusted') => void;
+    ensureHostTrusted.mockReturnValueOnce(new Promise<'once' | 'always' | 'trusted'>((resolve) => { decide = resolve; }));
     const sendResponse = vi.fn();
     const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse });
 
     const handling = guard.handleOutput(prompt('target', 'SHA256:remember-me'));
     const response = guard.consumePendingHostKeyResponse();
-    decide(true);
+    decide('once');
 
     await expect(response).resolves.toBe('yes');
     await handling;
@@ -44,7 +44,7 @@ describe('HostKeyGuard', () => {
   });
 
   it('returns rejection from the button decision to secureInput', async () => {
-    ensureHostTrusted.mockResolvedValueOnce(false);
+    ensureHostTrusted.mockResolvedValueOnce('cancel');
     const onDenied = vi.fn();
     const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse: vi.fn(), onDenied });
 
@@ -55,9 +55,10 @@ describe('HostKeyGuard', () => {
   });
 
   it('detects a host-key prompt delivered directly through secureInput', async () => {
-    ensureHostTrusted.mockResolvedValueOnce(true);
+    ensureHostTrusted.mockResolvedValueOnce('once');
     const sendResponse = vi.fn();
-    const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse });
+    const onSessionTrust = vi.fn();
+    const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse, onSessionTrust });
 
     await expect(
       guard.consumePendingHostKeyResponse(prompt('target', 'SHA256:secureInputOnly')),
@@ -70,6 +71,20 @@ describe('HostKeyGuard', () => {
       'ssh-ed25519',
       { useLiveVerification: true },
     );
+    expect(onSessionTrust).toHaveBeenCalledWith('SHA256:secureInputOnly');
+    expect(sendResponse).not.toHaveBeenCalled();
+  });
+
+  it('waits for queued terminal output before classifying secureInput host keys', async () => {
+    ensureHostTrusted.mockResolvedValueOnce('once');
+    const sendResponse = vi.fn();
+    const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse });
+
+    const slowPrior = guard.handleOutput('banner text without host key prompt\n');
+    await expect(
+      guard.consumePendingHostKeyResponse(prompt('target', 'SHA256:queued')),
+    ).resolves.toBe('yes');
+    await slowPrior;
     expect(sendResponse).not.toHaveBeenCalled();
   });
 });

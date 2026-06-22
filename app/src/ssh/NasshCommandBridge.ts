@@ -157,6 +157,9 @@ export class NasshCommandBridge {
         void this.handleHostKeyChanged(change);
       },
       isSessionTrusted: (fingerprint) => this.sessionTrustedFingerprints.has(fingerprint),
+      onSessionTrust: (fingerprint) => {
+        this.sessionTrustedFingerprints.add(fingerprint);
+      },
     });
 
     this.ioShim = new NasshIoShim(this.adapter, {
@@ -317,13 +320,15 @@ export class NasshCommandBridge {
 
     if (change.fingerprint) {
       this.sessionTrustedFingerprints.add(change.fingerprint);
-      await saveKnownHost({
-        host,
-        port,
-        keyType: change.keyType ?? 'ssh-ed25519',
-        fingerprint: change.fingerprint,
-        trustedAt: Date.now(),
-      });
+      if (choice === 'always') {
+        await saveKnownHost({
+          host,
+          port,
+          keyType: change.keyType ?? 'ssh-ed25519',
+          fingerprint: change.fingerprint,
+          trustedAt: Date.now(),
+        });
+      }
     }
 
     log.session.info('reconnecting after host key change', { host, port });

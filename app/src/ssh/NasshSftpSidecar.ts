@@ -87,7 +87,11 @@ export async function connectNasshSftpSidecar(spec: ConnectionIntent, signal?: A
   // the initialized client directly, so there is deliberately no CLI loop.
   instance.onSftpInitialised = () => undefined;
   instance.exit = () => instance.terminateProgram_();
-  instance.secureInput = async (prompt, length, echo) => (await showSecureInputPrompt(prompt, length, echo) ?? '').slice(0, length);
+  instance.secureInput = async (prompt, length, echo) => {
+    const hostKey = await guard.consumePendingHostKeyResponse(prompt);
+    if (hostKey) return hostKey.slice(0, length);
+    return (await showSecureInputPrompt(prompt, length, echo) ?? '').slice(0, length);
+  };
   let identity: string | undefined;
   if (spec.identityId) identity = await stageIdentityForNassh(spec.identityId);
   const params: NasshConnectParams = {

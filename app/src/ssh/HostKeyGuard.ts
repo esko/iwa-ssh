@@ -3,7 +3,7 @@
  */
 
 import { log } from '../debug/logger';
-import { ensureHostTrusted } from './KnownHostPrompt';
+import { ensureHostTrusted, type HostTrustChoice } from './KnownHostPrompt';
 import { syncKnownHostsFromNassh } from './nasshKnownHosts';
 import { HostKeyParser } from './HostKeyParser';
 
@@ -21,6 +21,8 @@ export type HostKeyGuardOptions = {
   onHostKeyChanged?: (change: HostKeyChange) => void;
   /** Auto-accept fingerprints the user trusted earlier this session (skips re-prompt). */
   isSessionTrusted?: (fingerprint: string) => boolean;
+  /** Trust for this session only (no IndexedDB write). */
+  onSessionTrust?: (fingerprint: string) => void;
 };
 
 export class HostKeyGuard {
@@ -32,6 +34,7 @@ export class HostKeyGuard {
     response: Promise<'yes' | 'no'>;
     consumedBySecureInput: boolean;
   } | null = null;
+  private pendingPromptWaiters: Array<() => void> = [];
 
   constructor(private readonly options: HostKeyGuardOptions) {}
 
@@ -40,7 +43,21 @@ export class HostKeyGuard {
     this.parser.reset();
     this.promptInFlight = false;
     this.pendingPrompt = null;
+    this.pendingPromptWaiters = [];
     this.outputQueue = Promise.resolve();
+  }
+
+  private registerPendingPrompt(pending: NonNullable<HostKeyGuard['pendingPrompt']>): void {
+    this.pendingPrompt = pending;
+    for (const wake of this.pendingPromptWaiters) wake();
+    this.pendingPromptWaiters = [];
+  }
+
+  private waitForPendingPromptRegistration(): Promise<void> {
+    if (this.pendingPrompt) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.pendingPromptWaiters.push(resolve);
+    });
   }
 
   /**
@@ -54,8 +71,7 @@ export class HostKeyGuard {
     // payload through the same parser/guard queue so classification remains
     // here rather than leaking into the generic password modal.
     if (prompt) void this.handleOutput(prompt);
-    if (!this.pendingPrompt) await Promise.resolve();
-    if (!this.pendingPrompt) await new Promise((resolve) => setTimeout(resolve, 0));
+    await this.waitForPendingPromptRegistration();
     const pending = this.pendingPrompt;
     if (!pending) return null;
     pending.consumedBySecureInput = true;
@@ -104,7 +120,7 @@ export class HostKeyGuard {
         });
 
         const trusted = this.options.isSessionTrusted?.(fingerprint)
-          ? Promise.resolve(true)
+          ? Promise.resolve<'trusted' | HostTrustChoice>('trusted')
           : ensureHostTrusted(
               this.options.host,
               this.options.port,
@@ -113,10 +129,14 @@ export class HostKeyGuard {
               { useLiveVerification: true },
             );
         const pending = {
-          response: trusted.then((accepted): 'yes' | 'no' => accepted ? 'yes' : 'no'),
+          response: trusted.then((choice): 'yes' | 'no' => {
+            if (choice === 'cancel') return 'no';
+            if (choice === 'once') this.options.onSessionTrust?.(fingerprint);
+            return 'yes';
+          }),
           consumedBySecureInput: false,
         };
-        this.pendingPrompt = pending;
+        this.registerPendingPrompt(pending);
 
         try {
           const response = await pending.response;

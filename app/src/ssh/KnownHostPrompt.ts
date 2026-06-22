@@ -1,6 +1,6 @@
 import { getKnownHost, saveKnownHost } from '../storage/indexedDb';
 
-export type HostTrustChoice = 'trust' | 'cancel';
+export type HostTrustChoice = 'once' | 'always' | 'cancel';
 
 export type KnownHostPromptOptions = {
   host: string;
@@ -106,7 +106,10 @@ export function showKnownHostPrompt(options: KnownHostPromptOptions): Promise<Ho
       </div>
       <div class="actions">
         <button type="button" class="btn-ghost" data-choice="cancel">Reject</button>
-        <button type="button" class="btn" data-choice="trust">${stubbed ? 'Continue anyway' : changed ? 'Trust new key' : 'Trust host'}</button>
+        ${stubbed
+          ? '<button type="button" class="btn" data-choice="once">Continue anyway</button>'
+          : '<button type="button" class="btn" data-choice="once">Trust once</button>'
+            + '<button type="button" class="btn-ghost" data-choice="always">Trust always</button>'}
       </div>
     `;
 
@@ -153,7 +156,8 @@ function escapeHtml(value: string): string {
 }
 
 /**
- * Check known_hosts and prompt when needed. Returns true when connect may proceed.
+ * Check known_hosts and prompt when needed. Returns the user's choice, or
+ * `'trusted'` when the stored fingerprint already matches.
  */
 export async function ensureHostTrusted(
   host: string,
@@ -161,18 +165,18 @@ export async function ensureHostTrusted(
   fingerprint = stubHostFingerprint(host, port),
   keyType = 'ssh-ed25519',
   options?: EnsureHostTrustedOptions,
-): Promise<boolean> {
+): Promise<HostTrustChoice | 'trusted'> {
   const stubbed = !options?.useLiveVerification;
 
   if (stubbed) {
     const choice = await showKnownHostPrompt({ host, port, fingerprint, keyType, stubbed: true });
-    return choice === 'trust';
+    return choice === 'once' ? 'once' : 'cancel';
   }
 
   const existing = await getKnownHost(host, port);
 
   if (existing && existing.fingerprint === fingerprint) {
-    return true;
+    return 'trusted';
   }
 
   const choice = await showKnownHostPrompt({
@@ -184,8 +188,11 @@ export async function ensureHostTrusted(
     previousFingerprint: existing && existing.fingerprint !== fingerprint ? existing.fingerprint : undefined,
   });
 
-  if (choice === 'cancel') return false;
+  if (choice === 'cancel') return 'cancel';
 
-  await saveKnownHost({ host, port, keyType, fingerprint, trustedAt: Date.now() });
-  return true;
+  if (choice === 'always') {
+    await saveKnownHost({ host, port, keyType, fingerprint, trustedAt: Date.now() });
+  }
+
+  return choice;
 }
