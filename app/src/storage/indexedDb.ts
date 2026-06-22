@@ -168,8 +168,14 @@ export type EtSessionSummary = Pick<EtSessionRecord, 'id' | 'host' | 'username' 
 
 export async function listEtSessionSummaries(): Promise<EtSessionSummary[]> {
   return (await listEtSessions())
-    .filter((row) => row.phase === 'active' || row.phase === 'detached' || row.phase === 'stale')
+    .filter((row) => row.phase === 'active' || row.phase === 'detached')
     .map(({ id, host, username, etPort, phase, createdAt, updatedAt }) => ({ id, host, username, etPort, phase, createdAt, updatedAt }));
+}
+
+/** Forget sessions the server can no longer resume (INVALID_KEY → 'stale'). */
+export async function purgeStaleEtSessions(): Promise<void> {
+  const stale = (await listEtSessions()).filter((row) => row.phase === 'stale');
+  for (const row of stale) await forgetEtSession(row.id);
 }
 
 export async function saveEtOutboundFrame(frame: EtOutboundFrame, rotateOldest = false): Promise<EtSessionRecord> {

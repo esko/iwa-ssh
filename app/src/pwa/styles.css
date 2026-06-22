@@ -86,9 +86,12 @@ a {
 /* ------------------------------------------------------------------ home -- */
 
 .home {
+  box-sizing: border-box;
+  /* body is overflow:hidden (for the terminal page), so the launcher must be its
+     own scroll container or long connection lists get clipped. */
   min-height: 100vh;
-  display: grid;
-  grid-template-rows: 1fr auto;
+  max-height: 100vh;
+  overflow-y: auto;
   max-width: 480px;
   margin: 0 auto;
   padding: 16vh 24px 24px;
@@ -164,22 +167,74 @@ a {
   transform: translateX(0);
 }
 
-.conn-add::after {
+/* Rows with inline edit/delete actions show those instead of the chevron. */
+.conn-add::after,
+.conn-row:has(.conn-actions)::after {
   content: none;
 }
 
-.conn-target {
+.conn-pill {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.conn-pill-et {
+  color: #9adfff;
+  border-color: rgba(108, 207, 246, 0.4);
+}
+
+.conn-pill-mosh {
+  color: #a5f3b1;
+  border-color: rgba(123, 216, 143, 0.4);
+}
+
+.conn-body {
   flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.conn-target {
   min-width: 0;
   font-size: 14px;
   font-weight: 500;
   letter-spacing: -0.005em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conn-meta {
   font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
+}
+
+.conn-actions {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 0.14s ease;
+}
+
+.conn-row:hover .conn-actions,
+.conn-row:focus-within .conn-actions {
+  opacity: 1;
+}
+
+.icon-btn.icon-sm {
+  width: 30px;
+  height: 30px;
 }
 
 .conn-add {

@@ -1,5 +1,5 @@
 import type { Profile } from '../settings/types';
-import { deleteProfile, forgetEtSession, getEtSession, listEtSessionSummaries, listProfiles, saveIdentity, saveProfile } from '../storage/indexedDb';
+import { deleteProfile, forgetEtSession, getEtSession, listEtSessionSummaries, listProfiles, purgeStaleEtSessions, saveIdentity, saveProfile, type EtSessionSummary } from '../storage/indexedDb';
 import { encryptPrivateKey } from '../security/KeyCrypto';
 import { cacheIdentityPassphrase } from '../ssh/IdentityPassphrase';
 import { escapeHTML, formatTime, requiredElement } from './dom';
@@ -170,6 +170,16 @@ async function syncActiveTerminalSettings(): Promise<void> {
 
 const GEAR_SVG = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
 
+const PENCIL_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>`;
+const TRASH_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6M14 11v6"></path></svg>`;
+
+/** Small uppercase transport badge (SSH / ET / MOSH). */
+function protocolPill(protocol: Profile['protocol']): string {
+  const p = protocol ?? 'ssh';
+  const label = p === 'et' ? 'ET' : p.toUpperCase();
+  return `<span class="conn-pill conn-pill-${p}">${label}</span>`;
+}
+
 function elFromHTML(html: string): HTMLElement {
   const template = document.createElement('template');
   template.innerHTML = html.trim();
@@ -240,17 +250,14 @@ function openOverlay(build: (close: () => void) => HTMLElement): void {
 export async function renderHome(root: HTMLElement): Promise<void> {
   setThemeColor('#000000');
   document.title = 'iwa-ssh';
+  await purgeStaleEtSessions();
   const [profiles, etSessions] = await Promise.all([listProfiles(), listEtSessionSummaries()]);
 
   root.innerHTML = `
     <div class="home">
       <div>
         ${etSessions.length ? `<div class="home-head"><span class="section-label">Active sessions</span></div>
-        <div class="conn-list">${etSessions.map((session) => `
-          <button class="conn-row" type="button" data-resume-id="${escapeHTML(session.id)}">
-            <span class="conn-target">${escapeHTML(`${session.username}@${session.host}:${session.etPort}`)}</span>
-            <span class="conn-meta">${escapeHTML(session.phase)}</span>
-          </button>`).join('')}</div>` : ''}
+        <div class="conn-list">${etSessions.map(etSessionRow).join('')}</div>` : ''}
         <div class="home-head">
           <span class="section-label">Connections</span>
           <button class="icon-btn" type="button" data-settings aria-label="Settings" title="Settings">${GEAR_SVG}</button>
@@ -265,40 +272,60 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     </div>
   `;
 
+  const resumeUrl = (id: string): string => `/terminal.html?resume=${encodeURIComponent(id)}`;
+  const activate = (rowEl: HTMLElement, run: () => void): void => {
+    rowEl.addEventListener('click', run);
+    rowEl.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); run(); }
+    });
+  };
+
   root.querySelectorAll<HTMLElement>('[data-resume-id]').forEach((rowEl) => {
-    rowEl.addEventListener('click', () => navigate(`/terminal.html?resume=${encodeURIComponent(rowEl.dataset.resumeId ?? '')}`));
+    const id = rowEl.dataset.resumeId!;
+    activate(rowEl, () => navigate(resumeUrl(id)));
     rowEl.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      const id = rowEl.dataset.resumeId;
-      if (!id) return;
       showContextMenu(event.clientX, event.clientY, [
-        { type: 'item', label: 'Resume', onSelect: () => navigate(`/terminal.html?resume=${encodeURIComponent(id)}`) },
-        { type: 'item', label: 'Open in new window', onSelect: () => openWindow(`/terminal.html?resume=${encodeURIComponent(id)}`) },
+        { type: 'item', label: 'Resume', onSelect: () => navigate(resumeUrl(id)) },
+        { type: 'item', label: 'Open in new window', onSelect: () => openWindow(resumeUrl(id)) },
         { type: 'separator' },
-        {
-          type: 'item',
-          label: 'Forget local session',
-          onSelect: async () => {
-            if (!window.confirm('Forget this local ET session? The remote shell may continue running.')) return;
-            await forgetEtSession(id);
-            await renderHome(root);
-          },
-        },
+        { type: 'item', label: 'Forget local session', onSelect: () => void forgetSession(id, root) },
       ]);
     });
   });
 
   root.querySelectorAll<HTMLElement>('[data-launch-id]').forEach((rowEl) => {
-    rowEl.addEventListener('click', () => {
-      const profile = profiles.find((item) => item.id === rowEl.dataset.launchId);
-      if (profile) navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
-    });
+    const profile = profiles.find((item) => item.id === rowEl.dataset.launchId);
+    if (!profile) return;
+    activate(rowEl, () => navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`));
     rowEl.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      const profile = profiles.find((item) => item.id === rowEl.dataset.launchId);
-      if (profile) showProfileMenu(event, profile, root);
+      showProfileMenu(event, profile, root);
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>('[data-edit-id]').forEach((btn) => {
+    btn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const profile = profiles.find((item) => item.id === btn.dataset.editId);
+      if (profile) openConnectionForm({ profile, onSaved: () => renderHome(root) });
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>('[data-delete-id]').forEach((btn) => {
+    btn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const profile = profiles.find((item) => item.id === btn.dataset.deleteId);
+      if (profile) void deleteProfileConfirmed(profile, root);
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>('[data-forget-id]').forEach((btn) => {
+    btn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void forgetSession(btn.dataset.forgetId!, root);
     });
   });
 
@@ -312,14 +339,60 @@ export async function renderHome(root: HTMLElement): Promise<void> {
   requiredElement<HTMLButtonElement>('[data-settings]', root).addEventListener('click', () => openSettings());
 }
 
+async function deleteProfileConfirmed(profile: Profile, root: HTMLElement): Promise<void> {
+  const label = profile.name?.trim() || formatConnectionTarget(profileToSpec(profile));
+  if (!window.confirm(`Delete the connection “${label}”?`)) return;
+  await deleteProfile(profile.id);
+  await renderHome(root);
+}
+
+async function forgetSession(id: string, root: HTMLElement): Promise<void> {
+  if (!window.confirm('Forget this local ET session? The remote shell may continue running.')) return;
+  await forgetEtSession(id);
+  await renderHome(root);
+}
+
+/** The display name shown for a profile (custom name, else the connection target). */
+function profileDisplayName(profile: Profile): string {
+  const target = formatConnectionTarget(profileToSpec(profile));
+  const name = profile.name?.trim();
+  return name && name !== target ? name : target;
+}
+
 function profileRow(profile: Profile): string {
   const target = formatConnectionTarget(profileToSpec(profile));
-  const meta = profile.lastConnectedAt ? formatTime(profile.lastConnectedAt) : profile.protocol ?? 'ssh';
+  const primary = profileDisplayName(profile);
+  const named = primary !== target;
+  const secondary = named ? target : profile.lastConnectedAt ? formatTime(profile.lastConnectedAt) : '';
   return `
-    <button class="conn-row" type="button" data-launch-id="${escapeHTML(profile.id)}">
-      <span class="conn-target">${escapeHTML(target)}</span>
-      <span class="conn-meta">${escapeHTML(meta)}</span>
-    </button>
+    <div class="conn-row" data-launch-id="${escapeHTML(profile.id)}" role="button" tabindex="0">
+      ${protocolPill(profile.protocol)}
+      <span class="conn-body">
+        <span class="conn-target">${escapeHTML(primary)}</span>
+        ${secondary ? `<span class="conn-meta">${escapeHTML(secondary)}</span>` : ''}
+      </span>
+      <span class="conn-actions">
+        <button class="icon-btn icon-sm" type="button" data-edit-id="${escapeHTML(profile.id)}" aria-label="Edit ${escapeHTML(primary)}" title="Edit">${PENCIL_SVG}</button>
+        <button class="icon-btn icon-sm" type="button" data-delete-id="${escapeHTML(profile.id)}" aria-label="Delete ${escapeHTML(primary)}" title="Delete">${TRASH_SVG}</button>
+      </span>
+    </div>
+  `;
+}
+
+function etSessionRow(session: EtSessionSummary): string {
+  const port = session.etPort && session.etPort !== 2022 ? `:${session.etPort}` : '';
+  const target = `${session.username}@${session.host}${port}`;
+  return `
+    <div class="conn-row" data-resume-id="${escapeHTML(session.id)}" role="button" tabindex="0">
+      ${protocolPill('et')}
+      <span class="conn-body">
+        <span class="conn-target">${escapeHTML(target)}</span>
+        <span class="conn-meta">${escapeHTML(session.phase)}</span>
+      </span>
+      <span class="conn-actions">
+        <button class="icon-btn icon-sm" type="button" data-forget-id="${escapeHTML(session.id)}" aria-label="Forget ${escapeHTML(target)}" title="Forget session">${TRASH_SVG}</button>
+      </span>
+    </div>
   `;
 }
 
@@ -328,14 +401,8 @@ function showProfileMenu(event: MouseEvent, profile: Profile, root: HTMLElement)
     { type: 'item', label: 'Open', onSelect: () => navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`) },
     { type: 'item', label: 'Open in new window', onSelect: () => openWindow(`/terminal.html?${specToQuery(profileToSpec(profile))}`) },
     { type: 'separator' },
-    {
-      type: 'item',
-      label: 'Delete',
-      onSelect: async () => {
-        await deleteProfile(profile.id);
-        await renderHome(root);
-      },
-    },
+    { type: 'item', label: 'Edit', onSelect: () => openConnectionForm({ profile, onSaved: () => renderHome(root) }) },
+    { type: 'item', label: 'Delete', onSelect: () => void deleteProfileConfirmed(profile, root) },
     { type: 'separator' },
     { type: 'item', label: 'New connection', onSelect: () => openConnectionForm() },
     { type: 'item', label: 'Settings', onSelect: () => openSettings() },
@@ -353,34 +420,39 @@ function showHomeMenu(event: MouseEvent): void {
 
 // -------------------------------------------------------- connection form --
 
-function openConnectionForm(): void {
+function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Promise<void> } = {}): void {
+  const existing = opts.profile;
   openOverlay((close) => {
     const settingsProfiles = loadSettingsProfiles();
     const spField =
       settingsProfiles.length > 1
         ? `<label class="field"><span>settings profile</span><select name="sp">${settingsProfiles
-            .map((p) => `<option value="${escapeHTML(p.id)}">${escapeHTML(p.name)}</option>`)
+            .map((p) => `<option value="${escapeHTML(p.id)}" ${existing?.settingsProfileId === p.id ? 'selected' : ''}>${escapeHTML(p.name)}</option>`)
             .join('')}</select></label>`
         : '';
+    const proto = existing?.protocol ?? 'ssh';
+    const sel = (value: string): string => (proto === value ? 'selected' : '');
+    const nameValue = existing && existing.name !== formatConnectionTarget(profileToSpec(existing)) ? existing.name : '';
     const modal = elFromHTML(`
       <div class="modal">
-        <h2>New connection</h2>
+        <h2>${existing ? 'Edit connection' : 'New connection'}</h2>
         <form id="connForm">
-          <label class="field"><span>address</span><input name="host" placeholder="192.168.1.60" autocomplete="off" spellcheck="false" required></label>
+          <label class="field"><span>name — optional</span><input name="name" value="${escapeHTML(nameValue)}" placeholder="defaults to user@host" autocomplete="off" spellcheck="false"></label>
+          <label class="field"><span>address</span><input name="host" value="${escapeHTML(existing?.host ?? '')}" placeholder="192.168.1.60" autocomplete="off" spellcheck="false" required></label>
           <div class="field-row">
-            <label class="field"><span>user</span><input name="user" placeholder="esko" autocomplete="off" spellcheck="false" required></label>
-            <label class="field"><span>port</span><input name="port" type="number" min="1" max="65535" value="22"></label>
+            <label class="field"><span>user</span><input name="user" value="${escapeHTML(existing?.username ?? '')}" placeholder="esko" autocomplete="off" spellcheck="false" required></label>
+            <label class="field"><span>port</span><input name="port" type="number" min="1" max="65535" value="${existing?.port ?? 22}"></label>
           </div>
-          <label class="field"><span>protocol</span><select name="protocol"><option value="ssh" selected>SSH</option><option value="et">Eternal Terminal</option><option value="mosh">Mosh</option></select></label>
-          <label class="field" data-et-port hidden><span>ET port</span><input name="etPort" type="number" min="1" max="65535" value="2022"></label>
-          <label class="field"><span>ssh key — optional</span><textarea name="key" placeholder="paste a private key…" spellcheck="false"></textarea></label>
+          <label class="field"><span>protocol</span><select name="protocol"><option value="ssh" ${sel('ssh')}>SSH</option><option value="et" ${sel('et')}>Eternal Terminal</option><option value="mosh" ${sel('mosh')}>Mosh</option></select></label>
+          <label class="field" data-et-port hidden><span>ET port</span><input name="etPort" type="number" min="1" max="65535" value="${existing?.etPort ?? 2022}"></label>
+          <label class="field"><span>ssh key — ${existing?.identityId ? 'replace existing' : 'optional'}</span><textarea name="key" placeholder="paste a private key…" spellcheck="false"></textarea></label>
           <label class="field"><span>or choose a key file</span><input type="file" name="keyfile" accept=".pem,.key,text/plain,application/octet-stream"></label>
           <label class="field" data-pass hidden><span>key passphrase — encrypts the key on this device</span><input name="passphrase" type="password" autocomplete="off"></label>
           ${spField}
           <p class="set-hint" data-err hidden style="color:#f0c5c5"></p>
           <div class="actions">
             <button type="button" class="btn-ghost" data-cancel>Cancel</button>
-            <button type="submit" class="btn">Connect</button>
+            <button type="submit" class="btn">${existing ? 'Save' : 'Connect'}</button>
           </div>
         </form>
       </div>
@@ -412,11 +484,12 @@ function openConnectionForm(): void {
       if (!host || !user) return;
       const protocol = data.get('protocol') === 'mosh' ? 'mosh' : data.get('protocol') === 'et' ? 'et' : 'ssh';
       const etPort = protocol === 'et' ? Number(data.get('etPort') ?? 2022) || 2022 : undefined;
-      const settingsProfileId = String(data.get('sp') ?? '').trim() || undefined;
+      const settingsProfileId = String(data.get('sp') ?? '').trim() || existing?.settingsProfileId;
+      const name = String(data.get('name') ?? '').trim() || `${user}@${host}`;
 
       const keyText = String(data.get('key') ?? '').trim();
       const file = keyFile.files?.[0];
-      let identityId: string | undefined;
+      let identityId = existing?.identityId;
       if (keyText || file) {
         const passphrase = String(data.get('passphrase') ?? '');
         if (!passphrase) {
@@ -439,9 +512,14 @@ function openConnectionForm(): void {
         cacheIdentityPassphrase(identityId, passphrase);
       }
 
-      const profile: Profile = { id: crypto.randomUUID(), name: `${user}@${host}`, protocol, host, port, etPort, username: user, identityId, settingsProfileId };
+      const profile: Profile = { ...existing, id: existing?.id ?? crypto.randomUUID(), name, protocol, host, port, etPort, username: user, identityId, settingsProfileId };
       await saveProfile(profile);
-      navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
+      if (existing) {
+        close();
+        await opts.onSaved?.();
+      } else {
+        navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
+      }
     });
     return modal;
   });
@@ -1413,8 +1491,11 @@ function installTerminalDebugHud(
 }
 
 function installTerminalContextMenu(terminalRoot: HTMLElement): void {
+  // Capture phase + stopPropagation so we pre-empt restty's own canvas context
+  // menu (Clear screen / Disconnect pty / …); ours replaces it entirely.
   terminalRoot.addEventListener('contextmenu', (event) => {
     event.preventDefault();
+    event.stopPropagation();
     // restty copies its own canvas selection (no public selection-text query),
     // so enable Copy whenever that path exists; it's a no-op with no selection.
     const canCopy = (activeTerminal?.hasSelection() ?? false) || canCopyViaRenderer();
@@ -1434,6 +1515,7 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
           ] as ContextMenuItem[])
         : []),
       { type: 'item', label: 'New window', onSelect: () => openWindow('/') },
+      { type: 'item', label: 'Switch session…', onSelect: () => void openSessionPicker() },
       { type: 'item', label: 'Duplicate session', onSelect: duplicateSession },
       { type: 'item', label: 'Reconnect', onSelect: reconnect },
       { type: 'item', label: 'Back to menu', onSelect: () => navigate('/') },
@@ -1441,6 +1523,44 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
       { type: 'item', label: 'Settings', onSelect: () => openSettings() },
     ];
     showContextMenu(event.clientX, event.clientY, items);
+  }, { capture: true });
+}
+
+/** Overlay picker to jump to a resumable ET session or a saved connection. */
+async function openSessionPicker(): Promise<void> {
+  await purgeStaleEtSessions();
+  const [profiles, etSessions] = await Promise.all([listProfiles(), listEtSessionSummaries()]);
+  openOverlay((close) => {
+    const sessionRows = etSessions
+      .map((s) => {
+        const port = s.etPort && s.etPort !== 2022 ? `:${s.etPort}` : '';
+        return `<button class="conn-row" type="button" data-pick-resume="${escapeHTML(s.id)}">${protocolPill('et')}<span class="conn-body"><span class="conn-target">${escapeHTML(`${s.username}@${s.host}${port}`)}</span><span class="conn-meta">${escapeHTML(s.phase)}</span></span></button>`;
+      })
+      .join('');
+    const profileRows = profiles
+      .map((p) => `<button class="conn-row" type="button" data-pick-launch="${escapeHTML(p.id)}">${protocolPill(p.protocol)}<span class="conn-body"><span class="conn-target">${escapeHTML(profileDisplayName(p))}</span></span></button>`)
+      .join('');
+    const empty = '<p class="set-hint">No active sessions or saved connections.</p>';
+    const modal = elFromHTML(`
+      <div class="modal">
+        <h2>Switch session</h2>
+        ${etSessions.length ? `<div class="home-head"><span class="section-label">Active sessions</span></div><div class="conn-list">${sessionRows}</div>` : ''}
+        ${profiles.length ? `<div class="home-head"><span class="section-label">Connections</span></div><div class="conn-list">${profileRows}</div>` : ''}
+        ${etSessions.length || profiles.length ? '' : empty}
+        <div class="actions"><button type="button" class="btn-ghost" data-cancel>Close</button></div>
+      </div>
+    `);
+    modal.querySelector<HTMLButtonElement>('[data-cancel]')?.addEventListener('click', close);
+    modal.querySelectorAll<HTMLElement>('[data-pick-resume]').forEach((el) => {
+      el.addEventListener('click', () => { close(); navigate(`/terminal.html?resume=${encodeURIComponent(el.dataset.pickResume!)}`); });
+    });
+    modal.querySelectorAll<HTMLElement>('[data-pick-launch]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const profile = profiles.find((p) => p.id === el.dataset.pickLaunch);
+        if (profile) { close(); navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`); }
+      });
+    });
+    return modal;
   });
 }
 
