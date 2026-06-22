@@ -35,12 +35,12 @@ Do not spawn subagents for tiny single-file edits or when their context loading 
 
 ### Issue tracker
 
-Issues and PRDs live in GitHub Issues for `esko/iwa-ssh`. See `docs/agents/issue-tracker.md`.
+Issues and PRDs live in GitHub Issues for `esko/iwa-ssh`; external PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Use the repo's GitHub labels, including `ready-for-agent` for AFK-ready work. See `docs/agents/triage-labels.md`.
+Use the five canonical GitHub labels, including `ready-for-agent` for AFK-ready work. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-This is a single-context repo with root docs and ADRs under `docs/adr/`. See `docs/agents/domain.md`.
+This is a single-context repo with root domain docs and ADRs under `docs/adr/`. See `docs/agents/domain.md`.

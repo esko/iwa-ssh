@@ -1,6 +1,12 @@
 # Domain Docs
 
-This is a single-context repo. Before changing product direction, frontend architecture, runtime transport, or issue planning, read:
+This is a single-context repo.
+
+## Before exploring
+
+Read `CONTEXT.md` if it exists and the relevant ADRs under `docs/adr/`. Proceed silently if `CONTEXT.md` is absent; domain-modeling skills create it lazily when useful.
+
+Before changing product direction, frontend architecture, runtime transport, or issue planning, also read:
 
 - `docs/LEGACY_PWA_PIVOT_PRD.md`
 - `docs/LEGACY_PWA_PIVOT_PLAN.md`
@@ -8,14 +14,14 @@ This is a single-context repo. Before changing product direction, frontend archi
 - `docs/ARCHITECTURE.md`
 - `docs/UPSTREAM_SYNC.md`
 - `docs/references/chromeos-terminal/README.md` (design/functionality north star)
-- relevant ADRs in `docs/adr/`
+- Relevant ADRs in `docs/adr/`
 
 ## Vocabulary
 
 - **legacy PWA frontend**: Moshtty `legacy-pwa:web/`, used as the frontend base.
-- **profile**: `iwa-ssh` saved connection model. Profiles replace legacy PWA workspaces/spaces/sessions as the launch model.
-- **native app tab**: ChromeOS/IWA tab. One terminal connection lives in one native tab.
-- **transport boundary**: small adapter between Ghostty terminal I/O and browser networking, with echo and Direct Sockets SSH implementations.
+- **profile**: `iwa-ssh` saved connection model, replacing legacy PWA workspaces, spaces, and sessions.
+- **native app tab**: ChromeOS/IWA tab. Native tabs are currently deferred; the interim model is one terminal session per window.
+- **transport boundary**: Small adapter between Ghostty terminal I/O and browser networking.
 - **IWA infrastructure**: Vite/IWA packaging, manifests, signing/bundling scripts, Direct Sockets permissions, install docs, upstream nassh/wassh assets, and thin polyfills/adapters.
 
-Flag contradictions with the legacy-PWA pivot explicitly instead of silently reviving old xterm/app-shell UI work.
+Use terms defined in `CONTEXT.md` when it exists. Flag contradictions with existing ADRs or the legacy-PWA pivot explicitly instead of silently overriding them.

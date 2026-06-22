@@ -10,4 +10,6 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 | `ready-for-human` | `ready-for-human` | Requires human implementation or device interaction |
 | `wontfix` | `wontfix` | Will not be actioned |
 
+When a skill mentions a role, use the corresponding label string from this table.
+
 Area labels already used by this repo include `reset`, `runtime`, `terminal`, `settings`, `tests`, `docs`, `mosh`, and `upstream-parity`.
