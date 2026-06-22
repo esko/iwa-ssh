@@ -33,6 +33,7 @@ import {
   serializeCatchupPacket,
   type EtWirePacket,
 } from './wire';
+import type { TerminalViewport } from '../terminal/TerminalAdapter';
 
 type SocketConnection = {
   readable: ReadableStream<Uint8Array>;
@@ -50,6 +51,16 @@ const encoder = new TextEncoder();
 
 /** Abort a connect/handshake attempt that hangs (e.g. offline) so it can retry. */
 const ET_CONNECT_TIMEOUT_MS = 12_000;
+
+export function serializeEtTerminalInfo(clientId: string, viewport: TerminalViewport): Uint8Array {
+  return toBinary(TerminalInfoSchema, create(TerminalInfoSchema, {
+    id: clientId,
+    row: viewport.rows,
+    column: viewport.cols,
+    width: viewport.widthPx,
+    height: viewport.heightPx,
+  }));
+}
 
 /**
  * Environment applied to the remote shell through the ET InitialPayload. TERM
@@ -127,10 +138,10 @@ export class EtClient {
     return this.inputFlush;
   }
 
-  async resize(cols: number, rows: number): Promise<void> {
+  async resize({ cols, rows, widthPx, heightPx }: TerminalViewport): Promise<void> {
     if (cols < 1 || rows < 1) return;
     this.session = await updateEtSession(this.session.id, { cols, rows });
-    const payload = toBinary(TerminalInfoSchema, create(TerminalInfoSchema, { id: this.session.clientId, row: rows, column: cols, width: 0, height: 0 }));
+    const payload = serializeEtTerminalInfo(this.session.clientId, { cols, rows, widthPx, heightPx });
     await this.sendPacket(TerminalPacketType.TERMINAL_INFO, payload);
   }
 

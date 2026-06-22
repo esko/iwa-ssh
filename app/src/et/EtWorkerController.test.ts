@@ -40,8 +40,11 @@ describe('EtWorkerController', () => {
     worker.emit({ type: 'status', status: 'connected' });
     await connecting;
     controller.sendInput('x');
-    controller.resize(90, 30);
-    expect(worker.sent.slice(-2)).toEqual([{ type: 'input', data: 'x' }, { type: 'resize', cols: 90, rows: 30 }]);
+    controller.resize({ cols: 90, rows: 30, widthPx: 1080, heightPx: 720 });
+    expect(worker.sent.slice(-2)).toEqual([
+      { type: 'input', data: 'x' },
+      { type: 'resize', cols: 90, rows: 30, widthPx: 1080, heightPx: 720 },
+    ]);
   });
 
   it('rejects lock contention without constructing a worker', async () => {

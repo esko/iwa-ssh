@@ -1,6 +1,7 @@
 import type { EtWorkerEvent, EtWorkerRequest } from './workerMessages';
 import { readEtJournal } from './sessionStore';
 import { forgetEtSession, getEtSession } from '../storage/indexedDb';
+import type { TerminalViewport } from '../terminal/TerminalAdapter';
 
 export interface EtWorkerLike {
   onmessage: ((event: MessageEvent<EtWorkerEvent>) => void) | null;
@@ -120,8 +121,8 @@ export class EtWorkerController {
     if (!this.disposed) this.worker?.postMessage({ type: 'input', data });
   }
 
-  resize(cols: number, rows: number): void {
-    if (!this.disposed) this.worker?.postMessage({ type: 'resize', cols, rows });
+  resize(viewport: TerminalViewport): void {
+    if (!this.disposed) this.worker?.postMessage({ type: 'resize', ...viewport });
   }
 
   disconnect(): Promise<void> {

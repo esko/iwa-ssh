@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { patchWasshTerminalPixelSize } from './wassh-terminal-size-patch.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -337,6 +338,12 @@ async function patchWasshDirectSockets() {
   await fsp.writeFile(socketsPath, source, 'utf8');
 }
 
+async function patchWasshTtyPixelSize() {
+  const handlerPath = path.join(OUT_DIR, 'wassh/js/syscall_handler.js');
+  const source = await fsp.readFile(handlerPath, 'utf8');
+  await fsp.writeFile(handlerPath, patchWasshTerminalPixelSize(source), 'utf8');
+}
+
 async function patchNasshRuntimeUrls() {
   const subprocPath = path.join(OUT_DIR, 'nassh/js/nassh_subproc_wasm.js');
   let source = await fsp.readFile(subprocPath, 'utf8');
@@ -398,6 +405,7 @@ async function main() {
   const nasshCount = await copyNasshBridgeModules();
   await copyNasshLocales();
   await patchWasshDirectSockets();
+  await patchWasshTtyPixelSize();
   await patchNasshRuntimeUrls();
 
   if (wasshCount === 0) {

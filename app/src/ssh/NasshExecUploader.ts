@@ -1,5 +1,5 @@
 import type { ConnectionIntent } from '../connections/ConnectionIntent';
-import type { TerminalSink, TerminalSubscription } from '../terminal/TerminalAdapter';
+import type { TerminalSink, TerminalSubscription, TerminalViewport } from '../terminal/TerminalAdapter';
 import { NasshCommandBridge } from './NasshCommandBridge';
 import type { RemoteUploadProgress } from './RemoteImageUploader';
 
@@ -25,7 +25,7 @@ class ExecSink implements TerminalSink {
   onInput(cb: (data: string) => void): TerminalSubscription { this.inputListeners.add(cb); return { dispose: () => this.inputListeners.delete(cb) }; }
   onResize(): TerminalSubscription { return { dispose: () => undefined }; }
   focus(): void {}
-  getSize(): { cols: number; rows: number } { return { cols: 80, rows: 24 }; }
+  getSize(): TerminalViewport { return { cols: 80, rows: 24, widthPx: 0, heightPx: 0 }; }
   input(data: string): void { this.inputListeners.forEach((cb) => cb(data)); }
   onOutput(cb: (data: string) => void): () => void { this.outputListeners.add(cb); return () => this.outputListeners.delete(cb); }
 }

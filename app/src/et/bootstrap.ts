@@ -1,4 +1,4 @@
-import type { TerminalSink, TerminalSubscription } from '../terminal/TerminalAdapter';
+import type { TerminalSink, TerminalSubscription, TerminalViewport } from '../terminal/TerminalAdapter';
 import { NasshCommandBridge } from '../ssh/NasshCommandBridge';
 import { saveEtSession, type EtSessionRecord } from '../storage/indexedDb';
 import type { ConnectionIntent } from '../connections/ConnectionIntent';
@@ -25,7 +25,7 @@ class CaptureTerminal implements TerminalSink {
   onResize(): TerminalSubscription { return { dispose() {} }; }
   focus(): void {}
   dispose(): void { this.listeners.clear(); }
-  getSize(): { cols: number; rows: number } { return { cols: 80, rows: 24 }; }
+  getSize(): TerminalViewport { return { cols: 80, rows: 24, widthPx: 0, heightPx: 0 }; }
   onOutput(listener: (value: string) => void): TerminalSubscription {
     this.listeners.add(listener);
     return { dispose: () => this.listeners.delete(listener) };

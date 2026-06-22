@@ -1,10 +1,10 @@
 import 'fake-indexeddb/auto';
-import { create, toBinary } from '@bufbuild/protobuf';
+import { create, fromBinary, toBinary } from '@bufbuild/protobuf';
 import sodium from 'libsodium-wrappers';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ConnectResponseSchema, ConnectStatus, EtPacketType } from './proto/ET_pb';
-import { InitialResponseSchema } from './proto/ETerminal_pb';
-import { EtClient, ET_SESSION_ENVIRONMENT } from './client';
+import { InitialResponseSchema, TerminalInfoSchema } from './proto/ETerminal_pb';
+import { EtClient, ET_SESSION_ENVIRONMENT, serializeEtTerminalInfo } from './client';
 import { frameHandshake, framePacket } from './wire';
 import { resetIndexedDbConnection, saveEtSession, getEtSession, type EtSessionRecord } from '../storage/indexedDb';
 import { wrapEtPasskey } from './sessionStore';
@@ -32,6 +32,13 @@ afterEach(async () => {
 });
 
 describe('EtClient over Direct Sockets', () => {
+  it('serializes terminal backing-canvas dimensions', () => {
+    const info = fromBinary(TerminalInfoSchema, serializeEtTerminalInfo('client', {
+      cols: 100, rows: 32, widthPx: 1280, heightPx: 768,
+    }));
+    expect(info).toMatchObject({ id: 'client', column: 100, row: 32, width: 1280, height: 768 });
+  });
+
   it('performs a fresh v6 handshake and checkpoints both nonce sequences', async () => {
     await sodium.ready;
     const passkey = '12345678901234567890123456789012';

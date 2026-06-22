@@ -5,7 +5,7 @@
 
 import { log } from '../debug/logger';
 import { isNasshBootstrapOutput } from './nasshBootstrap';
-import type { TerminalSink, TerminalSubscription } from '../terminal/TerminalAdapter';
+import type { TerminalSink, TerminalSubscription, TerminalViewport } from '../terminal/TerminalAdapter';
 import type { HtermStubTerminal, HtermTerminalIo } from './upstreamTypes';
 
 export type NasshIoShimOptions = {
@@ -144,7 +144,7 @@ export class NasshIoShim {
     private readonly adapter: TerminalSink,
     private readonly options: NasshIoShimOptions = {},
   ) {
-    const { cols, rows } = adapter.getSize();
+    const { cols, rows, widthPx, heightPx } = adapter.getSize();
 
     const showOverlay = (message: unknown, timeout?: number | null): void => {
       const text = overlayMessageToText(message);
@@ -180,7 +180,7 @@ export class NasshIoShim {
         this.adapter.write('\x1b[2J\x1b[H');
       },
       setProfile: () => {},
-      screenSize: { width: cols, height: rows },
+      screenSize: { width: cols, height: rows, widthPx, heightPx },
       showOverlay,
       hideOverlay,
       focus: () => {
@@ -213,16 +213,21 @@ export class NasshIoShim {
     root.sendString(data);
   }
 
-  resize(cols: number, rows: number): void {
+  resize(viewport: TerminalViewport): void {
+    const { cols, rows, widthPx, heightPx } = viewport;
     if (
       this.stubTerminal.screenSize.width === cols &&
-      this.stubTerminal.screenSize.height === rows
+      this.stubTerminal.screenSize.height === rows &&
+      this.stubTerminal.screenSize.widthPx === widthPx &&
+      this.stubTerminal.screenSize.heightPx === heightPx
     ) {
       return;
     }
     this.stubTerminal.screenSize.width = cols;
     this.stubTerminal.screenSize.height = rows;
-    log.term.debug('terminal resize', { cols, rows });
+    this.stubTerminal.screenSize.widthPx = widthPx;
+    this.stubTerminal.screenSize.heightPx = heightPx;
+    log.term.debug('terminal resize', { cols, rows, widthPx, heightPx });
     this.io.onTerminalResize_(cols, rows);
   }
 

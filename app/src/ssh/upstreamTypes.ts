@@ -6,7 +6,7 @@ export type HtermStubTerminal = {
   interpret: (message: string) => void;
   clearHome: () => void;
   setProfile: (profileId: string) => void;
-  screenSize: { width: number; height: number };
+  screenSize: { width: number; height: number; widthPx: number; heightPx: number };
   showOverlay: (message: unknown, timeout?: number | null) => void;
   hideOverlay: () => void;
   focus: () => void;

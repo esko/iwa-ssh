@@ -1,5 +1,5 @@
 import type { ConnectionIntent } from '../connections/ConnectionIntent';
-import type { TerminalSink, TerminalSubscription } from '../terminal/TerminalAdapter';
+import type { TerminalSink, TerminalSubscription, TerminalViewport } from '../terminal/TerminalAdapter';
 import { HostKeyGuard } from './HostKeyGuard';
 import { NasshIoShim } from './NasshIoShim';
 import { NASSH_ENVIRONMENT, loadNasshModules } from './NasshCommandBridge';
@@ -25,7 +25,7 @@ class HeadlessSink implements TerminalSink {
   onInput(cb: (data: string) => void): TerminalSubscription { this.listeners.add(cb); return { dispose: () => this.listeners.delete(cb) }; }
   onResize(): TerminalSubscription { return { dispose: () => undefined }; }
   focus(): void {}
-  getSize(): { cols: number; rows: number } { return { cols: 80, rows: 24 }; }
+  getSize(): TerminalViewport { return { cols: 80, rows: 24, widthPx: 0, heightPx: 0 }; }
   input(data: string): void { this.listeners.forEach((cb) => cb(data)); }
 }
 

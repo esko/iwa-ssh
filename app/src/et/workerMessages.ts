@@ -1,7 +1,9 @@
+import type { TerminalViewport } from '../terminal/TerminalAdapter';
+
 export type EtWorkerRequest =
   | { type: 'connect'; sessionId: string }
   | { type: 'input'; data: string }
-  | { type: 'resize'; cols: number; rows: number }
+  | ({ type: 'resize' } & TerminalViewport)
   | { type: 'detach' };
 
 export type EtWorkerEvent =

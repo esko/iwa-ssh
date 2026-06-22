@@ -1,5 +1,12 @@
 import { Terminal } from '@eslzzyl/restty/esm/xterm';
-import type { TerminalAdapter, TerminalSink, TerminalSubscription } from '../terminal/TerminalAdapter';
+import {
+  DEFAULT_TERMINAL_VIEWPORT,
+  mergeTerminalViewport,
+  type TerminalAdapter,
+  type TerminalSink,
+  type TerminalSubscription,
+  type TerminalViewport,
+} from '../terminal/TerminalAdapter';
 import type { PwaTerminalSettings } from './types';
 import { DEFAULT_FONT_ID, bundledFontForSelection, isCustomSelection, customSelectionId } from './terminalFonts';
 import { getCustomFontData } from './customFontStore';
@@ -182,10 +189,9 @@ export type ResttyPaneSink = TerminalSink & { readonly paneId: number; insertTex
 class PaneBridge implements TerminalSink {
   private callbacks: PaneCallbacks | null = null;
   private connected = false;
-  private cols = 80;
-  private rows = 24;
+  private viewport: TerminalViewport = { ...DEFAULT_TERMINAL_VIEWPORT };
   private readonly inputListeners = new Set<(data: string) => void>();
-  private readonly resizeListeners = new Set<(cols: number, rows: number) => void>();
+  private readonly resizeListeners = new Set<(viewport: TerminalViewport) => void>();
   private readonly decoder = new TextDecoder();
 
   constructor(
@@ -197,8 +203,7 @@ class PaneBridge implements TerminalSink {
 
   connect(options: PaneConnectOptions): void {
     this.callbacks = options.callbacks;
-    if (options.cols) this.cols = options.cols;
-    if (options.rows) this.rows = options.rows;
+    this.updateViewport({ cols: options.cols, rows: options.rows });
     this.connected = true;
     options.callbacks.onConnect?.();
     this.owner.notifyPaneOpen(this);
@@ -219,7 +224,7 @@ class PaneBridge implements TerminalSink {
   }
 
   resize(cols: number, rows: number): boolean {
-    this.emitResize(cols, rows);
+    this.updateViewport({ cols, rows });
     return true;
   }
 
@@ -262,7 +267,7 @@ class PaneBridge implements TerminalSink {
     return { dispose: () => this.inputListeners.delete(cb) };
   }
 
-  onResize(cb: (cols: number, rows: number) => void): TerminalSubscription {
+  onResize(cb: (viewport: TerminalViewport) => void): TerminalSubscription {
     this.resizeListeners.add(cb);
     return { dispose: () => this.resizeListeners.delete(cb) };
   }
@@ -275,16 +280,16 @@ class PaneBridge implements TerminalSink {
     this.destroy();
   }
 
-  getSize(): { cols: number; rows: number } {
-    return { cols: this.cols, rows: this.rows };
+  getSize(): TerminalViewport {
+    return { ...this.viewport };
   }
 
-  emitResize(cols: number, rows: number): void {
-    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) return;
-    if (cols === this.cols && rows === this.rows) return;
-    this.cols = cols;
-    this.rows = rows;
-    this.resizeListeners.forEach((cb) => cb(cols, rows));
+  updateViewport(update: Partial<TerminalViewport>): void {
+    const next = mergeTerminalViewport(this.viewport, update);
+    if (next === this.viewport) return;
+    this.viewport = next;
+    const snapshot = { ...next };
+    this.resizeListeners.forEach((cb) => cb(snapshot));
   }
 
   /** Route context-menu paste to this pane's transport (remote echo draws it). */
@@ -390,7 +395,9 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
           touchSelectionMode: 'long-press',
           maxScrollbackBytes: scrollbackBytesForLines(paneSettings.scrollback),
           callbacks: {
-            onGridSize: (cols: number, rows: number) => adapter.panes.get(ctx.id)?.bridge.emitResize(cols, rows),
+            onGridSize: (cols: number, rows: number) => adapter.panes.get(ctx.id)?.bridge.updateViewport({ cols, rows }),
+            onCanvasSize: (widthPx: number, heightPx: number) =>
+              adapter.panes.get(ctx.id)?.bridge.updateViewport({ widthPx, heightPx }),
           },
         };
       },
@@ -566,8 +573,8 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     this.syncLayout();
   }
 
-  getSize(): { cols: number; rows: number } {
-    return this.panes.get(this.activePaneId)?.bridge.getSize() ?? { cols: 80, rows: 24 };
+  getSize(): TerminalViewport {
+    return this.panes.get(this.activePaneId)?.bridge.getSize() ?? { ...DEFAULT_TERMINAL_VIEWPORT };
   }
 
   getSelection(): string {

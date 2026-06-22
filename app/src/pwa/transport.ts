@@ -186,9 +186,8 @@ export class EtDirectSocketsTransport implements TerminalTransport {
     }
     if (ended || this.disposed) return;
     this.input = adapter.onInput((data) => controller.sendInput(data));
-    this.resize = adapter.onResize((cols, rows) => controller.resize(cols, rows));
-    const size = adapter.getSize();
-    controller.resize(size.cols, size.rows);
+    this.resize = adapter.onResize((viewport) => controller.resize(viewport));
+    controller.resize(adapter.getSize());
   }
 
   async disconnect(): Promise<void> {

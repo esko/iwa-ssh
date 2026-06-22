@@ -102,4 +102,5 @@ Keep this ledger current as generated patches are added:
 | Patch | Owner | Reason | Drift check |
 | --- | --- | --- | --- |
 | wassh Direct Sockets adaptation | `scripts/fetch-upstream-assets.mjs` | IWA socket compatibility | fetch script should verify expected socket symbols before patching |
+| wassh TTY pixel dimensions | `scripts/fetch-upstream-assets.mjs` | Populate `TIOCGWINSZ` pixels for terminal image clients such as `kitten icat` | exact upstream zero-pixel block must match before replacement |
 | nassh locale/bootstrap adaptation | `scripts/fetch-upstream-assets.mjs` and `app/src/ssh/` | Runtime messages without extension packaging | typecheck and SSH smoke |

@@ -3,7 +3,7 @@
  */
 
 import { log } from '../debug/logger';
-import type { TerminalSink, TerminalSubscription } from '../terminal/TerminalAdapter';
+import type { TerminalSink, TerminalSubscription, TerminalViewport } from '../terminal/TerminalAdapter';
 import type { ConnectionStatus, SessionDisconnectReason, SessionStatusMeta } from '../settings/types';
 import type { NasshIoShimOptions } from './NasshIoShim';
 import { NasshIoShim } from './NasshIoShim';
@@ -100,11 +100,11 @@ export class NasshCommandBridge {
     this.resizeSubscription?.dispose();
     this.adapter = adapter;
     this.attachOptions = options;
-    this.resizeSubscription = adapter.onResize((cols, rows) => this.resize(cols, rows));
+    this.resizeSubscription = adapter.onResize((viewport) => this.resize(viewport));
   }
 
-  resize(cols: number, rows: number): void {
-    this.ioShim?.resize(cols, rows);
+  resize(viewport: TerminalViewport): void {
+    this.ioShim?.resize(viewport);
   }
 
   async connect(): Promise<void> {
@@ -166,7 +166,7 @@ export class NasshCommandBridge {
       },
     });
     this.ioShim.bindInput();
-    this.ioShim.resize(this.adapter.getSize().cols, this.adapter.getSize().rows);
+    this.ioShim.resize(this.adapter.getSize());
 
     await stageKnownHostsForNassh();
 

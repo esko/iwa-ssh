@@ -32,7 +32,7 @@ const adapter = {
   onResize: () => ({ dispose: () => {} }),
   focus: () => {},
   dispose: () => {},
-  getSize: () => ({ cols: 80, rows: 24 }),
+  getSize: () => ({ cols: 80, rows: 24, widthPx: 960, heightPx: 576 }),
 } satisfies TerminalAdapter;
 
 describe('SshDirectSocketsTransport', () => {

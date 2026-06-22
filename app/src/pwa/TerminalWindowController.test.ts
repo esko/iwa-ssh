@@ -15,7 +15,7 @@ const intent = (hostname: string, protocol: 'ssh' | 'et' = 'ssh'): LaunchConnect
 
 const sink: TerminalSink = {
   write: vi.fn(), onInput: () => ({ dispose: vi.fn() }), onResize: () => ({ dispose: vi.fn() }),
-  focus: vi.fn(), getSize: () => ({ cols: 80, rows: 24 }),
+  focus: vi.fn(), getSize: () => ({ cols: 80, rows: 24, widthPx: 960, heightPx: 576 }),
 };
 
 class FakeTab implements TerminalTabRuntime {

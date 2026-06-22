@@ -28,7 +28,7 @@ scope.onmessage = (event: MessageEvent<EtWorkerRequest>) => {
     return;
   }
   if (request.type === 'resize') {
-    void client?.resize(request.cols, request.rows).catch((error) => post({ type: 'error', error: error instanceof Error ? error.message : String(error) }));
+    void client?.resize(request).catch((error) => post({ type: 'error', error: error instanceof Error ? error.message : String(error) }));
     return;
   }
   if (request.type === 'detach') {
