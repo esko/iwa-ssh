@@ -91,4 +91,32 @@ describe('EtClient live terminal latency', () => {
       await sending;
     }
   });
+
+  it('does not defer Kitty replies through queueMicrotask batching', async () => {
+    await sodium.ready;
+    let releasePersistence!: (value: EtSessionRecord) => void;
+    mocks.save.mockReturnValue(new Promise<EtSessionRecord>((resolve) => { releasePersistence = resolve; }));
+    const client = new (EtClient as unknown as new (
+      session: EtSessionRecord,
+      passkey: string,
+      callbacks: { onOutput(): void; onStatus(): void; onStale(): void },
+    ) => EtClient)(session(), '12345678901234567890123456789012', {
+      onOutput() {}, onStatus() {}, onStale() {},
+    });
+    const write = vi.fn(async () => undefined);
+    (client as unknown as { writer: { write: typeof write } }).writer = { write };
+    const queueMicrotaskSpy = vi.spyOn(globalThis, 'queueMicrotask');
+
+    const sending = client.sendInput('\x1b_Gi=1;OK\x1b\\');
+    expect(queueMicrotaskSpy).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(mocks.save).toHaveBeenCalledOnce());
+
+    try {
+      releasePersistence({ ...session(), txSequence: 1 });
+      await sending;
+      expect(write).toHaveBeenCalledOnce();
+    } finally {
+      queueMicrotaskSpy.mockRestore();
+    }
+  });
 });

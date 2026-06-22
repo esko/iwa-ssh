@@ -83,8 +83,6 @@ export class EtClient {
   private keepaliveTimer: ReturnType<typeof setInterval> | undefined;
   private lastKeepalive = 0;
   private sendQueue: Promise<void> = Promise.resolve();
-  private inputBuffer = '';
-  private inputFlush: Promise<void> | null = null;
 
   private constructor(session: EtSessionRecord, passkey: string, callbacks: EtClientCallbacks) {
     this.session = session;
@@ -115,27 +113,19 @@ export class EtClient {
   }
 
   sendInput(data: string): Promise<void> {
-    this.inputBuffer += data;
-    if (!this.inputFlush) {
-      this.inputFlush = new Promise<void>((resolve, reject) => {
-        queueMicrotask(() => {
-          const buffered = this.inputBuffer;
-          this.inputBuffer = '';
-          this.inputFlush = null;
-          const encoded = encoder.encode(buffered);
-          const chunks: Uint8Array[] = [];
-          for (let offset = 0; offset < encoded.byteLength; offset += 16 * 1024) chunks.push(encoded.slice(offset, offset + 16 * 1024));
-          void chunks.reduce(
-            (pending, chunk) => pending.then(() => {
-              const payload = toBinary(TerminalBufferSchema, create(TerminalBufferSchema, { buffer: chunk }));
-              return this.sendPacket(TerminalPacketType.TERMINAL_BUFFER, payload);
-            }),
-            Promise.resolve(),
-          ).then(resolve, reject);
-        });
-      });
+    if (!data) return Promise.resolve();
+    const encoded = encoder.encode(data);
+    const chunks: Uint8Array[] = [];
+    for (let offset = 0; offset < encoded.byteLength; offset += 16 * 1024) {
+      chunks.push(encoded.slice(offset, offset + 16 * 1024));
     }
-    return this.inputFlush;
+    return chunks.reduce(
+      (pending, chunk) => pending.then(() => {
+        const payload = toBinary(TerminalBufferSchema, create(TerminalBufferSchema, { buffer: chunk }));
+        return this.sendPacket(TerminalPacketType.TERMINAL_BUFFER, payload);
+      }),
+      Promise.resolve(),
+    );
   }
 
   async resize({ cols, rows, widthPx, heightPx }: TerminalViewport): Promise<void> {

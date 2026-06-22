@@ -3,6 +3,23 @@ import type { TerminalAdapter } from '../terminal/TerminalAdapter';
 
 const mocks = vi.hoisted(() => ({
   bridgeOptions: null as null | { onStatus?: (...args: unknown[]) => void },
+  et: {
+    connectResolve: null as (() => void) | null,
+    connectReject: null as ((error: Error) => void) | null,
+    onInputCalls: 0,
+    inputDispose: vi.fn(),
+    resizeDispose: vi.fn(),
+    controller: {
+      connect: vi.fn(() => new Promise<void>((resolve, reject) => {
+        mocks.et.connectResolve = resolve;
+        mocks.et.connectReject = reject;
+      })),
+      sendInput: vi.fn(),
+      resize: vi.fn(),
+      disconnect: vi.fn(async () => undefined),
+      dispose: vi.fn(),
+    },
+  },
 }));
 
 vi.mock('../ssh/upstreamAssets', () => ({
@@ -22,14 +39,23 @@ vi.mock('../ssh/NasshCommandBridge', () => ({
     dispose(): void {}
   },
 }));
+vi.mock('../et/bootstrap', () => ({
+  createEtSession: vi.fn(async () => 'session-id'),
+}));
+vi.mock('../et/EtWorkerController', () => ({
+  createEtWorkerController: vi.fn(() => mocks.et.controller),
+}));
 
-import { SshDirectSocketsTransport } from './transport';
+import { EtDirectSocketsTransport, SshDirectSocketsTransport } from './transport';
 
 const adapter = {
   open: () => {},
   write: () => {},
-  onInput: () => ({ dispose: () => {} }),
-  onResize: () => ({ dispose: () => {} }),
+  onInput: vi.fn(() => {
+    mocks.et.onInputCalls += 1;
+    return { dispose: mocks.et.inputDispose };
+  }),
+  onResize: vi.fn(() => ({ dispose: mocks.et.resizeDispose })),
   focus: () => {},
   dispose: () => {},
   getSize: () => ({ cols: 80, rows: 24, widthPx: 960, heightPx: 576 }),
@@ -59,5 +85,52 @@ describe('SshDirectSocketsTransport', () => {
       'SSH exited with status 255',
       { disconnectReason: 'transport' },
     );
+  });
+});
+
+describe('EtDirectSocketsTransport', () => {
+  beforeEach(() => {
+    mocks.et.onInputCalls = 0;
+    mocks.et.inputDispose.mockReset();
+    mocks.et.resizeDispose.mockReset();
+    mocks.et.controller.connect.mockClear();
+    mocks.et.controller.sendInput.mockClear();
+    mocks.et.controller.resize.mockClear();
+    mocks.et.connectResolve = null;
+    mocks.et.connectReject = null;
+    vi.mocked(adapter.onInput).mockClear();
+    vi.mocked(adapter.onResize).mockClear();
+  });
+
+  it('registers terminal input before ET connect resolves', async () => {
+    const onStatus = vi.fn();
+    const transport = new EtDirectSocketsTransport(
+      { protocol: 'et', hostname: 'host', username: 'user', args: [], etSessionId: 'existing-session' },
+      onStatus,
+    );
+    const connecting = transport.connect(adapter);
+
+    expect(mocks.et.onInputCalls).toBe(1);
+    expect(adapter.onResize).toHaveBeenCalledOnce();
+    expect(mocks.et.controller.connect).toHaveBeenCalledOnce();
+
+    mocks.et.connectResolve?.();
+    await connecting;
+    expect(mocks.et.controller.resize).toHaveBeenCalledWith(adapter.getSize());
+  });
+
+  it('disposes input subscriptions when connect fails', async () => {
+    const onStatus = vi.fn();
+    const transport = new EtDirectSocketsTransport(
+      { protocol: 'et', hostname: 'host', username: 'user', args: [], etSessionId: 'existing-session' },
+      onStatus,
+    );
+    const connecting = transport.connect(adapter);
+    mocks.et.connectReject?.(new Error('ET connect failed'));
+
+    await expect(connecting).rejects.toThrow('ET connect failed');
+    expect(mocks.et.inputDispose).toHaveBeenCalledOnce();
+    expect(mocks.et.resizeDispose).toHaveBeenCalledOnce();
+    expect(onStatus).toHaveBeenCalledWith('error', 'ET connect failed');
   });
 });

@@ -176,17 +176,27 @@ export class EtDirectSocketsTransport implements TerminalTransport {
       } else if (event.type === 'error') this.onStatus('error', event.error);
     });
     this.controller = controller;
+    this.input = adapter.onInput((data) => controller.sendInput(data));
+    this.resize = adapter.onResize((viewport) => controller.resize(viewport));
     try {
       await controller.connect();
     } catch (error) {
+      this.input?.dispose();
+      this.resize?.dispose();
+      this.input = null;
+      this.resize = null;
       const message = error instanceof Error ? error.message : String(error);
       adapter.write(`\r\n\x1b[33m${message}\x1b[0m\r\n`);
       this.onStatus('error', message);
       throw error;
     }
-    if (ended || this.disposed) return;
-    this.input = adapter.onInput((data) => controller.sendInput(data));
-    this.resize = adapter.onResize((viewport) => controller.resize(viewport));
+    if (ended || this.disposed) {
+      this.input?.dispose();
+      this.resize?.dispose();
+      this.input = null;
+      this.resize = null;
+      return;
+    }
     controller.resize(adapter.getSize());
   }
 
