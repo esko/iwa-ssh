@@ -86,7 +86,7 @@ describe('TerminalWindowController', () => {
     await controller.dispatch({ type: 'restore-tabs', intents: [intent('one'), intent('two')], activeIndex: 1 });
     await controller.dispatch({ type: 'reorder-tab', tabId: controller.getSnapshot().tabs[1].id, toIndex: 0 });
     await controller.dispatch({ type: 'refresh-settings' });
-    expect(controller.getSnapshot().tabs.map((tab) => tab.title)).toEqual(['ssh two', 'ssh one']);
+    expect(controller.getSnapshot().tabs.map((tab) => tab.title)).toEqual(['two', 'one']);
     expect([...runtime.tabs.values()].every((tab) => tab.refreshed === 1)).toBe(true);
   });
 

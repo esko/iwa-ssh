@@ -1,5 +1,5 @@
 import {
-  connectionIntentTitle,
+  formatConnectionTarget,
   type LaunchConnectionIntent,
 } from '../connections/ConnectionIntent';
 import type { TerminalSink } from '../terminal/TerminalAdapter';
@@ -202,7 +202,7 @@ export class TerminalWindowController {
   private async openTab(intent: LaunchConnectionIntent, activate = true): Promise<void> {
     const id = `tab${++this.sequence}`;
     const tab: TabState = {
-      id, intent: { ...intent, etSessionId: undefined }, title: connectionIntentTitle(intent),
+      id, intent: { ...intent, etSessionId: undefined }, title: formatConnectionTarget(intent),
       runtime: null, panes: new Map(), primaryResumeId: intent.etSessionId, closed: false,
     };
     this.tabs.push(tab);
@@ -211,7 +211,7 @@ export class TerminalWindowController {
     const events: TerminalTabRuntimeEvents = {
       onPaneOpen: (paneId, sink) => this.track(this.openPane(tab, paneId, sink)),
       onPaneClose: (paneId) => this.closePane(tab, paneId),
-      onTitle: (title) => { if (!tab.closed) { tab.title = title.trim() || connectionIntentTitle(tab.intent); this.changed(false); } },
+      onTitle: (title) => { if (!tab.closed) { tab.title = title.trim() || formatConnectionTarget(tab.intent); this.changed(false); } },
       onActivePaneChange: (paneId) => { if (!tab.closed) { tab.activePaneId = paneId; this.changed(false); } },
     };
     tab.runtime = await this.dependencies.runtime.createTab(id, tab.intent, events);
