@@ -92,6 +92,35 @@ describe('kitten icat detect over ET worker path', () => {
     expect(writes.indexOf('\x1b_Gi=1;OK\x1b\\')).toBeLessThan(writes.indexOf('\x1b[?62;22c'));
   });
 
+  it('passes a second icat detect on the same ET session', async () => {
+    await sodium.ready;
+    const writes: string[] = [];
+    const client = new (EtClient as unknown as new (
+      s: EtSessionRecord,
+      passkey: string,
+      callbacks: { onOutput(): void; onStatus(): void; onStale(): void },
+    ) => EtClient)(session(), PASSKEY, {
+      onOutput() {}, onStatus() {}, onStale() {},
+    });
+    (client as unknown as { sendInput(data: string): Promise<void> }).sendInput = async (data) => {
+      writes.push(data);
+    };
+
+    let current = session();
+    current = await acceptTerminal(client, current, 1, ICAT_DIRECT);
+    current = await acceptTerminal(client, current, 2, ICAT_FILE);
+    current = await acceptTerminal(client, current, 3, ICAT_MEMORY);
+    await acceptTerminal(client, current, 4, DA1_QUERY);
+    expect(icatDetectAccepts(writes)).toBe(true);
+
+    writes.length = 0;
+    current = await acceptTerminal(client, current, 5, ICAT_DIRECT);
+    current = await acceptTerminal(client, current, 6, ICAT_FILE);
+    current = await acceptTerminal(client, current, 7, ICAT_MEMORY);
+    await acceptTerminal(client, current, 8, DA1_QUERY);
+    expect(icatDetectAccepts(writes)).toBe(true);
+  });
+
   it('fails icat detect when DA1 is sent before Gi=1;OK', () => {
     expect(icatDetectAccepts(['\x1b[?62;22c', '\x1b_Gi=1;OK\x1b\\'])).toBe(false);
   });

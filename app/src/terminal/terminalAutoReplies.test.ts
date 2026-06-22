@@ -81,6 +81,14 @@ describe('TerminalQueryScanner', () => {
     push('\x1b[c');
     expect(writes.indexOf('\x1b_Gi=1;OK\x1b\\')).toBeLessThan(writes.indexOf(DA1_REPLY));
   });
+
+  it('answers a second icat detect after the first completes with DA1', () => {
+    const scanner = new TerminalQueryScanner();
+    expect(
+      scanner.ingest(ICAT_DIRECT_QUERY + ICAT_FILE_QUERY + ICAT_MEMORY_QUERY + '\x1b[c').kittyReplies,
+    ).toHaveLength(3);
+    expect(scanner.ingest(ICAT_DIRECT_QUERY).kittyReplies).toEqual(['\x1b_Gi=1;OK\x1b\\']);
+  });
 });
 
 describe('stripInboundTerminalProbes', () => {
@@ -92,6 +100,11 @@ describe('stripInboundTerminalProbes', () => {
   it('removes echoed auto-replies so worker fast-path acks do not appear at the prompt', () => {
     const echoed = `prompt\x1b_Gi=1;OK\x1b\\${DA1_REPLY}more`;
     expect(new TextDecoder().decode(stripInboundTerminalProbes(echoed))).toBe('promptmore');
+  });
+
+  it('preserves kitty image transmit packets for Restty to render', () => {
+    const transmit = '\x1b_Ga=T,f=100,i=1,s=1,v=1,m=1;AAAA\x1b\\';
+    expect(new TextDecoder().decode(stripInboundTerminalProbes(`x${transmit}y`))).toBe(`x${transmit}y`);
   });
 });
 

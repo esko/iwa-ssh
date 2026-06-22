@@ -42,6 +42,12 @@ export class TerminalQueryScanner {
     const sendDa1 = deviceAttributeReply(chunkText) !== null
       && (this.answeredKittyIds.has('1') || !this.sawKittyProbe);
 
+    if (sendDa1) {
+      this.answeredKittyIds.clear();
+      this.sawKittyProbe = false;
+      this.carry = '';
+    }
+
     return { kittyReplies, sendDa1 };
   }
 
@@ -66,7 +72,7 @@ export function terminalQueryReplies(chunk: Uint8Array | string): string[] {
  */
 export function stripInboundTerminalProbes(chunk: Uint8Array | string): Uint8Array {
   const stripped = decodeChunk(chunk)
-    .replaceAll(KITTY_COMMAND, '')
+    .replace(KITTY_COMMAND, (match, control: string) => (QUERY_ACTION.test(control) ? '' : match))
     .replaceAll(KITTY_ACK, '')
     .replace(DA1_QUERY, '')
     .replaceAll(DA1_REPLY, '')
