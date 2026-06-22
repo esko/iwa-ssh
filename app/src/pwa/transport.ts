@@ -116,6 +116,26 @@ export class SshDirectSocketsTransport implements TerminalTransport {
   }
 }
 
+/**
+ * Construct the ET worker. A Worker must be same-origin with the document.
+ *
+ * - Production: Vite bundles the worker as a same-origin chunk and resolves it
+ *   via `import.meta.url` (the IWA's `isolated-app://…` origin). This must stay
+ *   the literal `new Worker(new URL('…', import.meta.url))` form so Vite's
+ *   static worker detection bundles + transpiles it.
+ * - Dev: Vite's dev server serves the worker from `server.origin`
+ *   (`http://localhost:<port>`, set to fix the Vite client white screen), which
+ *   is cross-origin to the installed IWA and rejected. Target the same module
+ *   path on our own origin instead; the IWA Dev Mode Proxy forwards it to the
+ *   dev server, keeping the worker same-origin.
+ */
+function createEtWorker(name: string): Worker {
+  const options: WorkerOptions = { type: 'module', name };
+  return import.meta.env.DEV
+    ? new Worker(new URL('/src/et/worker.ts', location.origin), options)
+    : new Worker(new URL('../et/worker.ts', import.meta.url), options);
+}
+
 export class EtDirectSocketsTransport implements TerminalTransport {
   private input: TerminalSubscription | null = null;
   private resize: TerminalSubscription | null = null;
@@ -146,7 +166,7 @@ export class EtDirectSocketsTransport implements TerminalTransport {
     const stored = await getEtSession(sessionId);
     if (stored?.journalTruncated) adapter.write('\r\n\x1b[33m[Earlier ET output was truncated at the 64 MiB replay limit.]\x1b[0m\r\n');
     for (const chunk of await readEtJournal(sessionId)) adapter.write(chunk);
-    const worker = new Worker(new URL('../et/worker.ts', import.meta.url), { type: 'module', name: `et-${sessionId}` });
+    const worker = createEtWorker(`et-${sessionId}`);
     this.worker = worker;
     try {
       await new Promise<void>((resolve, reject) => {
