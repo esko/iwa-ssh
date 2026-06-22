@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-22T00:00:00.000Z",
+  "title": "Design System: iwa-ssh",
+  "extensions": {
+    "colorMeta": {
+      "bg": { "role": "neutral", "displayName": "Pit Black", "canonical": "#16171b", "tonalRamp": ["#0c0d10", "#16171b", "#1f2127", "#292c34", "#3a3e48", "#565b66", "#7d828d", "#a8acb5", "#e7e9ee"] },
+      "surface": { "role": "neutral", "displayName": "Surface", "canonical": "#1f2127", "tonalRamp": ["#121317", "#1d1f24", "#1f2127", "#24262d", "#292c34", "#3a3e48", "#565b66", "#8a8f99", "#c9ccd2"] },
+      "fg": { "role": "neutral", "displayName": "Soft White", "canonical": "#e7e9ee", "tonalRamp": ["#16171b", "#292c34", "#3a3e48", "#565b66", "#6b7079", "#9aa0ab", "#c0c4cc", "#e7e9ee", "#f6f7f9"] },
+      "muted": { "role": "neutral", "displayName": "Muted Gray", "canonical": "#9aa0ab", "tonalRamp": ["#2a2d33", "#3a3e48", "#565b66", "#6b7079", "#9aa0ab", "#b4b9c1", "#cdd0d6", "#e2e4e9", "#f3f4f6"] },
+      "accent-et": { "role": "secondary", "displayName": "ET Cyan", "canonical": "#9adfff", "tonalRamp": ["#0b2733", "#123847", "#1b4e63", "#266b85", "#3a8fb0", "#5bb3d6", "#7ccef0", "#9adfff", "#c5edff"] },
+      "accent-mosh": { "role": "secondary", "displayName": "Mosh Green", "canonical": "#a5f3b1", "tonalRamp": ["#0e2c16", "#163e20", "#1f592d", "#2c7b3e", "#3fa055", "#5cc472", "#7fdd91", "#a5f3b1", "#cbf8d2"] },
+      "status-connecting": { "role": "tertiary", "displayName": "Connecting Amber", "canonical": "#e0b341", "tonalRamp": ["#3a2c0c", "#4f3c12", "#6b521b", "#8f6f26", "#b08f3a", "#d6b35b", "#e0b341", "#ecca78", "#f6e4b3"] },
+      "status-error": { "role": "tertiary", "displayName": "Error Red", "canonical": "#e0574b", "tonalRamp": ["#330f0b", "#471512", "#631b1b", "#852826", "#b03a3a", "#d6574b", "#e0574b", "#eca09a", "#f6c5c5"] }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "Modal and settings headings; the largest type in the system (16px). No display tier exists." },
+      "body": { "displayName": "Body", "purpose": "Base 14px size: connection targets, settings rows, prompts." },
+      "control": { "displayName": "Control", "purpose": "13px — buttons, inputs, tabs, nav items, context-menu items. The dominant interface size." },
+      "label": { "displayName": "Label", "purpose": "11px/600 0.1em uppercase Faint section eyebrows over grouped settings regions." },
+      "mono": { "displayName": "Terminal Mono", "purpose": "JetBrains Mono — renders terminal content only; forbidden in chrome." }
+    },
+    "shadows": [
+      { "name": "floating", "value": "0 20px 60px -18px rgba(0,0,0,0.75), 0 2px 8px -2px rgba(0,0,0,0.5)", "purpose": "The single elevation token. Modals, context menus, status pill only — anything that floats above the black desktop." },
+      { "name": "primary-inset", "value": "inset 0 1px 0 rgba(255,255,255,0.5), 0 6px 16px -8px rgba(0,0,0,0.7)", "purpose": "Raised light primary button: top highlight + soft cast." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "ease", "duration": "0.12s–0.14s", "purpose": "Hover/border/background state changes on rows, buttons, nav, tabs." },
+      { "name": "status-reveal", "value": "ease", "duration": "0.2s", "purpose": "Status pill fade + 6px translate-up on show." }
+    ],
+    "breakpoints": [
+      { "name": "narrow-launcher", "value": "720px", "purpose": "Launcher collapses its two-column grid to a single stacked column." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "The quiet secondary button: a faint wash with a dim hairline and muted text that brightens on hover. Recedes next to the raised primary.",
+      "html": "<button class=\"ds-btn-ghost\">Cancel</button>",
+      "css": ".ds-btn-ghost { border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; background: rgba(255,255,255,0.04); color: #9aa0ab; padding: 9px 18px; font: 400 13px Inter, system-ui, sans-serif; cursor: pointer; transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease; } .ds-btn-ghost:hover { border-color: rgba(255,255,255,0.12); background: rgba(255,255,255,0.07); color: #e7e9ee; } .ds-btn-ghost:focus-visible { outline: 2px solid rgba(140,170,210,0.7); outline-offset: 2px; }"
+    },
+    {
+      "name": "Primary Button (raised dark)",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The affirmative action — a raised dark surface with a bright hairline and inset highlight. Reads as the action without out-shining the terminal.",
+      "html": "<button class=\"ds-btn-primary\">Connect</button>",
+      "css": ".ds-btn-primary { border: 1px solid rgba(255,255,255,0.26); border-radius: 8px; background: linear-gradient(180deg, #363a43 0%, #2b2e36 100%); color: #e7e9ee; padding: 9px 18px; font: 600 13px Inter, system-ui, sans-serif; letter-spacing: -0.005em; cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 2px 6px -3px rgba(0,0,0,0.6); transition: border-color 0.12s ease, filter 0.12s ease, transform 0.04s ease; } .ds-btn-primary:hover { border-color: rgba(255,255,255,0.42); filter: brightness(1.1); } .ds-btn-primary:active { transform: translateY(1px); }"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Translucent-black filled field with hairline border; focus brightens border, no glow.",
+      "html": "<label class=\"ds-field\"><span>Host</span><input class=\"ds-input\" placeholder=\"user@host\" /></label>",
+      "css": ".ds-field { display: grid; gap: 7px; } .ds-field > span { font: 400 12px Inter, system-ui, sans-serif; color: #9aa0ab; } .ds-input { width: 100%; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; background: rgba(0,0,0,0.22); padding: 9px 11px; font: 400 13px Inter, system-ui, sans-serif; color: #e7e9ee; } .ds-input::placeholder { color: #6b7079; } .ds-input:focus { outline: none; border-color: rgba(255,255,255,0.32); background: rgba(0,0,0,0.32); }"
+    },
+    {
+      "name": "Connection Row",
+      "kind": "card",
+      "refersTo": "conn-row",
+      "description": "Launcher's signature element: flush row, fills on hover, transport pill + chevron.",
+      "html": "<button class=\"ds-conn-row\"><span class=\"ds-conn-pill ds-conn-pill-et\">ET</span><span class=\"ds-conn-body\"><span class=\"ds-conn-target\">deploy@prod-edge-01</span><span class=\"ds-conn-meta\">22 · last used 2h ago</span></span></button>",
+      "css": ".ds-conn-row { display: flex; align-items: center; gap: 16px; width: 100%; padding: 13px 14px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: #e7e9ee; text-align: left; cursor: pointer; transition: background 0.14s ease, border-color 0.14s ease; } .ds-conn-row:hover { background: #1f2127; border-color: rgba(255,255,255,0.07); } .ds-conn-row::after { content: '›'; margin-left: auto; color: #6b7079; font-size: 17px; opacity: 0; transform: translateX(-3px); transition: opacity 0.14s ease, transform 0.14s ease; } .ds-conn-row:hover::after { opacity: 0.8; transform: translateX(0); } .ds-conn-pill { flex: 0 0 auto; font: 700 10px Inter, system-ui, sans-serif; letter-spacing: 0.05em; padding: 2px 7px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); color: #9aa0ab; background: #1f2127; } .ds-conn-pill-et { color: #9adfff; border-color: rgba(108,207,246,0.4); } .ds-conn-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; } .ds-conn-target { font: 500 14px Inter, system-ui, sans-serif; letter-spacing: -0.005em; } .ds-conn-meta { font: 400 12px Inter, system-ui, sans-serif; color: #6b7079; }"
+    },
+    {
+      "name": "Caption Tab",
+      "kind": "nav",
+      "refersTo": "term-tab",
+      "description": "ChromeOS-style in-window tab with leading status dot and close button; transparent until active.",
+      "html": "<div class=\"ds-tabs\"><button class=\"ds-tab\" aria-selected=\"true\"><span class=\"ds-tab-dot\" data-state=\"connected\"></span><span class=\"ds-tab-title\">prod-edge-01</span><span class=\"ds-tab-close\">×</span></button><button class=\"ds-tab\"><span class=\"ds-tab-dot\" data-state=\"connecting\"></span><span class=\"ds-tab-title\">staging</span><span class=\"ds-tab-close\">×</span></button></div>",
+      "css": ".ds-tabs { display: flex; gap: 2px; align-items: stretch; background: #000; padding: 4px 6px 0; } .ds-tab { display: flex; align-items: center; gap: 8px; max-width: 200px; padding: 0 6px 0 12px; height: 30px; border: 0; border-radius: 8px 8px 0 0; background: transparent; color: #9aa0ab; font: 400 12.5px Inter, system-ui, sans-serif; cursor: pointer; white-space: nowrap; } .ds-tab:hover { background: rgba(255,255,255,0.05); color: #e7e9ee; } .ds-tab[aria-selected='true'] { background: #1f2127; color: #e7e9ee; } .ds-tab-dot { width: 7px; height: 7px; border-radius: 50%; background: #9aa0ab; } .ds-tab-dot[data-state='connected'] { display: none; } .ds-tab-dot[data-state='connecting'] { background: #e0b341; } .ds-tab-dot[data-state='error'] { background: #e0574b; } .ds-tab-close { display: grid; place-items: center; width: 18px; height: 18px; border: 0; border-radius: 50%; background: transparent; color: inherit; font-size: 14px; line-height: 1; cursor: pointer; opacity: 0.7; } .ds-tab-close:hover { background: rgba(255,255,255,0.14); opacity: 1; }"
+    },
+    {
+      "name": "Transport Pill",
+      "kind": "chip",
+      "refersTo": "conn-pill",
+      "description": "Tiny rounded tag marking transport type; the only sanctioned colored chip.",
+      "html": "<span class=\"ds-pill ds-pill-mosh\">MOSH</span>",
+      "css": ".ds-pill { display: inline-block; font: 700 10px Inter, system-ui, sans-serif; letter-spacing: 0.05em; padding: 2px 7px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); color: #9aa0ab; background: #1f2127; } .ds-pill-mosh { color: #a5f3b1; border-color: rgba(123,216,143,0.4); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Cockpit",
+    "overview": "iwa-ssh is a dark instrument panel built to recede. The terminal is the only surface that earns brightness; every launcher row, dialog, tab, and settings control around it is a calm, low-contrast control that exists to get the user connected and then disappear. The system is monochrome by conviction — a single cool-gray ramp from near-black to off-white carries 95% of the interface. Surfaces are soft, not sharp: gently-gradiented panels, 12px radii, hairline white-on-black dividers, and shadows that appear only when an element genuinely floats above the black desktop. Color enters in exactly three places — transport pills, status dots, and the one light primary button. This system explicitly rejects the iTerm2 / heavy-configurator aesthetic.",
+    "keyCharacteristics": [
+      "Monochrome cool-gray ramp; color reserved for status and transport identity only.",
+      "Dark by default; the terminal canvas is true black.",
+      "Soft surfaces: 8–12px radii, subtle vertical gradients, hairline borders.",
+      "Depth on demand: flat in-flow, shadowed only when floating.",
+      "Inter for all chrome; monospace lives strictly inside the terminal."
+    ],
+    "rules": [
+      { "name": "The Color-Means-Status Rule", "body": "Saturated color is forbidden as decoration. Cyan, green, amber, and red appear only to communicate transport type or connection state.", "section": "colors" },
+      { "name": "The No-Pure-White-In-Chrome Rule", "body": "Pure #ffffff belongs to the terminal foreground. Chrome ink tops out at Soft White (#e7e9ee) so the terminal always reads as the brightest surface.", "section": "colors" },
+      { "name": "The Mono-Stays-Inside Rule", "body": "Monospace is forbidden in chrome. JetBrains Mono and siblings render only terminal content. UI is always Inter.", "section": "typography" },
+      { "name": "The Flat-Hierarchy Rule", "body": "No display type. The biggest text on any screen is a 16px title. Importance is weight and ink lightness, never scale.", "section": "typography" },
+      { "name": "The Lift-On-Demand Rule", "body": "Surfaces are flat at rest. A shadow is a statement that an element is floating — only overlays get one.", "section": "elevation" },
+      { "name": "The No-Light-Slab Rule", "body": "The Quiet Cockpit has no near-white button. The primary action earns emphasis through a raised dark surface — lighter fill, brighter hairline, inset highlight, heavier weight — never by inverting to a light fill.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep saturated color tied to meaning — ET cyan, Mosh green, amber/red status, and nothing else.",
+      "Do cap chrome ink at Soft White (#e7e9ee); reserve pure white for the terminal foreground.",
+      "Do keep surfaces flat in-flow and add the Floating shadow only to true overlays.",
+      "Do use Inter for every label, button, and field; keep monospace strictly inside the terminal.",
+      "Do build hierarchy from weight and ink-lightness — the largest type is a 16px title.",
+      "Do let chrome hide itself when there's no choice to make (the tab strip vanishes at one tab).",
+      "Do use hairline white-at-low-alpha borders for division, never gray fills."
+    ],
+    "donts": [
+      "Don't build an iTerm2-style configurator: no tabs-on-tabs, no floating tool panels, no heavyweight preference dialogs.",
+      "Don't introduce a hero or display type tier; importance is weight and ink, not scale.",
+      "Don't put a drop shadow on an in-flow row or panel — shadow means floating.",
+      "Don't add decorative color, gradients-as-ornament, or glassmorphism; the backdrop blur is for the modal scrim only.",
+      "Don't use monospace anywhere in the chrome.",
+      "Don't use border-left/border-right greater than 1px as a colored accent stripe.",
+      "Don't let any chrome element out-shine the terminal; if it competes for attention, tone it down."
+    ]
+  }
+}

@@ -169,6 +169,9 @@ const GEAR_SVG = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" st
 const PENCIL_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>`;
 const PLUS_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>`;
 const CHEVRON_DOWN_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>`;
+// Launcher brand mark: a terminal tile with a prompt chevron + cursor. Neutral
+// (no accent) so it obeys the Color-Means-Status rule.
+const BRAND_MARK = `<svg width="30" height="30" viewBox="0 0 30 30" fill="none" aria-hidden="true"><rect x="1.25" y="1.25" width="27.5" height="27.5" rx="8" fill="rgba(255,255,255,0.04)" stroke="currentColor" stroke-opacity="0.18"></rect><path d="M9 11.5 12.5 15 9 18.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path><path d="M15 18.5h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path></svg>`;
 const TRASH_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6M14 11v6"></path></svg>`;
 
 /** Small uppercase transport badge (SSH / ET / MOSH). */
@@ -253,6 +256,10 @@ export async function renderHome(root: HTMLElement): Promise<void> {
 
   root.innerHTML = `
     <div class="home">
+      <header class="home-brand">
+        <span class="home-mark">${BRAND_MARK}</span>
+        <span class="home-wordmark">iwa<span class="home-wordmark-dim">-ssh</span></span>
+      </header>
       <div class="home-grid">
         <div class="home-col-main">
           ${etSessions.length ? `<div class="home-head"><span class="section-label">Active sessions</span></div>

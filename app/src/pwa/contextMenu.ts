@@ -73,14 +73,24 @@ export function showContextMenu(x: number, y: number, items: ContextMenuItem[]):
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') closeContextMenu();
   };
+  // A fixed-position menu would be left stranded at stale coordinates if the
+  // page scrolled under it, so any scroll outside the menu dismisses it; same
+  // for a resize, which invalidates the clamp.
+  const onScroll = (event: Event): void => {
+    if (!menu.contains(event.target as Node)) closeContextMenu();
+  };
   cleanup = () => {
     document.removeEventListener('mousedown', onMouseDown, true);
     document.removeEventListener('keydown', onKeyDown, true);
+    document.removeEventListener('scroll', onScroll, true);
     window.removeEventListener('blur', closeContextMenu);
+    window.removeEventListener('resize', closeContextMenu);
   };
   setTimeout(() => {
     document.addEventListener('mousedown', onMouseDown, true);
     document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('scroll', onScroll, true);
     window.addEventListener('blur', closeContextMenu);
+    window.addEventListener('resize', closeContextMenu);
   });
 }
