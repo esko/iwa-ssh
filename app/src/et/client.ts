@@ -293,8 +293,18 @@ export class EtClient {
     const payload = await decryptEtPayload(this.passkey, sequence, packet.payload);
     if (packet.type === TerminalPacketType.TERMINAL_BUFFER) {
       const terminal = fromBinary(TerminalBufferSchema, payload).buffer;
-      this.session = await checkpointEtOutput(this.session.id, sequence, terminal);
-      this.callbacks.onOutput(terminal);
+      const checkpoint = checkpointEtOutput(this.session.id, sequence, terminal);
+      try {
+        // Restty must see terminal queries immediately so its automatic
+        // DA/DSR/Kitty replies reach short-lived remote probes. Preserve the
+        // encrypted replay journal concurrently instead of gating rendering on
+        // WebCrypto + IndexedDB.
+        this.callbacks.onOutput(terminal);
+      } catch (error) {
+        await checkpoint.catch(() => undefined);
+        throw error;
+      }
+      this.session = await checkpoint;
     } else {
       this.session = await checkpointEtControl(this.session.id, sequence);
       if (packet.type === TerminalPacketType.KEEP_ALIVE) this.lastKeepalive = Date.now();
