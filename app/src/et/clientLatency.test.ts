@@ -17,6 +17,7 @@ vi.mock('./sessionStore', async (importOriginal) => ({
 }));
 
 import { EtClient } from './client';
+import { terminalQueryReplies } from '../terminal/terminalAutoReplies';
 
 const session = (): EtSessionRecord => ({
   id: 'local', clientId: '1234567890123456', host: 'host', sshPort: 22, etPort: 2022,
@@ -92,31 +93,45 @@ describe('EtClient live terminal latency', () => {
     }
   });
 
-  it('does not defer Kitty replies through queueMicrotask batching', async () => {
+  it('answers Kitty probes in the worker before forwarding output to Restty', async () => {
     await sodium.ready;
-    let releasePersistence!: (value: EtSessionRecord) => void;
-    mocks.save.mockReturnValue(new Promise<EtSessionRecord>((resolve) => { releasePersistence = resolve; }));
+    let releaseCheckpoint!: (value: EtSessionRecord) => void;
+    mocks.checkpointOutput.mockReturnValue(new Promise<EtSessionRecord>((resolve) => { releaseCheckpoint = resolve; }));
+    const sendInput = vi.fn(async () => undefined);
+    const onOutput = vi.fn();
+    const current = session();
     const client = new (EtClient as unknown as new (
       session: EtSessionRecord,
       passkey: string,
-      callbacks: { onOutput(): void; onStatus(): void; onStale(): void },
-    ) => EtClient)(session(), '12345678901234567890123456789012', {
-      onOutput() {}, onStatus() {}, onStale() {},
+      callbacks: { onOutput(data: Uint8Array): void; onStatus(): void; onStale(): void },
+    ) => EtClient)(current, '12345678901234567890123456789012', {
+      onOutput, onStatus() {}, onStale() {},
     });
-    const write = vi.fn(async () => undefined);
-    (client as unknown as { writer: { write: typeof write } }).writer = { write };
-    const queueMicrotaskSpy = vi.spyOn(globalThis, 'queueMicrotask');
+    (client as unknown as { sendInput: typeof sendInput }).sendInput = sendInput;
 
-    const sending = client.sendInput('\x1b_Gi=1;OK\x1b\\');
-    expect(queueMicrotaskSpy).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(mocks.save).toHaveBeenCalledOnce());
+    const probes = new TextEncoder().encode('\x1b_Gi=1,a=q,t=d;AAAA\x1b\\\x1b[c');
+    const plaintext = toBinary(TerminalBufferSchema, create(TerminalBufferSchema, { buffer: probes }));
+    const nonce = new Uint8Array(24);
+    nonce[0] = 1;
+    nonce[23] = 1;
+    const encrypted = sodium.crypto_secretbox_easy(
+      plaintext,
+      nonce,
+      new TextEncoder().encode('12345678901234567890123456789012'),
+    );
+    const accepting = (client as unknown as {
+      acceptEncryptedPacket(packet: { encrypted: boolean; type: number; payload: Uint8Array }): Promise<void>;
+    }).acceptEncryptedPacket({ encrypted: true, type: TerminalPacketType.TERMINAL_BUFFER, payload: encrypted });
+
+    await vi.waitFor(() => expect(sendInput).toHaveBeenCalledTimes(terminalQueryReplies(probes).length));
+    expect(sendInput.mock.calls.map(([reply]) => reply)).toEqual(terminalQueryReplies(probes));
 
     try {
-      releasePersistence({ ...session(), txSequence: 1 });
-      await sending;
-      expect(write).toHaveBeenCalledOnce();
+      releaseCheckpoint({ ...current, rxSequence: 1 });
+      await accepting;
+      expect(onOutput).toHaveBeenCalledWith(probes);
     } finally {
-      queueMicrotaskSpy.mockRestore();
+      // acceptEncryptedPacket already awaited above
     }
   });
 });

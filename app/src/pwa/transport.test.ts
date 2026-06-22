@@ -133,4 +133,21 @@ describe('EtDirectSocketsTransport', () => {
     expect(mocks.et.resizeDispose).toHaveBeenCalledOnce();
     expect(onStatus).toHaveBeenCalledWith('error', 'ET connect failed');
   });
+
+  it('drops duplicate Restty auto-replies while forwarding keyboard input', async () => {
+    const onStatus = vi.fn();
+    const transport = new EtDirectSocketsTransport(
+      { protocol: 'et', hostname: 'host', username: 'user', args: [], etSessionId: 'existing-session' },
+      onStatus,
+    );
+    const connecting = transport.connect(adapter);
+    mocks.et.connectResolve?.();
+    await connecting;
+
+    const handler = vi.mocked(adapter.onInput).mock.calls.at(-1)?.[0] as (data: string) => void;
+    handler('\x1b_Gi=1;OK\x1b\\');
+    handler('echo hi\r');
+    expect(mocks.et.controller.sendInput).toHaveBeenCalledTimes(1);
+    expect(mocks.et.controller.sendInput).toHaveBeenCalledWith('echo hi\r');
+  });
 });

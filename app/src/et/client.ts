@@ -34,6 +34,7 @@ import {
   type EtWirePacket,
 } from './wire';
 import type { TerminalViewport } from '../terminal/TerminalAdapter';
+import { terminalQueryReplies } from '../terminal/terminalAutoReplies';
 
 type SocketConnection = {
   readable: ReadableStream<Uint8Array>;
@@ -283,6 +284,9 @@ export class EtClient {
     const payload = await decryptEtPayload(this.passkey, sequence, packet.payload);
     if (packet.type === TerminalPacketType.TERMINAL_BUFFER) {
       const terminal = fromBinary(TerminalBufferSchema, payload).buffer;
+      for (const reply of terminalQueryReplies(terminal)) {
+        void this.sendInput(reply);
+      }
       const checkpoint = checkpointEtOutput(this.session.id, sequence, terminal);
       try {
         // Restty must see terminal queries immediately so its automatic
