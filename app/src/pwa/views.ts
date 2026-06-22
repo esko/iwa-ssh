@@ -4,9 +4,8 @@ import { encryptPrivateKey } from '../security/KeyCrypto';
 import { cacheIdentityPassphrase } from '../ssh/IdentityPassphrase';
 import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
-import { ResttyTerminalAdapter, type ResttyPaneSink } from './resttyAdapter';
-import type { TerminalSubscription } from '../terminal/TerminalAdapter';
-import { ensureTerminalFontLoaded, normalizePwaSettings, applyPwaAppearance } from './settings';
+import { ResttyTerminalAdapter } from './resttyAdapter';
+import { normalizePwaSettings, applyPwaAppearance } from './settings';
 import {
   BUNDLED_FONTS,
   DEFAULT_FONT_ID,
@@ -36,84 +35,50 @@ import {
   formatConnectionTarget,
   layoutSpecKey,
   profileToSpec,
-  recordConnection,
   specToQuery,
 } from './profileModel';
 import { shouldPassThroughSystemShortcut } from './shortcuts';
 import { showContextMenu, type ContextMenuItem } from './contextMenu';
 import { CAPTION_TABS_SLOT_ID } from './windowControls';
-import { createTransport, type TerminalTransport } from './transport';
+import { createTransport } from './transport';
 import type { PwaTerminalSettings, TerminalTransportStatus } from './types';
-import type { SessionStatusMeta } from '../settings/types';
 import { resolveConnectionIntent, type LaunchConnectionIntent } from '../connections/ConnectionIntent';
 import { parseTerminalConnectionCommand } from '../connections/sshCommandParser';
+import { TerminalWindowController, type TerminalWindowSnapshot } from './TerminalWindowController';
+import { ResttyWindowRuntime, type RuntimeTabView } from './ResttyWindowRuntime';
 
-// `active*` always point at the focused tab's session, so the existing helpers
-// (copy, reconnect, settings sync, context menu) keep operating on it.
-let activeTerminal: ResttyTerminalAdapter | null = null;
-let activeSpec: LaunchConnectionIntent | null = null;
-/** Font currently applied to the active terminal; guards redundant reapplies. */
-let appliedFontSelection: string | null = null;
-let fontSyncCleanup: (() => void) | null = null;
-let activeSessionId: string | null = null;
+// The terminal page is driven by a single TerminalWindowController: it owns
+// tabs, panes, transports, layout persistence, status reduction, reconnect, and
+// exact-once teardown. This module only renders the controller's snapshots and
+// forwards user intent as commands; the Restty/DOM side lives in the runtime.
+let controller: TerminalWindowController | null = null;
+let windowRuntime: ResttyWindowRuntime | null = null;
+let currentSnapshot: TerminalWindowSnapshot | null = null;
+let activeTabId: string | undefined;
+/** True once a tab has existed, so closing the last one returns to the launcher. */
+let hadTabs = false;
+
 let tabStrip: HTMLElement | null = null;
 let sessionsHost: HTMLElement | null = null;
 let sharedStatus: HTMLElement | null = null;
-let captionCleanup: (() => void) | null = null;
-
-/** One restty split pane: its own transport bound to the pane's sink (ADR 0008). */
-type PaneConn = {
-  paneId: number;
-  transport: TerminalTransport;
-  sink: ResttyPaneSink;
-  status: TerminalTransportStatus;
-  error?: string;
-  reconnecting: boolean;
-};
-
-/** One terminal session per tab (ADR 0008); restty tabs fan out to split panes. */
-type TermSession = {
-  id: string;
-  spec: LaunchConnectionIntent;
-  title: string;
-  status: TerminalTransportStatus;
-  statusError?: string;
-  container: HTMLElement;
-  surface: HTMLElement;
-  terminal: ResttyTerminalAdapter;
-  panes: Map<number, PaneConn>;
-  paneSubs: TerminalSubscription[];
-  appliedFont: string;
-  titleSub: TerminalSubscription | null;
-  resumeEtSessionId?: string;
-};
-
-const sessions: TermSession[] = [];
-let sessionSeq = 0;
 let statusHideTimer = 0;
-let tabRenderFrame = 0;
 
-function activeSession(): TermSession | null {
-  return sessions.find((s) => s.id === activeSessionId) ?? null;
-}
+let unsubscribeSnapshots: (() => void) | null = null;
+let fontSyncCleanup: (() => void) | null = null;
+let captionCleanup: (() => void) | null = null;
 
 // Per-window tab persistence (sessionStorage survives reload, not relaunch).
 const TAB_LAYOUT_KEY = 'iwa-ssh-tab-layout';
 type SavedTabLayout = { specs: LaunchConnectionIntent[]; activeIndex: number };
 
-/** Identity of a connection, so a fresh launch doesn't inherit stale tabs. */
-function saveTabLayout(): void {
+/** Controller `saveLayout` sink: persist this window's tabs for reload recovery. */
+function persistTabLayout(specs: LaunchConnectionIntent[], activeIndex: number): void {
   try {
-    if (sessions.length === 0) {
+    if (specs.length === 0) {
       sessionStorage.removeItem(TAB_LAYOUT_KEY);
       return;
     }
-    const activeIndex = Math.max(0, sessions.findIndex((s) => s.id === activeSessionId));
-    const layout: SavedTabLayout = {
-      specs: sessions.map((s) => ({ ...s.spec, etSessionId: s.resumeEtSessionId })),
-      activeIndex,
-    };
-    sessionStorage.setItem(TAB_LAYOUT_KEY, JSON.stringify(layout));
+    sessionStorage.setItem(TAB_LAYOUT_KEY, JSON.stringify({ specs, activeIndex }));
   } catch {
     /* sessionStorage unavailable — persistence is best-effort */
   }
@@ -129,35 +94,58 @@ function loadTabLayout(): SavedTabLayout | null {
   }
 }
 
+/** The intent backing the focused tab (settings profile, target, new-tab source). */
+function activeIntent(): LaunchConnectionIntent | null {
+  return windowRuntime?.getView(activeTabId)?.intent ?? null;
+}
+
+/** The focused tab's live Restty view (copy/paste/cwd/reconnect-clear). */
+function activeTerminalView(): RuntimeTabView | undefined {
+  return windowRuntime?.getView(activeTabId);
+}
+
+function activeTerminal(): ResttyTerminalAdapter | undefined {
+  return activeTerminalView()?.terminal;
+}
+
 /** Resolved settings for the focused tab (Keyboard/Behavior toggles read live). */
 function currentSettings(): PwaTerminalSettings {
-  return resolveSettings(activeSpec?.settingsProfileId);
+  return resolveSettings(activeIntent()?.settingsProfileId);
 }
 
 /** Behavior: optionally confirm before a user closes a still-connected tab. */
-function confirmCloseSession(session: TermSession): boolean {
-  if (!resolveSettings(session.spec.settingsProfileId).confirmClose || !sessionHasConnectedPane(session)) return true;
-  return window.confirm(`Close ${session.title}? The session is still connected.`);
+function confirmCloseTab(tabId: string): boolean {
+  const tab = currentSnapshot?.tabs.find((t) => t.id === tabId);
+  const intent = windowRuntime?.getView(tabId)?.intent;
+  const connected = tab?.panes.some((pane) => pane.status === 'connected') ?? false;
+  if (!resolveSettings(intent?.settingsProfileId).confirmClose || !connected) return true;
+  return window.confirm(`Close ${tab?.title ?? 'this session'}? The session is still connected.`);
 }
 
 /**
- * Reapply terminal settings (theme colors, cursor, font size, and font) to the
- * live session when the relevant profile changes — same window (settings opened
- * from the terminal context menu) or another window (launcher), delivered via a
- * `storage` event. Theme/cursor/size apply every time; the (heavier) font swap
- * only runs when the selection actually changed.
+ * Reapply the global appearance the focused tab implies — accent/density CSS
+ * vars, the IWA toolbar color, and the page background. The per-tab terminal
+ * reapply (theme/cursor/font) is the controller's `refresh-settings` command.
+ */
+function applyActiveAppearance(): void {
+  const intent = activeIntent();
+  if (!intent) return;
+  const settings = resolveSettings(intent.settingsProfileId);
+  applyPwaAppearance(settings);
+  const palette = getThemePalette(settings.theme);
+  setThemeColor(palette.background);
+  document.documentElement.style.setProperty('--term-bg', palette.background);
+}
+
+/**
+ * Live-reapply settings when a profile changes — same window (settings opened
+ * from the terminal context menu) or another window (launcher) via a `storage`
+ * event. The controller fans the per-terminal reapply across every tab; the
+ * global page chrome follows the focused tab.
  */
 async function syncActiveTerminalSettings(): Promise<void> {
-  if (!activeTerminal || !activeSpec) return;
-  const settings = resolveSettings(activeSpec.settingsProfileId);
-  applyPwaAppearance(settings); // accent / density / terminal padding
-  activeTerminal.setAppearance(settings);
-  setThemeColor(getThemePalette(settings.theme).background);
-  activeTerminal.fit?.(); // padding change resizes the grid
-  if (settings.fontFamily === appliedFontSelection) return;
-  appliedFontSelection = settings.fontFamily;
-  await ensureTerminalFontLoaded(settings);
-  await activeTerminal.setFont(settings);
+  applyActiveAppearance();
+  await controller?.dispatch({ type: 'refresh-settings' });
 }
 
 // ----------------------------------------------------------------- helpers --
@@ -898,195 +886,82 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
   window.addEventListener('storage', onSettingsStorage);
   fontSyncCleanup = () => window.removeEventListener('storage', onSettingsStorage);
 
+  windowRuntime = new ResttyWindowRuntime(sessionsHost);
+  controller = new TerminalWindowController({
+    runtime: windowRuntime,
+    createTransport,
+    saveLayout: persistTabLayout,
+    closeOnNormalExit: (intent) => resolveSettings(intent.settingsProfileId).closeOnExit,
+  });
+  unsubscribeSnapshots = controller.subscribe(renderSnapshot);
+
   // Restore this window's tabs on reload/crash when they belong to the same
   // connection (sessionStorage is per-window); otherwise start a single tab.
   const layout = loadTabLayout();
   if (layout && layoutSpecKey(layout.specs[0]) === layoutSpecKey(spec)) {
-    for (const saved of layout.specs) await createSession(saved);
-    const active = sessions[Math.min(layout.activeIndex, sessions.length - 1)] ?? sessions[0];
-    if (active) setActiveSession(active.id);
+    await controller.dispatch({ type: 'restore-tabs', intents: layout.specs, activeIndex: layout.activeIndex });
   } else {
-    const session = await createSession(spec);
-    setActiveSession(session.id);
+    await controller.dispatch({ type: 'open-tab', intent: spec });
   }
 }
 
-/** Build a fully-connected session (its own renderer + transport) in a new tab. */
-async function createSession(spec: LaunchConnectionIntent): Promise<TermSession> {
-  const resumeEtSessionId = spec.etSessionId;
-  spec = { ...spec, etSessionId: undefined };
-  const settings = resolveSettings(spec.settingsProfileId);
-  await ensureTerminalFontLoaded(settings);
+/** Render one controller snapshot: tab strip, active surface, and shared status. */
+function renderSnapshot(snapshot: TerminalWindowSnapshot): void {
+  const previousActive = activeTabId;
+  currentSnapshot = snapshot;
+  activeTabId = snapshot.activeTabId;
+  if (snapshot.tabs.length > 0) hadTabs = true;
 
-  const container = document.createElement('div');
-  container.className = 'term-session';
-  const surface = document.createElement('main');
-  surface.className = 'term-surface';
-  surface.setAttribute('aria-label', 'Terminal');
-  container.append(surface);
-  sessionsHost!.append(container);
-
-  const terminal = await ResttyTerminalAdapter.create(surface, settings);
-  surface.dataset.renderer = 'restty';
-
-  const session: TermSession = {
-    id: `tab${++sessionSeq}`,
-    spec,
-    title: formatConnectionTarget(spec),
-    status: 'connecting',
-    statusError: undefined,
-    container,
-    surface,
-    terminal,
-    panes: new Map(),
-    paneSubs: [],
-    appliedFont: settings.fontFamily,
-    titleSub: null,
-    resumeEtSessionId,
-  };
-  session.titleSub = terminal.onTitle((value) => {
-    session.title = value.trim() || formatConnectionTarget(spec);
-    if (session.id === activeSessionId) document.title = session.title;
-    scheduleTabRender();
-  });
-
-  terminal.setAppearance?.(settings);
-  sessions.push(session);
   renderTabs();
-  await recordConnection(spec);
+  reconcilePanes(snapshot);
 
-  // Each Restty pane (the first and every split) binds its own transport when
-  // Restty connects it; registering the listener flushes the initial pane.
-  session.paneSubs.push(terminal.onPaneClose((id) => closePaneConn(session, id)));
-  session.paneSubs.push(terminal.onPaneOpen((sink) => void openPaneConn(session, sink)));
-  terminal.fit?.();
-  return session;
-}
-
-/** Bind a fresh transport to a newly opened restty pane (split or first pane). */
-async function openPaneConn(session: TermSession, sink: ResttyPaneSink): Promise<void> {
-  if (session.panes.has(sink.paneId)) return;
-  const conn: PaneConn = {
-    paneId: sink.paneId,
-    sink,
-    status: 'connecting',
-    error: undefined,
-    reconnecting: false,
-    transport: createTransport(
-      { ...session.spec, etSessionId: session.panes.size === 0 ? session.resumeEtSessionId : undefined },
-      (state, error, meta) => onPaneStatus(session, sink.paneId, state, error, meta),
-    ),
-  };
-  session.panes.set(sink.paneId, conn);
-  await conn.transport.connect(sink);
-  if (session.panes.size === 1) session.resumeEtSessionId = conn.transport.getPersistentSessionId?.();
-  saveTabLayout();
-}
-
-/** Tear down a closed restty pane's transport; the last pane closing ends the tab. */
-function closePaneConn(session: TermSession, paneId: number): void {
-  const conn = session.panes.get(paneId);
-  if (!conn) return;
-  session.panes.delete(paneId);
-  void conn.transport.disconnect().catch(() => undefined);
-  conn.transport.dispose();
-  session.status = paneSessionStatus(session);
-  session.statusError = paneStatusError(session);
-  if (session.id === activeSessionId) updateSharedStatus(session, tabStatus(session), session.statusError);
-  renderTabs();
-  if (session.panes.size === 0) closeSession(session);
-}
-
-function onPaneStatus(session: TermSession, paneId: number, state: TerminalTransportStatus, error?: string, meta?: SessionStatusMeta): void {
-  const conn = session.panes.get(paneId);
-  if (!conn) return;
-  const effectiveState = state === 'disconnected' && meta?.disconnectReason === 'transport' ? 'error' : state;
-  conn.status = effectiveState;
-  conn.error = error;
-  session.status = paneSessionStatus(session);
-  session.statusError = paneStatusError(session);
-  if (session.id === activeSessionId) updateSharedStatus(session, tabStatus(session), session.statusError);
-  renderTabs();
-  if (state === 'connected' && session.panes.keys().next().value === paneId) {
-    session.resumeEtSessionId = conn.transport.getPersistentSessionId?.() ?? session.resumeEtSessionId;
-    saveTabLayout();
+  // Reveal the focused tab when it changes (or once its surface first mounts);
+  // setActive hides the others and focuses/fits the active one.
+  const view = windowRuntime?.getView(activeTabId);
+  if (activeTabId !== previousActive || (view !== undefined && view.container.hidden)) {
+    windowRuntime?.setActive(activeTabId);
+    applyActiveAppearance();
   }
-  // A clean disconnect closes that pane (the tab ends with its last pane);
-  // errors stay readable, a reconnect's own cycle is ignored, and "keep open"
-  // (closeOnExit off) leaves the ended pane in place for reading.
-  if (state === 'disconnected' && meta?.disconnectReason === 'normal-exit' && !conn.reconnecting && resolveSettings(session.spec.settingsProfileId).closeOnExit) {
-    window.setTimeout(() => {
-      if (conn.reconnecting || !session.panes.has(paneId)) return;
-      if (session.panes.size <= 1) closeSession(session);
-      else session.terminal.closePaneById(paneId);
-    }, 700);
+  (window as unknown as { __resttyAdapter?: unknown }).__resttyAdapter = activeTerminal();
+
+  const active = snapshot.tabs.find((t) => t.id === activeTabId);
+  updateSharedStatus(active?.status ?? 'idle', active?.error, active?.title);
+
+  // Every tab closed after at least one existed: back to the launcher.
+  if (hadTabs && snapshot.tabs.length === 0) navigate('/');
+}
+
+/**
+ * Close any Restty pane the controller no longer tracks. A pane whose session
+ * exits normally is dropped from the controller model directly (not through the
+ * renderer), so the now-dead split is removed here to keep Restty in sync.
+ */
+function reconcilePanes(snapshot: TerminalWindowSnapshot): void {
+  if (!windowRuntime) return;
+  for (const tab of snapshot.tabs) {
+    const view = windowRuntime.getView(tab.id);
+    if (!view) continue;
+    const known = new Set(tab.panes.map((pane) => pane.id));
+    for (const paneId of view.terminal.paneIds()) {
+      if (!known.has(paneId)) view.terminal.closePaneById(paneId);
+    }
   }
 }
 
-function updateSharedStatus(session: TermSession, state: TerminalTransportStatus, error?: string): void {
+function updateSharedStatus(state: TerminalTransportStatus, error?: string, title?: string): void {
   if (!sharedStatus) return;
   sharedStatus.dataset.state = state;
   sharedStatus.dataset.show = state === 'connected' ? 'false' : 'true';
   sharedStatus.innerHTML = `<span class="status-state">${state}</span>${error ? `<span class="status-detail">${escapeHTML(error)}</span>` : ''}`;
-  document.title = state === 'error' ? `${session.title} — error` : session.title;
+  if (title) document.title = state === 'error' ? `${title} — error` : title;
   window.clearTimeout(statusHideTimer);
   if (state === 'connected') statusHideTimer = window.setTimeout(() => sharedStatus && (sharedStatus.dataset.show = 'false'), 700);
 }
 
-function setActiveSession(id: string): void {
-  const session = sessions.find((s) => s.id === id);
-  if (!session) return;
-  activeSessionId = id;
-  sessions.forEach((s) => (s.container.hidden = s.id !== id));
-  activeTerminal = session.terminal;
-  activeSpec = session.spec;
-  appliedFontSelection = session.appliedFont;
-  (window as unknown as { __resttyAdapter?: unknown }).__resttyAdapter = session.terminal;
-
-  const settings = resolveSettings(session.spec.settingsProfileId);
-  applyPwaAppearance(settings);
-  const palette = getThemePalette(settings.theme);
-  setThemeColor(palette.background);
-  document.documentElement.style.setProperty('--term-bg', palette.background);
-
-  document.title = session.title;
-  updateSharedStatus(session, tabStatus(session), session.statusError);
-  renderTabs();
-  saveTabLayout();
-  session.terminal.focus();
-  session.terminal.fit?.();
-}
-
-function closeSession(session: TermSession): void {
-  const index = sessions.indexOf(session);
-  if (index < 0) return;
-  session.titleSub?.dispose();
-  session.paneSubs.forEach((sub) => sub.dispose());
-  session.paneSubs = [];
-  for (const conn of session.panes.values()) {
-    void conn.transport.disconnect().catch(() => undefined);
-    conn.transport.dispose();
-  }
-  session.panes.clear();
-  session.terminal.dispose();
-  session.container.remove();
-  sessions.splice(index, 1);
-  if (sessions.length === 0) {
-    saveTabLayout(); // clears the saved layout so the next launch starts fresh
-    navigate('/');
-    return;
-  }
-  if (session.id === activeSessionId) {
-    setActiveSession(sessions[Math.min(index, sessions.length - 1)].id);
-  } else {
-    renderTabs();
-    saveTabLayout();
-  }
-}
-
-async function openTab(spec: LaunchConnectionIntent): Promise<void> {
-  const session = await createSession(spec);
-  setActiveSession(session.id);
+/** New tab / Ctrl+T / the strip's + button: open another tab on this connection. */
+function openTabFromActive(): void {
+  const intent = activeIntent();
+  if (intent) void controller?.dispatch({ type: 'open-tab', intent });
 }
 
 /** Host the tab strip in the unframed caption slot when present, else the shell. */
@@ -1099,60 +974,22 @@ function placeTabStrip(): void {
   else host.prepend(tabStrip);
 }
 
-/** Tab status = worst across its panes (error > connecting > connected). */
-function tabStatus(session: TermSession): TerminalTransportStatus {
-  if (session.panes.size === 0) return session.status;
-  const states = [...session.panes.values()].map((c) => c.status);
-  if (states.includes('error')) return 'error';
-  if (states.some((s) => s === 'connecting' || s === 'disconnecting')) return 'connecting';
-  if (states.some((s) => s === 'connected')) return 'connected';
-  if (states.every((s) => s === 'disconnected' || s === 'idle')) return 'disconnected';
-  return 'idle';
-}
-
-function sessionHasConnectedPane(session: TermSession): boolean {
-  return session.panes.size > 0
-    ? [...session.panes.values()].some((pane) => pane.status === 'connected')
-    : session.status === 'connected';
-}
-
-function paneSessionStatus(session: TermSession): TerminalTransportStatus {
-  const states = [...session.panes.values()].map((pane) => pane.status);
-  if (states.some((state) => state === 'connected')) return 'connected';
-  if (states.some((state) => state === 'connecting' || state === 'disconnecting')) return 'connecting';
-  if (states.some((state) => state === 'error')) return 'error';
-  if (states.length && states.every((state) => state === 'disconnected' || state === 'idle')) return 'disconnected';
-  return session.status;
-}
-
-function paneStatusError(session: TermSession): string | undefined {
-  return [...session.panes.values()].find((pane) => pane.status === 'error' && pane.error)?.error;
-}
-
-function scheduleTabRender(): void {
-  if (tabRenderFrame) return;
-  tabRenderFrame = window.requestAnimationFrame(() => {
-    tabRenderFrame = 0;
-    renderTabs();
-  });
-}
-
 function renderTabs(): void {
-  if (!tabStrip) return;
-  tabStrip.dataset.count = String(sessions.length);
-  const tabs = sessions
-    .map((s) => {
-      const paneCount = s.panes.size;
-      const splits = paneCount > 1 ? `<span class="term-tab-panes" title="${paneCount} panes">⊞${paneCount}</span>` : '';
-      return `<div class="term-tab" role="tab" draggable="true" data-id="${s.id}" aria-selected="${s.id === activeSessionId}" title="${escapeHTML(s.title)}">
-        <span class="term-tab-status" data-state="${escapeHTML(tabStatus(s))}" aria-hidden="true"></span>
-        <span class="term-tab-title">${escapeHTML(s.title)}</span>
+  if (!tabStrip || !currentSnapshot) return;
+  const tabs = currentSnapshot.tabs;
+  tabStrip.dataset.count = String(tabs.length);
+  const html = tabs
+    .map((t) => {
+      const splits = t.paneCount > 1 ? `<span class="term-tab-panes" title="${t.paneCount} panes">⊞${t.paneCount}</span>` : '';
+      return `<div class="term-tab" role="tab" draggable="true" data-id="${t.id}" aria-selected="${t.id === activeTabId}" title="${escapeHTML(t.title)}">
+        <span class="term-tab-status" data-state="${escapeHTML(t.status)}" aria-hidden="true"></span>
+        <span class="term-tab-title">${escapeHTML(t.title)}</span>
         ${splits}
-        <span class="term-tab-close" data-close="${s.id}" role="button" aria-label="Close tab">×</span>
+        <span class="term-tab-close" data-close="${t.id}" role="button" aria-label="Close tab">×</span>
       </div>`;
     })
     .join('');
-  tabStrip.innerHTML = `${tabs}<button class="term-tab-new" type="button" data-newtab aria-label="New tab">+</button>`;
+  tabStrip.innerHTML = `${html}<button class="term-tab-new" type="button" data-newtab aria-label="New tab">+</button>`;
 }
 
 let dragTabId: string | null = null;
@@ -1187,58 +1024,58 @@ function installTabDragReorder(strip: HTMLElement): void {
 
 /** Move tab `fromId` to where `toId` sits (after it when dropped on its right half). */
 function reorderTab(fromId: string, toId: string | null, clientX: number): void {
-  const from = sessions.findIndex((s) => s.id === fromId);
-  if (from < 0) return;
-  const [moved] = sessions.splice(from, 1);
-  let to = toId ? sessions.findIndex((s) => s.id === toId) : sessions.length;
-  if (to < 0) to = sessions.length;
+  if (!controller || !currentSnapshot) return;
+  if (!currentSnapshot.tabs.some((t) => t.id === fromId)) return;
+  // The controller reorders by removing the source first, then inserting at the
+  // target index, so compute the destination against the post-removal order.
+  const order = currentSnapshot.tabs.map((t) => t.id).filter((id) => id !== fromId);
+  let to = toId ? order.indexOf(toId) : order.length;
+  if (to < 0) to = order.length;
   if (toId && tabStrip) {
     const rect = tabStrip.querySelector<HTMLElement>(`.term-tab[data-id="${toId}"]`)?.getBoundingClientRect();
     if (rect && clientX > rect.left + rect.width / 2) to += 1;
   }
-  sessions.splice(Math.min(to, sessions.length), 0, moved);
-  renderTabs();
-  saveTabLayout();
+  void controller.dispatch({ type: 'reorder-tab', tabId: fromId, toIndex: to });
 }
 
 function onTabStripClick(event: MouseEvent): void {
   const target = event.target as HTMLElement;
   if (target.closest('[data-newtab]')) {
-    if (activeSpec) void openTab(activeSpec);
+    openTabFromActive();
     return;
   }
   const close = target.closest<HTMLElement>('[data-close]');
   if (close) {
     event.stopPropagation();
-    const session = sessions.find((s) => s.id === close.dataset.close);
-    if (session && confirmCloseSession(session)) closeSession(session);
+    const id = close.dataset.close!;
+    if (confirmCloseTab(id)) void controller?.dispatch({ type: 'close-tab', tabId: id });
     return;
   }
   const tab = target.closest<HTMLElement>('.term-tab');
-  if (tab?.dataset.id) setActiveSession(tab.dataset.id);
+  if (tab?.dataset.id) void controller?.dispatch({ type: 'activate-tab', tabId: tab.dataset.id });
 }
 
 function cycleTab(direction: number): void {
-  if (sessions.length < 2) return;
-  const index = sessions.findIndex((s) => s.id === activeSessionId);
-  const next = (index + direction + sessions.length) % sessions.length;
-  setActiveSession(sessions[next].id);
+  const tabs = currentSnapshot?.tabs ?? [];
+  if (tabs.length < 2) return;
+  const index = tabs.findIndex((t) => t.id === activeTabId);
+  const next = (index + direction + tabs.length) % tabs.length;
+  void controller?.dispatch({ type: 'activate-tab', tabId: tabs[next].id });
 }
 
-/** Split the focused Restty pane. */
+/** Split the focused Restty pane; false when there is no active tab to split. */
 function splitActivePane(direction: 'vertical' | 'horizontal'): boolean {
-  const session = activeSession();
-  if (session) {
-    session.terminal.split(direction);
-    return true;
-  }
-  return false;
+  if (!activeIntent()) return false;
+  void controller?.dispatch({ type: 'split-pane', direction });
+  return true;
 }
 
-/** Close the focused Restty pane; returns false when there's nothing to close. */
+/** Close the focused Restty pane; false when only one pane remains. */
 function closeActivePane(): boolean {
-  const session = activeSession();
-  return session?.terminal.closeActivePane() ?? false;
+  const terminal = activeTerminal();
+  if (!terminal || terminal.paneCount() <= 1) return false;
+  void controller?.dispatch({ type: 'close-pane' });
+  return true;
 }
 
 /** In-window tab + split keys for the unframed app window (ADR 0008). */
@@ -1248,7 +1085,7 @@ function installTabShortcuts(): void {
     (event) => {
       if (!event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.code === 'Tab') {
-        if (!currentSettings().captureShortcuts || sessions.length < 2) return;
+        if (!currentSettings().captureShortcuts || (currentSnapshot?.tabs.length ?? 0) < 2) return;
         event.preventDefault();
         event.stopImmediatePropagation();
         cycleTab(event.shiftKey ? -1 : 1);
@@ -1275,13 +1112,12 @@ function installTabShortcuts(): void {
       if (event.code === 'KeyT') {
         event.preventDefault();
         event.stopImmediatePropagation();
-        if (activeSpec) void openTab(activeSpec);
+        openTabFromActive();
       } else if (event.code === 'KeyW') {
-        const session = activeSession();
-        if (session) {
+        if (activeTabId) {
           event.preventDefault();
           event.stopImmediatePropagation();
-          if (confirmCloseSession(session)) closeSession(session);
+          if (confirmCloseTab(activeTabId)) void controller?.dispatch({ type: 'close-tab', tabId: activeTabId });
         }
       }
     },
@@ -1339,7 +1175,7 @@ function installTerminalDebugHud(
     try {
       const diag = await readDiagnostics();
       const canvas = terminalRoot.querySelector('canvas');
-      const size = activeTerminal?.getSize();
+      const size = activeTerminal()?.getSize();
       const win = window as unknown as {
         __resttyBackend?: string;
         __resttyPtyLog?: string[];
@@ -1421,8 +1257,9 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
     event.stopPropagation();
     // restty copies its own canvas selection (no public selection-text query),
     // so enable Copy whenever that path exists; it's a no-op with no selection.
-    const canCopy = (activeTerminal?.hasSelection() ?? false) || canCopyViaRenderer();
-    const paneCount = activeTerminal?.paneCount() ?? 1;
+    const terminal = activeTerminal();
+    const canCopy = (terminal?.hasSelection() ?? false) || canCopyViaRenderer();
+    const paneCount = terminal?.paneCount() ?? 1;
     const items: ContextMenuItem[] = [
       { type: 'item', label: 'Copy', key: '⌃⇧C', disabled: !canCopy, onSelect: copySelection },
       { type: 'item', label: 'Paste', key: '⌃⇧V', onSelect: pasteClipboard },
@@ -1487,51 +1324,45 @@ async function openSessionPicker(): Promise<void> {
 type RendererCopy = { copySelectionToClipboard?: () => Promise<boolean> };
 
 function canCopyViaRenderer(): boolean {
-  return typeof (activeTerminal as RendererCopy | null)?.copySelectionToClipboard === 'function';
+  return typeof (activeTerminal() as RendererCopy | undefined)?.copySelectionToClipboard === 'function';
 }
 
 function copySelection(): void {
-  const renderer = activeTerminal as RendererCopy | null;
+  const terminal = activeTerminal();
+  const renderer = terminal as RendererCopy | undefined;
   if (renderer?.copySelectionToClipboard) {
     void renderer.copySelectionToClipboard();
     return;
   }
-  const text = activeTerminal?.getSelection();
+  const text = terminal?.getSelection();
   if (text) void navigator.clipboard.writeText(text).catch(() => undefined);
 }
 
 function pasteClipboard(): void {
   void navigator.clipboard
     .readText()
-    .then((text) => activeTerminal?.paste(text))
+    .then((text) => activeTerminal()?.paste(text))
     .catch(() => undefined);
 }
 
 function copyPath(): void {
-  const path = activeTerminal?.getCwd() ?? (activeSpec ? formatConnectionTarget(activeSpec) : '');
+  const intent = activeIntent();
+  const path = activeTerminal()?.getCwd() ?? (intent ? formatConnectionTarget(intent) : '');
   if (path) void navigator.clipboard.writeText(path).catch(() => undefined);
 }
 
 function duplicateSession(): void {
-  if (!activeSpec) return;
+  const intent = activeIntent();
+  if (!intent) return;
   // Duplicating an ET session starts a fresh session (new bootstrap); reusing the
   // same etSessionId would hit the single-attach lock ("open in another tab").
-  void openTab({ ...activeSpec, etSessionId: undefined });
+  void controller?.dispatch({ type: 'open-tab', intent: { ...intent, etSessionId: undefined } });
 }
 
-async function reconnect(): Promise<void> {
-  const session = activeSession();
-  if (!session) return;
-  const conn = session.panes.get(session.terminal.getActivePaneId());
-  if (!conn) return;
-  conn.reconnecting = true;
-  try {
-    session.terminal.write('\x1b[2J\x1b[H');
-    await conn.transport.disconnect();
-    await conn.transport.connect(conn.sink);
-  } finally {
-    conn.reconnecting = false;
-  }
+/** Reconnect the focused pane in place: clear it, then re-run its transport. */
+function reconnect(): void {
+  activeTerminal()?.write('\x1b[2J\x1b[H');
+  void controller?.dispatch({ type: 'reconnect-active-pane' });
 }
 
 function renderTerminalConnect(root: HTMLElement): void {
@@ -1568,25 +1399,20 @@ function installShortcutPassThrough(): void {
 }
 
 export function disposeTerminal(): void {
-  if (tabRenderFrame) window.cancelAnimationFrame(tabRenderFrame);
-  tabRenderFrame = 0;
-  for (const session of sessions) {
-    session.titleSub?.dispose();
-    session.paneSubs.forEach((sub) => sub.dispose());
-    for (const conn of session.panes.values()) {
-      void conn.transport.disconnect().catch(() => undefined);
-      conn.transport.dispose();
-    }
-    session.panes.clear();
-    session.terminal.dispose();
-  }
-  sessions.length = 0;
+  unsubscribeSnapshots?.();
+  unsubscribeSnapshots = null;
+  controller?.dispose();
+  controller = null;
+  windowRuntime = null;
+  currentSnapshot = null;
+  activeTabId = undefined;
+  hadTabs = false;
+  window.clearTimeout(statusHideTimer);
   fontSyncCleanup?.();
   fontSyncCleanup = null;
   captionCleanup?.();
   captionCleanup = null;
-  appliedFontSelection = null;
-  activeTerminal = null;
-  activeSpec = null;
-  activeSessionId = null;
+  tabStrip = null;
+  sessionsHost = null;
+  sharedStatus = null;
 }

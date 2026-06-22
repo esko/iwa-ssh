@@ -426,6 +426,11 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     return this.panes.size;
   }
 
+  /** Live restty pane ids, so the view can reconcile them to a controller snapshot. */
+  paneIds(): number[] {
+    return [...this.panes.keys()];
+  }
+
   getActivePaneId(): number {
     return this.activePaneId;
   }
