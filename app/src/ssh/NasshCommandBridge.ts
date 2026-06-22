@@ -43,6 +43,21 @@ export type NasshCommandBridgeOptions = {
 
 let nasshModulesPromise: Promise<NasshCommandModule & NasshJsModule> | null = null;
 
+/**
+ * Combine extra SSH args with a remote command. nassh runs the remote command
+ * from the part of `argstr` after a `--` separator (see `splitCommandLine` +
+ * `connectToFinalize_`), NOT from `connectParams.command` — that field selects
+ * the app type (`ssh`/`mosh`/`sftp`). So a remote command (e.g. the ET
+ * `etterminal` bootstrap) must be appended here as `… -- <command>`, otherwise
+ * ssh ignores it and opens an interactive login shell.
+ */
+export function composeSshArgstr(connectionArgs: string | undefined, remoteCommand: string | undefined): string {
+  const base = (connectionArgs ?? '').trim();
+  const command = (remoteCommand ?? '').trim();
+  if (!command) return base;
+  return base ? `${base} -- ${command}` : `-- ${command}`;
+}
+
 async function loadNasshModules(): Promise<NasshCommandModule & NasshJsModule> {
   if (!nasshModulesPromise) {
     nasshModulesPromise = (async () => {
@@ -215,8 +230,11 @@ export class NasshCommandBridge {
       hostname: this.options.host,
       port: this.options.port,
       username: this.options.username,
-      command: this.options.protocol === 'mosh' ? 'mosh' : this.options.startupCommand ?? '',
-      argstr: this.options.connectionArgs ?? '',
+      command: this.options.protocol === 'mosh' ? 'mosh' : '',
+      argstr: composeSshArgstr(
+        this.options.connectionArgs,
+        this.options.protocol === 'mosh' ? undefined : this.options.startupCommand,
+      ),
       nasshOptions: '--field-trial-direct-sockets',
       identity,
     };
