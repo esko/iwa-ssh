@@ -48,7 +48,12 @@ export class HostKeyGuard {
    * classification stays in this guard/parser; the generic password prompt
    * never guesses from security-sensitive server text.
    */
-  async consumePendingHostKeyResponse(): Promise<'yes' | 'no' | null> {
+  async consumePendingHostKeyResponse(prompt?: string): Promise<'yes' | 'no' | null> {
+    // OpenSSH may send the question through readpassphrase without first
+    // printing the complete prompt to the tty. Feed that structured syscall
+    // payload through the same parser/guard queue so classification remains
+    // here rather than leaking into the generic password modal.
+    if (prompt) void this.handleOutput(prompt);
     if (!this.pendingPrompt) await Promise.resolve();
     if (!this.pendingPrompt) await new Promise((resolve) => setTimeout(resolve, 0));
     const pending = this.pendingPrompt;

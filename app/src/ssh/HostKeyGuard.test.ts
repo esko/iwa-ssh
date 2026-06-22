@@ -53,4 +53,23 @@ describe('HostKeyGuard', () => {
     await handling;
     expect(onDenied).toHaveBeenCalledOnce();
   });
+
+  it('detects a host-key prompt delivered directly through secureInput', async () => {
+    ensureHostTrusted.mockResolvedValueOnce(true);
+    const sendResponse = vi.fn();
+    const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse });
+
+    await expect(
+      guard.consumePendingHostKeyResponse(prompt('target', 'SHA256:secureInputOnly')),
+    ).resolves.toBe('yes');
+
+    expect(ensureHostTrusted).toHaveBeenCalledWith(
+      'target',
+      22,
+      'SHA256:secureInputOnly',
+      'ssh-ed25519',
+      { useLiveVerification: true },
+    );
+    expect(sendResponse).not.toHaveBeenCalled();
+  });
 });

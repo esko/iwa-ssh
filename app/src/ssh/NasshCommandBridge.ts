@@ -193,7 +193,7 @@ export class NasshCommandBridge {
 
     instance.secureInput = async (message, bufLen, echo) => {
       log.ssh.debug('secureInput requested', { echo, bufLen });
-      const hostKeyResponse = await this.hostKeyGuard?.consumePendingHostKeyResponse();
+      const hostKeyResponse = await this.hostKeyGuard?.consumePendingHostKeyResponse(message);
       if (hostKeyResponse) return hostKeyResponse.slice(0, bufLen);
       const input = await showSecureInputPrompt(message, bufLen, echo);
       if (input === null) {
