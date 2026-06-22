@@ -701,6 +701,11 @@ function renderRenderingTab(body: HTMLElement, profileId: string): void {
       `<select name="ligatures"><option value="on"${s.ligatures ? ' selected' : ''}>On</option><option value="off"${s.ligatures ? '' : ' selected'}>Off</option></select>`,
       'Shapes programming ligatures (→, !=, =>) when the font provides them.',
     ) +
+    setRow(
+      'Nerd Font icons',
+      `<select name="nerdFontFallback"><option value="on"${s.nerdFontFallback ? ' selected' : ''}>On</option><option value="off"${s.nerdFontFallback ? '' : ' selected'}>Off</option></select>`,
+      'Falls back to the bundled Symbols Nerd Font so prompt icons render with any text font.',
+    ) +
     `<p class="set-hint set-note">Rendering changes apply to newly opened tabs.</p>`;
   body.querySelector<HTMLSelectElement>('[name="fontSmoothing"]')?.addEventListener('change', (e) =>
     save({ fontSmoothing: (e.target as HTMLSelectElement).value }),
@@ -710,6 +715,9 @@ function renderRenderingTab(body: HTMLElement, profileId: string): void {
   );
   body.querySelector<HTMLSelectElement>('[name="ligatures"]')?.addEventListener('change', (e) =>
     save({ ligatures: (e.target as HTMLSelectElement).value === 'on' }),
+  );
+  body.querySelector<HTMLSelectElement>('[name="nerdFontFallback"]')?.addEventListener('change', (e) =>
+    save({ nerdFontFallback: (e.target as HTMLSelectElement).value === 'on' }),
   );
 }
 

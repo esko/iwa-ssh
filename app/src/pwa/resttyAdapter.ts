@@ -114,14 +114,12 @@ const NERD_SYMBOLS_FALLBACK: ResttyFontSource = {
  * Resolve a font selection (bundled id or `custom:<id>`) to restty fontSources.
  * The selected font is tried first; JetBrains Mono is always appended so a real
  * text font always loads (cellH > 0) even if a custom buffer is missing or a
- * bundled URL fails, and the Symbols Nerd Font is the last fallback so icon
- * glyphs render with any selected font.
+ * bundled URL fails, and (when `nerdFallback`) the Symbols Nerd Font is the last
+ * fallback so icon glyphs render with any selected font.
  */
-async function resolveFontSources(selection: string): Promise<ResttyFontSource[]> {
-  const withFallbacks = (sources: ResttyFontSource[]): ResttyFontSource[] => [
-    ...sources,
-    NERD_SYMBOLS_FALLBACK,
-  ];
+async function resolveFontSources(selection: string, nerdFallback: boolean): Promise<ResttyFontSource[]> {
+  const withFallbacks = (sources: ResttyFontSource[]): ResttyFontSource[] =>
+    nerdFallback ? [...sources, NERD_SYMBOLS_FALLBACK] : sources;
   if (isCustomSelection(selection)) {
     const data = await getCustomFontData(customSelectionId(selection)).catch(() => undefined);
     if (data) return withFallbacks([{ type: 'buffer', data, label: 'Custom font' }, ...BUNDLED_FALLBACK]);
@@ -356,7 +354,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     // buffer sources before opening; restty's default font list (Local Font
     // Access + CDN) is unusable in the IWA. JetBrains Mono is always appended as
     // a fallback so a real font loads (cellH > 0), which keeps scrolling alive.
-    const fontSources = await resolveFontSources(settings.fontFamily);
+    const fontSources = await resolveFontSources(settings.fontFamily, settings.nerdFontFallback);
 
     const term = new Terminal({
       // Per-pane app options: every pane (the first and every split) gets its
@@ -595,7 +593,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   /** Reapply the terminal font live (every pane) without reopening. */
   async setFont(settings: PwaTerminalSettings): Promise<void> {
     this.settings = settings;
-    const sources = await resolveFontSources(settings.fontFamily);
+    const sources = await resolveFontSources(settings.fontFamily, settings.nerdFontFallback);
     await this.surface?.setFontSources?.(sources);
     // restty's setFontSources updates cell metrics + schedules a paint but omits
     // the WASM renderUpdate() that setFontSize performs, so already-painted cells

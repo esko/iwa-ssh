@@ -46,6 +46,8 @@ export type PwaTerminalSettings = {
   fontHinting: 'off' | 'light' | 'normal';
   /** Programming-ligature shaping across adjacent operator cells. */
   ligatures: boolean;
+  /** Append the bundled Symbols Nerd Font so icon glyphs render with any font. */
+  nerdFontFallback: boolean;
   /** Capture Ctrl+T / Ctrl+W / Ctrl+Tab in-app instead of passing to the OS. */
   captureShortcuts: boolean;
   /** Ask for confirmation before closing a tab whose session is connected. */
