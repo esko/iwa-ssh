@@ -167,6 +167,11 @@ type PaneCallbacks = {
 };
 type PaneConnectOptions = { url?: string; cols?: number; rows?: number; callbacks: PaneCallbacks };
 
+// Restty buffers PTY output for up to 40 ms before parsing it and draining
+// generated replies. Keep the synthetic DA1 completion behind that drain so
+// Kitty's detector sees its graphics acknowledgements before it exits.
+const DA1_REPLY_DELAY_MS = 50;
+
 /** The per-pane sink a {@link TerminalTransport} binds to (one per split). */
 export type ResttyPaneSink = TerminalSink & { readonly paneId: number; insertText(data: string): void };
 
@@ -186,12 +191,14 @@ export type ResttyPaneSink = TerminalSink & { readonly paneId: number; insertTex
  * One bridge per pane gives every split its own independent session, replacing
  * the spike's single shared loopback PTY + `term.write()` path.
  */
-class PaneBridge implements TerminalSink {
+/** @internal Exported for transport-ordering regression coverage. */
+export class PaneBridge implements TerminalSink {
   private callbacks: PaneCallbacks | null = null;
   private connected = false;
   private viewport: TerminalViewport = { ...DEFAULT_TERMINAL_VIEWPORT };
   private readonly inputListeners = new Set<(data: string) => void>();
   private readonly resizeListeners = new Set<(viewport: TerminalViewport) => void>();
+  private readonly daReplyTimers = new Set<ReturnType<typeof setTimeout>>();
   private readonly decoder = new TextDecoder();
 
   constructor(
@@ -238,6 +245,8 @@ class PaneBridge implements TerminalSink {
     this.callbacks = null;
     this.inputListeners.clear();
     this.resizeListeners.clear();
+    this.daReplyTimers.forEach((timer) => clearTimeout(timer));
+    this.daReplyTimers.clear();
   }
 
   // --- TerminalAdapter sink (transport -> bridge -> pane) ---
@@ -253,7 +262,13 @@ class PaneBridge implements TerminalSink {
     // once a transport is listening on the input path.
     if (this.connected) {
       const reply = deviceAttributeReply(text);
-      if (reply) this.emitInput(reply);
+      if (reply) {
+        const timer = setTimeout(() => {
+          this.daReplyTimers.delete(timer);
+          if (this.connected) this.emitInput(reply);
+        }, DA1_REPLY_DELAY_MS);
+        this.daReplyTimers.add(timer);
+      }
     }
   }
 
