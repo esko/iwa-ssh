@@ -1,4 +1,5 @@
 import type { Profile } from '../settings/types';
+import type { ConnectionIntent } from '../connections/ConnectionIntent';
 
 export type TerminalPalette = {
   name: string;
@@ -47,24 +48,7 @@ export type PwaTerminalSettings = {
   closeOnExit: boolean;
 };
 
-export type PwaConnectionSpec = {
-  protocol: 'ssh' | 'mosh' | 'et' | 'echo';
-  username?: string;
-  hostname: string;
-  port?: number;
-  etPort?: number;
-  /** Opaque local resume handle. Never contains ET wire credentials. */
-  etSessionId?: string;
-  args: string[];
-  argstr?: string;
-  profileId?: string;
-  identityId?: string;
-  settingsProfileId?: string;
-  startupCommand?: string;
-  rawCommand?: string;
-};
-
-export type RecentConnection = PwaConnectionSpec & {
+export type RecentConnection = ConnectionIntent & {
   title: string;
   connectedAt: number;
 };

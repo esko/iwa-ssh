@@ -1,7 +1,7 @@
 import type { TerminalSink, TerminalSubscription } from '../terminal/TerminalAdapter';
 import { NasshCommandBridge } from '../ssh/NasshCommandBridge';
 import { saveEtSession, type EtSessionRecord } from '../storage/indexedDb';
-import type { PwaConnectionSpec } from '../pwa/types';
+import type { ConnectionIntent } from '../connections/ConnectionIntent';
 import { wrapEtPasskey } from './sessionStore';
 import { buildEtBootstrapCommand } from './bootstrapCommand';
 
@@ -60,7 +60,7 @@ function bootstrapError(output: string, clientId: string, passkey: string): Erro
   return new Error(redacted ? `etterminal registration failed:\n${redacted}` : 'Timed out waiting for etterminal registration');
 }
 
-export async function createEtSession(spec: PwaConnectionSpec): Promise<string> {
+export async function createEtSession(spec: ConnectionIntent): Promise<string> {
   const clientId = randomText(16);
   const passkey = randomText(32);
   const localId = crypto.randomUUID();

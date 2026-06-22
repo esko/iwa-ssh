@@ -2,7 +2,8 @@ import type { TerminalSink, TerminalSubscription } from '../terminal/TerminalAda
 import { NasshCommandBridge } from '../ssh/NasshCommandBridge';
 import { checkMoshPrerequisites } from '../ssh/moshGate';
 import { areUpstreamAssetsReady } from '../ssh/upstreamAssets';
-import type { PwaConnectionSpec, TerminalTransportStatus } from './types';
+import type { TerminalTransportStatus } from './types';
+import type { ConnectionIntent, LaunchConnectionIntent } from '../connections/ConnectionIntent';
 import { createEtSession } from '../et/bootstrap';
 import { readEtJournal } from '../et/sessionStore';
 import { forgetEtSession, getEtSession } from '../storage/indexedDb';
@@ -21,7 +22,7 @@ export class EchoTransport implements TerminalTransport {
   private input: TerminalSubscription | null = null;
 
   constructor(
-    private readonly spec: PwaConnectionSpec,
+    private readonly spec: LaunchConnectionIntent,
     private readonly onStatus: TransportStatusHandler,
     private readonly options?: { banner?: string }
   ) {}
@@ -59,7 +60,7 @@ export class SshDirectSocketsTransport implements TerminalTransport {
   private delegate: EchoTransport | NasshCommandBridge | null = null;
 
   constructor(
-    private readonly spec: PwaConnectionSpec,
+    private readonly spec: ConnectionIntent,
     private readonly onStatus: TransportStatusHandler,
   ) {}
 
@@ -150,7 +151,7 @@ export class EtDirectSocketsTransport implements TerminalTransport {
   private stopping: Promise<void> | null = null;
 
   constructor(
-    private readonly spec: PwaConnectionSpec,
+    private readonly spec: ConnectionIntent,
     private readonly onStatus: TransportStatusHandler,
   ) {
     this.sessionId = spec.etSessionId;
@@ -296,7 +297,7 @@ export class EtDirectSocketsTransport implements TerminalTransport {
   }
 }
 
-export function createTransport(spec: PwaConnectionSpec, onStatus: TransportStatusHandler): TerminalTransport {
+export function createTransport(spec: LaunchConnectionIntent, onStatus: TransportStatusHandler): TerminalTransport {
   if (spec.protocol === 'et') return new EtDirectSocketsTransport(spec, onStatus);
   return spec.protocol === 'echo'
     ? new EchoTransport(spec, onStatus, {

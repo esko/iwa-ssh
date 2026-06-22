@@ -1,8 +1,8 @@
 import {
-  normalizeConnectionSpec,
-  type TerminalConnectionSpec,
-  type TerminalProtocol,
-} from './TerminalConnectionSpec';
+  normalizeConnectionIntent,
+  type ConnectionIntent,
+  type ConnectionProtocol,
+} from './ConnectionIntent';
 
 const SSH_FLAG_OPTIONS = '46AaCfGgKkMNnqsTtVvXxYy@';
 
@@ -75,7 +75,10 @@ export function parseSSHDestination(destination: string | null): ParsedSshDestin
 
   const match = destination.match(/^(.+)@([^@]+)$/);
   if (!match) {
-    return null;
+    const hostname = destination.startsWith('[') && destination.endsWith(']')
+      ? destination.slice(1, -1)
+      : destination;
+    return hostname.trim() ? { username: '', hostname, port: null } : null;
   }
 
   const [, username, rawHostname] = match;
@@ -102,10 +105,10 @@ function extractPort(args: string): number | undefined {
   return undefined;
 }
 
-export function parseTerminalConnectionCommand(input: string): TerminalConnectionSpec | null {
+export function parseTerminalConnectionCommand(input: string): ConnectionIntent | null {
   const tokens = shellTokens(input.trim());
   const first = tokens[0]?.value.toLowerCase();
-  const protocol: TerminalProtocol = first === 'mosh' ? 'mosh' : first === 'et' ? 'et' : 'ssh';
+  const protocol: ConnectionProtocol = first === 'mosh' ? 'mosh' : first === 'et' ? 'et' : 'ssh';
   const command = first === 'ssh' || first === 'mosh' || first === 'et'
     ? input.slice((tokens[0]?.index ?? 0) + (tokens[0]?.raw.length ?? 0)).trim()
     : input.trim();
@@ -116,7 +119,7 @@ export function parseTerminalConnectionCommand(input: string): TerminalConnectio
     return null;
   }
 
-  return normalizeConnectionSpec({
+  return normalizeConnectionIntent({
     protocol,
     username: destination.username,
     hostname: destination.hostname,

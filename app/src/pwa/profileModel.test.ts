@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { layoutSpecKey, profileToSpec, specToQuery, specFromQuery, specTitle } from './profileModel';
+import { describe, expect, it, vi } from 'vitest';
+import { layoutSpecKey, profileToSpec, recordConnection, specToQuery, specFromQuery, specTitle } from './profileModel';
 import type { Profile } from '../settings/types';
 
 describe('profile to terminal query mapping', () => {
@@ -16,7 +16,7 @@ describe('profile to terminal query mapping', () => {
       startupCommand: 'cd /home/alice',
     };
 
-    // profileToSpec converts Profile to PwaConnectionSpec
+    // profileToSpec converts Profile to the canonical ConnectionIntent.
     const spec = profileToSpec(profile);
     expect(spec.protocol).toBe('ssh');
     expect(spec.username).toBe('alice');
@@ -99,5 +99,15 @@ describe('layoutSpecKey', () => {
     expect(layoutSpecKey({ ...base, etPort: 2022 })).not.toBe(layoutSpecKey({ ...base, etPort: 2023 }));
     expect(layoutSpecKey({ ...base, identityId: 'a' })).not.toBe(layoutSpecKey({ ...base, identityId: 'b' }));
     expect(layoutSpecKey({ ...base, startupCommand: 'one' })).not.toBe(layoutSpecKey({ ...base, startupCommand: 'two' }));
+  });
+});
+
+describe('recents', () => {
+  it('never stores development echo intents', async () => {
+    const setItem = vi.fn();
+    vi.stubGlobal('localStorage', { getItem: vi.fn(), setItem });
+    await recordConnection({ protocol: 'echo', testOnly: true, hostname: 'local', args: [] });
+    expect(setItem).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });

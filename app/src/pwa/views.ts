@@ -1,5 +1,5 @@
 import type { Profile } from '../settings/types';
-import { deleteProfile, forgetEtSession, getEtSession, listEtSessionSummaries, listProfiles, purgeStaleEtSessions, saveIdentity, saveProfile, type EtSessionSummary } from '../storage/indexedDb';
+import { deleteProfile, forgetEtSession, getEtSession, getProfile, listEtSessionSummaries, listProfiles, purgeStaleEtSessions, saveIdentity, saveProfile, type EtSessionSummary } from '../storage/indexedDb';
 import { encryptPrivateKey } from '../security/KeyCrypto';
 import { cacheIdentityPassphrase } from '../ssh/IdentityPassphrase';
 import { escapeHTML, formatTime, requiredElement } from './dom';
@@ -37,20 +37,21 @@ import {
   layoutSpecKey,
   profileToSpec,
   recordConnection,
-  specFromQuery,
   specToQuery,
 } from './profileModel';
 import { shouldPassThroughSystemShortcut } from './shortcuts';
 import { showContextMenu, type ContextMenuItem } from './contextMenu';
 import { CAPTION_TABS_SLOT_ID } from './windowControls';
 import { createTransport, type TerminalTransport } from './transport';
-import type { PwaConnectionSpec, PwaTerminalSettings, TerminalTransportStatus } from './types';
+import type { PwaTerminalSettings, TerminalTransportStatus } from './types';
 import type { SessionStatusMeta } from '../settings/types';
+import { resolveConnectionIntent, type LaunchConnectionIntent } from '../connections/ConnectionIntent';
+import { parseTerminalConnectionCommand } from '../connections/sshCommandParser';
 
 // `active*` always point at the focused tab's session, so the existing helpers
 // (copy, reconnect, settings sync, context menu) keep operating on it.
 let activeTerminal: ResttyTerminalAdapter | null = null;
-let activeSpec: PwaConnectionSpec | null = null;
+let activeSpec: LaunchConnectionIntent | null = null;
 /** Font currently applied to the active terminal; guards redundant reapplies. */
 let appliedFontSelection: string | null = null;
 let fontSyncCleanup: (() => void) | null = null;
@@ -73,7 +74,7 @@ type PaneConn = {
 /** One terminal session per tab (ADR 0008); restty tabs fan out to split panes. */
 type TermSession = {
   id: string;
-  spec: PwaConnectionSpec;
+  spec: LaunchConnectionIntent;
   title: string;
   status: TerminalTransportStatus;
   statusError?: string;
@@ -100,7 +101,7 @@ function activeSession(): TermSession | null {
 
 // Per-window tab persistence (sessionStorage survives reload, not relaunch).
 const TAB_LAYOUT_KEY = 'iwa-ssh-tab-layout';
-type SavedTabLayout = { specs: PwaConnectionSpec[]; activeIndex: number };
+type SavedTabLayout = { specs: LaunchConnectionIntent[]; activeIndex: number };
 
 /** Identity of a connection, so a fresh launch doesn't inherit stale tabs. */
 function saveTabLayout(): void {
@@ -853,34 +854,11 @@ async function renderAboutTab(body: HTMLElement): Promise<void> {
 
 export async function renderTerminal(root: HTMLElement): Promise<void> {
   const query = new URLSearchParams(window.location.search);
-  let spec = specFromQuery(query);
-  const resumeId = query.get('resume')?.trim();
-  if (resumeId) {
-    const saved = await getEtSession(resumeId);
-    if (saved && (saved.phase === 'active' || saved.phase === 'detached')) {
-      spec = {
-        protocol: 'et',
-        username: saved.username,
-        hostname: saved.host,
-        port: saved.sshPort,
-        etPort: saved.etPort,
-        etSessionId: saved.id,
-        args: [],
-        argstr: saved.connectionArgs,
-        profileId: saved.profileId,
-        identityId: saved.identityId,
-        settingsProfileId: saved.settingsProfileId,
-        startupCommand: saved.startupCommand,
-      };
-    } else {
-      root.innerHTML = '<div class="connect-page"><p class="set-hint">This Eternal Terminal session is no longer resumable. Return to the launcher and forget it.</p></div>';
-      return;
-    }
-  }
-  if (query.get('profile')) {
-    const profile = (await listProfiles()).find((item) => item.id === query.get('profile'));
-    if (profile) spec = profileToSpec(profile);
-  }
+  const spec = await resolveConnectionIntent(query, {
+    getEtSession,
+    getProfile,
+    allowTestIntent: import.meta.env.DEV,
+  });
   if (!spec) {
     renderTerminalConnect(root);
     return;
@@ -936,7 +914,7 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
 }
 
 /** Build a fully-connected session (its own renderer + transport) in a new tab. */
-async function createSession(spec: PwaConnectionSpec): Promise<TermSession> {
+async function createSession(spec: LaunchConnectionIntent): Promise<TermSession> {
   const resumeEtSessionId = spec.etSessionId;
   spec = { ...spec, etSessionId: undefined };
   const settings = resolveSettings(spec.settingsProfileId);
@@ -1108,7 +1086,7 @@ function closeSession(session: TermSession): void {
   }
 }
 
-async function openTab(spec: PwaConnectionSpec): Promise<void> {
+async function openTab(spec: LaunchConnectionIntent): Promise<void> {
   const session = await createSession(spec);
   setActiveSession(session.id);
 }
@@ -1574,15 +1552,8 @@ function renderTerminalConnect(root: HTMLElement): void {
     event.preventDefault();
     const raw = requiredElement<HTMLInputElement>('#terminalCommand', root).value.trim();
     if (!raw) return;
-    // Accept an optional leading `ssh `/`mosh ` token so Mosh is reachable from
-    // quick connect without a separate control; the rest is `[user@]host`.
-    const protoMatch = raw.match(/^(ssh|mosh|et)\s+(.+)$/i);
-    const protocol = protoMatch && protoMatch[1].toLowerCase() === 'mosh' ? 'mosh' : protoMatch && protoMatch[1].toLowerCase() === 'et' ? 'et' : 'ssh';
-    const target = (protoMatch ? protoMatch[2] : raw).trim();
-    const at = target.includes('@') ? target.split('@') : [undefined, target];
-    const params = new URLSearchParams({ protocol, host: at[1] ?? target });
-    if (at[0]) params.set('username', at[0]);
-    navigate(`/terminal.html?${params.toString()}`);
+    const intent = parseTerminalConnectionCommand(raw);
+    if (intent) navigate(`/terminal.html?${specToQuery(intent)}`);
   });
 }
 

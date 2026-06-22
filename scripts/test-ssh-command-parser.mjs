@@ -22,7 +22,7 @@ async function transpile(sourcePath, destName) {
       verbatimModuleSyntax: true,
     },
   }).outputText
-    .replaceAll('./TerminalConnectionSpec', './TerminalConnectionSpec.mjs')
+    .replaceAll('./ConnectionIntent', './ConnectionIntent.mjs')
     .replaceAll('./xtermOptions', './xtermOptions.mjs')
     .replaceAll('./themes', './themes.mjs')
     .replaceAll('./upstreamAssets', './upstreamAssets.mjs');
@@ -30,7 +30,7 @@ async function transpile(sourcePath, destName) {
 }
 
 try {
-  await transpile('app/src/connections/TerminalConnectionSpec.ts', 'TerminalConnectionSpec.mjs');
+  await transpile('app/src/connections/ConnectionIntent.ts', 'ConnectionIntent.mjs');
   await transpile('app/src/connections/sshCommandParser.ts', 'sshCommandParser.mjs');
   await transpile('app/src/settings/themes.ts', 'themes.mjs');
   await transpile('app/src/settings/defaults.ts', 'defaults.mjs');
@@ -43,10 +43,10 @@ try {
     parseTerminalConnectionCommand,
   } = await import(path.join(tempDir, 'sshCommandParser.mjs'));
   const {
-    profileToConnectionSpec,
-    normalizeConnectionSpec,
-    connectionSpecToSessionTitle,
-  } = await import(path.join(tempDir, 'TerminalConnectionSpec.mjs'));
+    connectionIntentFromProfile,
+    normalizeConnectionIntent,
+    connectionIntentTitle,
+  } = await import(path.join(tempDir, 'ConnectionIntent.mjs'));
   const {
     clampScrollback,
     SCROLLBACK_MIN,
@@ -65,6 +65,10 @@ try {
   const {
     checkMoshPrerequisites,
   } = await import(path.join(tempDir, 'moshGate.mjs'));
+
+  const stableIntent = (intent) => Object.fromEntries(
+    Object.entries(intent).filter(([key, value]) => value !== undefined || !['etPort', 'etSessionId', 'settingsProfileId', 'rawCommand'].includes(key)),
+  );
 
   assert.deepEqual(parseCommand('abc@localhost'), {
     destination: 'abc@localhost',
@@ -95,7 +99,7 @@ try {
     port: null,
   });
 
-  assert.deepEqual(parseTerminalConnectionCommand('ssh user@example.com'), {
+  assert.deepEqual(stableIntent(parseTerminalConnectionCommand('ssh user@example.com')), {
     protocol: 'ssh',
     username: 'user',
     hostname: 'example.com',
@@ -107,7 +111,7 @@ try {
     startupCommand: undefined,
     rawCommand: 'ssh user@example.com',
   });
-  assert.deepEqual(parseTerminalConnectionCommand('ssh -p 2222 user@example.com'), {
+  assert.deepEqual(stableIntent(parseTerminalConnectionCommand('ssh -p 2222 user@example.com')), {
     protocol: 'ssh',
     username: 'user',
     hostname: 'example.com',
@@ -119,7 +123,7 @@ try {
     startupCommand: undefined,
     rawCommand: 'ssh -p 2222 user@example.com',
   });
-  assert.deepEqual(parseTerminalConnectionCommand('mosh "abc@a b c@example.com"'), {
+  assert.deepEqual(stableIntent(parseTerminalConnectionCommand('mosh "abc@a b c@example.com"')), {
     protocol: 'mosh',
     username: 'abc@a b c',
     hostname: 'example.com',
@@ -131,7 +135,7 @@ try {
     startupCommand: undefined,
     rawCommand: 'mosh "abc@a b c@example.com"',
   });
-  assert.deepEqual(parseTerminalConnectionCommand('et user@example.com'), {
+  assert.deepEqual(stableIntent(parseTerminalConnectionCommand('et user@example.com')), {
     protocol: 'et',
     username: 'user',
     hostname: 'example.com',
@@ -157,8 +161,8 @@ try {
     connectionArgs: '-o StrictHostKeyChecking=yes',
     startupCommand: 'tmux attach',
   };
-  const spec = profileToConnectionSpec(profile);
-  assert.deepEqual(spec, {
+  const spec = connectionIntentFromProfile(profile);
+  assert.deepEqual(stableIntent(spec), {
     protocol: 'mosh',
     username: 'user',
     hostname: 'example.com',
@@ -169,10 +173,10 @@ try {
     identityId: 'id-7',
     startupCommand: 'tmux attach',
   });
-  assert.equal(connectionSpecToSessionTitle(spec), 'mosh user@example.com:2222');
+  assert.equal(connectionIntentTitle(spec), 'mosh user@example.com:2222');
 
   // Profiles without a protocol default to ssh, and port 22 is omitted from the title.
-  const sshSpec = profileToConnectionSpec({
+  const sshSpec = connectionIntentFromProfile({
     id: 'p2',
     name: 'plain',
     host: 'host',
@@ -180,11 +184,11 @@ try {
     username: 'me',
   });
   assert.equal(sshSpec.protocol, 'ssh');
-  assert.equal(connectionSpecToSessionTitle(sshSpec), 'ssh me@host');
+  assert.equal(connectionIntentTitle(sshSpec), 'ssh me@host');
 
-  // normalizeConnectionSpec trims, drops empties, and supplies the ssh default port.
+  // normalizeConnectionIntent trims, drops empties, and supplies the SSH default port.
   assert.deepEqual(
-    normalizeConnectionSpec({
+    stableIntent(normalizeConnectionIntent({
       protocol: 'ssh',
       username: '  me  ',
       hostname: ' host ',
@@ -194,8 +198,7 @@ try {
       profileId: '',
       identityId: undefined,
       startupCommand: '  ls  ',
-      rawCommand: undefined,
-    }),
+    })),
     {
       protocol: 'ssh',
       username: 'me',
@@ -206,7 +209,6 @@ try {
       profileId: undefined,
       identityId: undefined,
       startupCommand: 'ls',
-      rawCommand: undefined,
     },
   );
 
