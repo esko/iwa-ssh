@@ -47,6 +47,8 @@ import type { PwaTerminalSettings, TerminalTransportStatus } from './types';
 import type { SessionStatusMeta } from '../settings/types';
 import { resolveConnectionIntent, type LaunchConnectionIntent } from '../connections/ConnectionIntent';
 import { parseTerminalConnectionCommand } from '../connections/sshCommandParser';
+import { readClipboardPaste } from './clipboardMedia';
+import { shellQuotePath } from '../ssh/RemoteImageUploader';
 
 // `active*` always point at the focused tab's session, so the existing helpers
 // (copy, reconnect, settings sync, context menu) keep operating on it.
@@ -1246,7 +1248,15 @@ function installTabShortcuts(): void {
   document.addEventListener(
     'keydown',
     (event) => {
-      if (!event.ctrlKey || event.metaKey || event.altKey) return;
+      if (!event.ctrlKey || event.metaKey) return;
+      if (event.shiftKey && event.code === 'KeyV') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (event.altKey) void uploadClipboardImageAndPastePath();
+        else void pasteClipboard();
+        return;
+      }
+      if (event.altKey) return;
       if (event.code === 'Tab') {
         if (!currentSettings().captureShortcuts || sessions.length < 2) return;
         event.preventDefault();
@@ -1425,7 +1435,8 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
     const paneCount = activeTerminal?.paneCount() ?? 1;
     const items: ContextMenuItem[] = [
       { type: 'item', label: 'Copy', key: '⌃⇧C', disabled: !canCopy, onSelect: copySelection },
-      { type: 'item', label: 'Paste', key: '⌃⇧V', onSelect: pasteClipboard },
+      { type: 'item', label: 'Paste', key: '⌃⇧V', onSelect: () => void pasteClipboard() },
+      { type: 'item', label: 'Upload image and paste path', key: '⌃⌥⇧V', onSelect: () => void uploadClipboardImageAndPastePath() },
       { type: 'item', label: 'Copy path', onSelect: copyPath },
       { type: 'separator' },
       ...([
@@ -1500,11 +1511,39 @@ function copySelection(): void {
   if (text) void navigator.clipboard.writeText(text).catch(() => undefined);
 }
 
-function pasteClipboard(): void {
-  void navigator.clipboard
-    .readText()
-    .then((text) => activeTerminal?.paste(text))
-    .catch(() => undefined);
+async function pasteClipboard(): Promise<void> {
+  const session = activeSession();
+  if (!session) return;
+  const paneId = session.terminal.getActivePaneId();
+  try {
+    const paste = await readClipboardPaste();
+    if (paste.kind === 'image') await session.terminal.displayImage(paste.blob, undefined, paneId);
+    else if (paste.kind === 'text') session.panes.get(paneId)?.sink.insertText(paste.text);
+  } catch (error) {
+    updateSharedStatus(session, 'error', error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function uploadClipboardImageAndPastePath(): Promise<void> {
+  const session = activeSession();
+  if (!session) return;
+  const pane = session.panes.get(session.terminal.getActivePaneId());
+  if (!pane?.transport.uploadFile) {
+    updateSharedStatus(session, 'error', 'Image upload is unavailable for this connection.');
+    return;
+  }
+  try {
+    const paste = await readClipboardPaste();
+    if (paste.kind !== 'image') throw new Error('The clipboard does not contain an image.');
+    updateSharedStatus(session, 'connecting', 'Uploading clipboard image…');
+    const path = await pane.transport.uploadFile(paste.blob, {
+      onProgress: ({ uploaded, total }) => updateSharedStatus(session, 'connecting', `Uploading image… ${Math.round(uploaded / Math.max(1, total) * 100)}%`),
+    });
+    pane.sink.insertText(shellQuotePath(path));
+    updateSharedStatus(session, 'connected');
+  } catch (error) {
+    updateSharedStatus(session, 'error', error instanceof Error ? error.message : String(error));
+  }
 }
 
 function copyPath(): void {

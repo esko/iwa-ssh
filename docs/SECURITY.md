@@ -137,6 +137,24 @@ New imports always use `Identity.encryptedPrivateKey` — a versioned blob (`for
 
 SSH traffic uses upstream wassh via nassh `CommandInstance` (`--field-trial-direct-sockets`). `DirectSocketProbe.ts` is for capability checks only (e.g. `/debug`). `nasshChromePolyfill.ts` does not implement `chrome.sockets` — wassh must use Direct Sockets.
 
+## Clipboard images and SFTP sidecars
+
+- Clipboard access occurs only after the user invokes a paste action. Raster
+  media is restricted to PNG, JPEG, WebP, and GIF and rejected above 25 MiB.
+- Inline paste decodes the first image frame to PNG and feeds quiet direct
+  Kitty packets only to the focused Restty output callback. It never traverses
+  a transport or enters the remote shell's stdin.
+- Upload paste opens a separate nassh SFTP subsystem connection to the exact
+  profile SSH host and port. It reuses identity staging, known-host state, live
+  host-key confirmation, and secure-input UI; it does not weaken SSH trust.
+- Original bytes are written with `0600` permissions under
+  `~/.cache/iwa-ssh/pastes/` through an exclusive `.part` name and atomic
+  rename. Cancellation and failure remove the partial file best-effort.
+- Cleanup considers only randomized `iwa-paste-*` files owned by this feature
+  and older than seven days. Cleanup failure does not broaden deletion or block
+  a new upload. Remote files remain exposed to the security boundary of the
+  remote Unix account until deleted.
+
 ## Content Security Policy
 
 IWA bundles enforce strict CSP (set via bundle `headerOverride` in `iwa/webbundle.config.ts`):
