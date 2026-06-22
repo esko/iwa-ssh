@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from 'vite';
 import { cpSync, createReadStream, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { resolve } from 'node:path';
+import { patchResttyRenderer } from './scripts/restty-renderer-patches';
 
 /** Public URL base for copied upstream libapps assets (see scripts/fetch-upstream-assets.mjs). */
 const UPSTREAM_BASE = '/upstream';
@@ -40,6 +41,18 @@ function iwaTrustedTypesFirst(): Plugin {
         if (html.includes('/src/security/trustedTypes.ts')) return html;
         return html.replace('<head>', `<head>\n    ${tag}`);
       },
+    },
+  };
+}
+
+/** Patch renderer defects in the pinned Restty bundle, with drift checks. */
+function resttyRendererPatches(): Plugin {
+  return {
+    name: 'iwa-restty-renderer-patches',
+    enforce: 'pre',
+    transform(code, id) {
+      const patched = patchResttyRenderer(code, id);
+      return patched === null ? null : { code: patched, map: null };
     },
   };
 }
@@ -139,10 +152,16 @@ export default defineConfig({
   },
   assetsInclude: ['**/*.wasm'],
   plugins: [
+    resttyRendererPatches(),
     upstreamStaticDev(),
     copyUpstreamDist(),
     iwaTrustedTypesFirst(),
   ],
+  optimizeDeps: {
+    // Keep Restty out of esbuild prebundling so the renderer drift check and
+    // Powerline sampling fix run in both dev and production builds.
+    exclude: ['@eslzzyl/restty'],
+  },
   build: {
     outDir: resolve(__dirname, 'dist'),
     emptyOutDir: true,

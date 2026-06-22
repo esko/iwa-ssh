@@ -51,12 +51,16 @@ function renderOptions(settings: PwaTerminalSettings): {
   fontHinting: boolean;
   fontHintTarget: 'auto' | 'light' | 'normal';
   ligatures: boolean;
+  nerdIconScale: number;
 } {
   return {
     alphaBlending: settings.fontSmoothing === 'grayscale' ? 'native' : 'linear-corrected',
     fontHinting: settings.fontHinting !== 'off',
     fontHintTarget: settings.fontHinting === 'normal' ? 'normal' : 'light',
     ligatures: settings.ligatures,
+    // Symbols Nerd Font is designed around a larger icon em square than the
+    // bundled text faces. Keep prompt/file icons subordinate to normal text.
+    nerdIconScale: 0.75,
   };
 }
 

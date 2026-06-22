@@ -1,6 +1,6 @@
 {
   "name": "iwa-ssh",
-  "version": "0.1.41",
+  "version": "0.1.42",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "install:iwa": "node scripts/install-iwa-dev.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "vitest run && node scripts/test-ssh-command-parser.mjs",
+    "test": "vitest run && node scripts/test-ssh-command-parser.mjs && node --experimental-strip-types scripts/test-restty-glyph-rendering.mjs",
     "typecheck": "tsc -b --noEmit",
     "generate:et-proto": "protoc -I app/src/et/proto --plugin=protoc-gen-es=./node_modules/.bin/protoc-gen-es --es_out=app/src/et/proto --es_opt=target=ts app/src/et/proto/ET.proto app/src/et/proto/ETerminal.proto",
     "fetch:et-protocol": "node scripts/fetch-et-protocol.mjs",
