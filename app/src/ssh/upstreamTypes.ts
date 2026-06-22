@@ -59,6 +59,30 @@ export type NasshCommandInstance = {
   onPluginExit: (code: number) => Promise<void>;
   terminateProgram_: () => void;
   exit: (code: number, noReconnect: boolean) => void;
+  onSftpInitialised?: () => void;
+  sftpClient?: NasshSftpClient | null;
+};
+
+export type NasshSftpEntry = {
+  filename: string;
+  lastModified?: number;
+  isDirectory?: boolean;
+};
+
+export type NasshSftpClient = {
+  isInitialised: boolean;
+  writeChunkSize: number;
+  realPath(path: string): Promise<{ files: NasshSftpEntry[] }>;
+  makeDirectory(path: string): Promise<unknown>;
+  fileStatus(path: string): Promise<unknown>;
+  openDirectory(path: string): Promise<string>;
+  scanDirectory(handle: string): Promise<NasshSftpEntry[]>;
+  openFile(path: string, flags: number): Promise<string>;
+  writeChunk(handle: string, offset: number, data: Uint8Array): Promise<unknown>;
+  closeFile(handle: string): Promise<unknown>;
+  setFileStatus(path: string, attrs: { permissions: number }): Promise<unknown>;
+  renameFile(from: string, to: string): Promise<unknown>;
+  removeFile(path: string): Promise<unknown>;
 };
 
 export type NasshCommandInstanceCtor = new (argv: {
@@ -67,6 +91,8 @@ export type NasshCommandInstanceCtor = new (argv: {
   environment?: Record<string, string>;
   onExit?: (code: number) => void;
   terminalLocation?: { href: string; hash: string; replace: (url: string) => void };
+  isSftp?: boolean;
+  sftpStartupCallback?: (success: boolean, message: string | null) => void;
 }) => NasshCommandInstance;
 
 export type NasshJsModule = {

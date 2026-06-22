@@ -6,6 +6,7 @@ import { getCustomFontData } from './customFontStore';
 import { getThemePalette } from './themes';
 import { deviceAttributeReply } from './deviceAttributes';
 import type { TerminalPalette } from './types';
+import { clipboardImageToPng, encodeKittyPng } from './kittyImage';
 
 type Rgb = { r: number; g: number; b: number };
 
@@ -114,7 +115,7 @@ type PaneCallbacks = {
 type PaneConnectOptions = { url?: string; cols?: number; rows?: number; callbacks: PaneCallbacks };
 
 /** The per-pane sink a {@link TerminalTransport} binds to (one per split). */
-export type ResttyPaneSink = TerminalSink & { readonly paneId: number };
+export type ResttyPaneSink = TerminalSink & { readonly paneId: number; insertText(data: string): void };
 
 /**
  * Per-pane bridge between restty and a {@link TerminalTransport}.
@@ -205,6 +206,11 @@ class PaneBridge implements TerminalSink {
     }
   }
 
+  /** Render trusted local output without OSC capture, DA replies, or remote input. */
+  renderLocal(data: string): void {
+    this.callbacks?.onData?.(data);
+  }
+
   onInput(cb: (data: string) => void): TerminalSubscription {
     this.inputListeners.add(cb);
     return { dispose: () => this.inputListeners.delete(cb) };
@@ -238,6 +244,10 @@ class PaneBridge implements TerminalSink {
   /** Route context-menu paste to this pane's transport (remote echo draws it). */
   emitInput(data: string): void {
     if (data) this.inputListeners.forEach((cb) => cb(data));
+  }
+
+  insertText(data: string): void {
+    this.emitInput(data);
   }
 }
 
@@ -525,6 +535,27 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     // Context-menu paste: send to the focused pane's transport (remote echo
     // draws it). Do not also route through restty keyboard handling.
     this.panes.get(this.activePaneId)?.bridge.emitInput(data);
+  }
+
+  /** Convert clipboard media and inject direct Kitty packets into only the focused pane. */
+  async displayImage(blob: Blob, signal?: AbortSignal, paneId = this.activePaneId): Promise<void> {
+    const state = this.panes.get(paneId);
+    if (!state) throw new Error('No focused terminal pane.');
+    const image = await clipboardImageToPng(blob, signal);
+    signal?.throwIfAborted();
+    // A terminal cell is approximately twice as tall as it is wide. Choosing
+    // only `c` lets Kitty preserve the source aspect ratio while bounding tall
+    // images to the visible pane as well as wide images to its columns.
+    const size = state.bridge.getSize();
+    const aspect = image.width / Math.max(1, image.height);
+    const columns = Math.max(1, Math.min(size.cols, Math.floor(size.rows * 2 * aspect)));
+    for (const packet of encodeKittyPng(image.bytes, columns)) {
+      signal?.throwIfAborted();
+      // Do not call paste()/sendInput(): these bytes are renderer-local and
+      // must never reach SSH, Mosh, or ET.
+      state.bridge.renderLocal(packet);
+      await Promise.resolve();
+    }
   }
 
   getCwd(): string | null {

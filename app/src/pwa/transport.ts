@@ -7,6 +7,9 @@ import type { ConnectionIntent, LaunchConnectionIntent } from '../connections/Co
 import { createEtSession } from '../et/bootstrap';
 import { createEtWorkerController, type EtWorkerController } from '../et/EtWorkerController';
 import type { SessionStatusMeta } from '../settings/types';
+import { RemoteImageUploader } from '../ssh/RemoteImageUploader';
+import { connectNasshSftpSidecar, isSftpSubsystemUnavailable } from '../ssh/NasshSftpSidecar';
+import { uploadViaNasshExec } from '../ssh/NasshExecUploader';
 
 export type TransportStatusHandler = (status: TerminalTransportStatus, error?: string, meta?: SessionStatusMeta) => void;
 
@@ -15,6 +18,7 @@ export type TerminalTransport = {
   disconnect(): Promise<void>;
   dispose(): void;
   getPersistentSessionId?(): string | undefined;
+  uploadFile?(blob: Blob, options?: { signal?: AbortSignal; onProgress?: (progress: { uploaded: number; total: number }) => void }): Promise<string>;
 };
 
 export class EchoTransport implements TerminalTransport {
@@ -57,6 +61,7 @@ export class EchoTransport implements TerminalTransport {
 
 export class SshDirectSocketsTransport implements TerminalTransport {
   private delegate: EchoTransport | NasshCommandBridge | null = null;
+  private uploader: RemoteImageUploader | null = null;
 
   constructor(
     private readonly spec: ConnectionIntent,
@@ -110,9 +115,20 @@ export class SshDirectSocketsTransport implements TerminalTransport {
     await this.delegate?.disconnect();
   }
 
+  uploadFile(blob: Blob, options?: { signal?: AbortSignal; onProgress?: (progress: { uploaded: number; total: number }) => void }): Promise<string> {
+    this.uploader ??= new RemoteImageUploader({
+      connect: (signal) => connectNasshSftpSidecar(this.spec, signal),
+      fallback: (file, signal, progress) => uploadViaNasshExec(this.spec, file, signal, progress),
+      isSubsystemUnavailable: isSftpSubsystemUnavailable,
+    });
+    return this.uploader.uploadFile(blob, options?.signal, options?.onProgress);
+  }
+
   dispose(): void {
     this.delegate?.dispose();
     this.delegate = null;
+    this.uploader?.dispose();
+    this.uploader = null;
   }
 }
 
@@ -122,6 +138,7 @@ export class EtDirectSocketsTransport implements TerminalTransport {
   private controller: EtWorkerController | null = null;
   private sessionId: string | undefined;
   private disposed = false;
+  private uploader: RemoteImageUploader | null = null;
 
   constructor(
     private readonly spec: ConnectionIntent,
@@ -132,6 +149,15 @@ export class EtDirectSocketsTransport implements TerminalTransport {
 
   getPersistentSessionId(): string | undefined {
     return this.sessionId;
+  }
+
+  uploadFile(blob: Blob, options?: { signal?: AbortSignal; onProgress?: (progress: { uploaded: number; total: number }) => void }): Promise<string> {
+    this.uploader ??= new RemoteImageUploader({
+      connect: (signal) => connectNasshSftpSidecar(this.spec, signal),
+      fallback: (file, signal, progress) => uploadViaNasshExec(this.spec, file, signal, progress),
+      isSubsystemUnavailable: isSftpSubsystemUnavailable,
+    });
+    return this.uploader.uploadFile(blob, options?.signal, options?.onProgress);
   }
 
   async connect(adapter: TerminalSink): Promise<void> {
@@ -184,6 +210,8 @@ export class EtDirectSocketsTransport implements TerminalTransport {
     this.resize = null;
     this.controller?.dispose();
     this.controller = null;
+    this.uploader?.dispose();
+    this.uploader = null;
   }
 }
 

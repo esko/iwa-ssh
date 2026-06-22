@@ -65,7 +65,7 @@ export const NASSH_ENVIRONMENT = {
   LC_CTYPE: 'en_US.UTF-8',
 } as const;
 
-async function loadNasshModules(): Promise<NasshCommandModule & NasshJsModule> {
+export async function loadNasshModules(): Promise<NasshCommandModule & NasshJsModule> {
   if (!nasshModulesPromise) {
     nasshModulesPromise = (async () => {
       installNasshChromePolyfill();
