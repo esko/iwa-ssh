@@ -130,10 +130,14 @@ export class SshDirectSocketsTransport implements TerminalTransport {
  *   dev server, keeping the worker same-origin.
  */
 function createEtWorker(name: string): Worker {
-  const options: WorkerOptions = { type: 'module', name };
-  return import.meta.env.DEV
-    ? new Worker(new URL('/src/et/worker.ts', location.origin), options)
-    : new Worker(new URL('../et/worker.ts', import.meta.url), options);
+  if (import.meta.env.DEV) {
+    // Variable URL (not an inline `new URL(...)`), so Vite's worker plugin
+    // leaves it as a runtime same-origin URL the Dev Mode Proxy can forward.
+    const devWorkerUrl = new URL('/src/et/worker.ts', location.origin);
+    return new Worker(devWorkerUrl, { type: 'module', name });
+  }
+  // Inline form with static options so Vite bundles the worker as a chunk.
+  return new Worker(new URL('../et/worker.ts', import.meta.url), { type: 'module', name });
 }
 
 export class EtDirectSocketsTransport implements TerminalTransport {
