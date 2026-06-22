@@ -40,6 +40,30 @@ describe('PWA settings normalization', () => {
     });
   });
 
+  it('defaults and guards the rendering settings', () => {
+    vi.stubGlobal('window', { location: { href: 'https://example.test/' } });
+
+    expect(normalizePwaSettings({})).toMatchObject({
+      fontSmoothing: 'smooth',
+      fontHinting: 'light',
+      ligatures: true,
+      nerdFontFallback: true,
+    });
+    expect(normalizePwaSettings({ fontSmoothing: 'grayscale', fontHinting: 'normal', ligatures: false, nerdFontFallback: false })).toMatchObject({
+      fontSmoothing: 'grayscale',
+      fontHinting: 'normal',
+      ligatures: false,
+      nerdFontFallback: false,
+    });
+    // Unsupported enum / non-boolean inputs fall back to defaults.
+    expect(normalizePwaSettings({ fontSmoothing: 'lcd', fontHinting: 'full', ligatures: 'on', nerdFontFallback: 'on' })).toMatchObject({
+      fontSmoothing: 'smooth',
+      fontHinting: 'light',
+      ligatures: true,
+      nerdFontFallback: true,
+    });
+  });
+
   it('normalizes the former 11px UI option to the supported 12px minimum', () => {
     vi.stubGlobal('window', { location: { href: 'https://example.test/' } });
     expect(normalizePwaSettings({ fontSize: 11 }).fontSize).toBe(12);

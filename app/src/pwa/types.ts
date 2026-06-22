@@ -40,6 +40,14 @@ export type PwaTerminalSettings = {
   cursorStyle: 'block' | 'underline' | 'bar';
   terminalPadding: number;
   scrollSensitivity: number;
+  /** Glyph alpha blending: grayscale (GPU-native) or gamma-corrected smoothing. */
+  fontSmoothing: 'grayscale' | 'smooth';
+  /** TrueType hinting target during atlas rasterization (off disables hinting). */
+  fontHinting: 'off' | 'light' | 'normal';
+  /** Programming-ligature shaping across adjacent operator cells. */
+  ligatures: boolean;
+  /** Append the bundled Symbols Nerd Font so icon glyphs render with any font. */
+  nerdFontFallback: boolean;
   /** Capture Ctrl+T / Ctrl+W / Ctrl+Tab in-app instead of passing to the OS. */
   captureShortcuts: boolean;
   /** Ask for confirmation before closing a tab whose session is connected. */

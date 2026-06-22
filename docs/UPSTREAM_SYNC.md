@@ -69,6 +69,17 @@ Forbidden patch reasons:
 - Terminal emulator behavior.
 - Changes that should live in a local adapter module.
 
+## Restty Renderer Patch
+
+Restty is a separately pinned renderer dependency under `vendor/restty/`, not a
+copied libapps asset. `scripts/restty-renderer-patches.ts` contains one temporary
+Vite transform for Restty 0.1.37: Powerline triangles used endpoint-inclusive
+sampling, drawing their final one-pixel row at `cellTop + cellHeight` (outside
+the cell) while leaving rounding-dependent gaps between rows. The transform
+samples pixel centers and writes exactly one row per rounded cell-height pixel.
+It fails the build if the pinned bundle changes, and should be removed when the
+next pinned Restty release includes the upstream correction.
+
 ## Refresh Procedure
 
 1. Update `upstream/libapps` to the chosen commit.

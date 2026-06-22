@@ -1,5 +1,5 @@
-import type { Profile } from '../settings/types';
-import { deleteProfile, forgetEtSession, getEtSession, getProfile, listEtSessionSummaries, listProfiles, purgeStaleEtSessions, saveIdentity, saveProfile, type EtSessionSummary } from '../storage/indexedDb';
+import type { Identity, Profile } from '../settings/types';
+import { deleteIdentity, deleteProfile, forgetEtSession, getEtSession, getProfile, listEtSessionSummaries, listIdentities, listProfiles, purgeStaleEtSessions, saveIdentity, saveProfile, type EtSessionSummary } from '../storage/indexedDb';
 import { encryptPrivateKey } from '../security/KeyCrypto';
 import { cacheIdentityPassphrase } from '../ssh/IdentityPassphrase';
 import { escapeHTML, formatTime, requiredElement } from './dom';
@@ -167,6 +167,8 @@ async function syncActiveTerminalSettings(): Promise<void> {
 const GEAR_SVG = `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
 
 const PENCIL_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>`;
+const PLUS_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>`;
+const CHEVRON_DOWN_SVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>`;
 const TRASH_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6M14 11v6"></path></svg>`;
 
 /** Small uppercase transport badge (SSH / ET / MOSH). */
@@ -247,23 +249,34 @@ export async function renderHome(root: HTMLElement): Promise<void> {
   setThemeColor('#000000');
   document.title = 'iwa-ssh';
   await purgeStaleEtSessions();
-  const [profiles, etSessions] = await Promise.all([listProfiles(), listEtSessionSummaries()]);
+  const [profiles, etSessions, identities] = await Promise.all([listProfiles(), listEtSessionSummaries(), listIdentities()]);
 
   root.innerHTML = `
     <div class="home">
-      <div>
-        ${etSessions.length ? `<div class="home-head"><span class="section-label">Active sessions</span></div>
-        <div class="conn-list">${etSessions.map(etSessionRow).join('')}</div>` : ''}
-        <div class="home-head">
-          <span class="section-label">Connections</span>
-          <button class="icon-btn" type="button" data-settings aria-label="Settings" title="Settings">${GEAR_SVG}</button>
+      <div class="home-grid">
+        <div class="home-col-main">
+          ${etSessions.length ? `<div class="home-head"><span class="section-label">Active sessions</span></div>
+          <div class="conn-list">${etSessions.map(etSessionRow).join('')}</div>` : ''}
+          <div class="home-head">
+            <span class="section-label">Connections</span>
+          </div>
+          <div class="conn-list">
+            ${profiles.map(profileRow).join('')}
+            <button class="conn-row conn-add" type="button" data-new>
+              <span class="conn-target"><span class="plus">+</span>New connection</span>
+            </button>
+          </div>
         </div>
-        <div class="conn-list">
-          ${profiles.map(profileRow).join('')}
-          <button class="conn-row conn-add" type="button" data-new>
-            <span class="conn-target"><span class="plus">+</span>New connection</span>
+        <aside class="home-col-side">
+          <button class="side-link" type="button" data-settings>
+            <span class="side-link-icon">${GEAR_SVG}</span>
+            <span class="side-link-label">Settings</span>
           </button>
-        </div>
+          <div class="home-head"><span class="section-label">SSH keys</span></div>
+          <div class="conn-list">
+            ${identities.length ? identities.map(keyRow).join('') : '<p class="side-empty">Keys are added when you create a connection.</p>'}
+          </div>
+        </aside>
       </div>
     </div>
   `;
@@ -322,6 +335,14 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     btn.addEventListener('click', (event) => {
       event.stopPropagation();
       void forgetSession(btn.dataset.forgetId!, root);
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>('[data-delete-key-id]').forEach((btn) => {
+    btn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const identity = identities.find((item) => item.id === btn.dataset.deleteKeyId);
+      if (identity) void deleteKeyConfirmed(identity, root);
     });
   });
 
@@ -390,6 +411,29 @@ function etSessionRow(session: EtSessionSummary): string {
       </span>
     </div>
   `;
+}
+
+function keyRow(identity: Identity): string {
+  const label = identity.label?.trim() || 'SSH key';
+  const meta = identity.opensshKeyEncrypted ? 'encrypted' : identity.createdAt ? formatTime(identity.createdAt) : '';
+  return `
+    <div class="conn-row conn-row-static">
+      <span class="conn-body">
+        <span class="conn-target">${escapeHTML(label)}</span>
+        ${meta ? `<span class="conn-meta">${escapeHTML(meta)}</span>` : ''}
+      </span>
+      <span class="conn-actions">
+        <button class="icon-btn icon-sm" type="button" data-delete-key-id="${escapeHTML(identity.id)}" aria-label="Delete key ${escapeHTML(label)}" title="Delete key">${TRASH_SVG}</button>
+      </span>
+    </div>
+  `;
+}
+
+async function deleteKeyConfirmed(identity: Identity, root: HTMLElement): Promise<void> {
+  const label = identity.label?.trim() || 'this SSH key';
+  if (!window.confirm(`Delete the SSH key “${label}”? Connections using it will need a new key.`)) return;
+  await deleteIdentity(identity.id);
+  await renderHome(root);
 }
 
 function showProfileMenu(event: MouseEvent, profile: Profile, root: HTMLElement): void {
@@ -523,9 +567,10 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
 
 // ------------------------------------------------------------- settings ----
 
-type SettingsTab = 'appearance' | 'keyboard' | 'behavior' | 'about';
+type SettingsTab = 'appearance' | 'rendering' | 'keyboard' | 'behavior' | 'about';
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'appearance', label: 'Appearance' },
+  { id: 'rendering', label: 'Rendering' },
   { id: 'keyboard', label: 'Keyboard' },
   { id: 'behavior', label: 'Behavior' },
   { id: 'about', label: 'About' },
@@ -628,9 +673,56 @@ export function openSettings(initial: SettingsTab = 'appearance'): void {
 
 function renderSettingsTab(body: HTMLElement, tab: SettingsTab, profileId: string): void {
   if (tab === 'appearance') return void renderAppearanceTab(body, profileId);
+  if (tab === 'rendering') return renderRenderingTab(body, profileId);
   if (tab === 'about') return void renderAboutTab(body);
   if (tab === 'keyboard') return renderKeyboardTab(body, profileId);
   return renderBehaviorTab(body, profileId);
+}
+
+function renderRenderingTab(body: HTMLElement, profileId: string): void {
+  const s = getSettingsProfile(profileId).settings;
+  const save = (patch: Record<string, unknown>): void => {
+    const current = getSettingsProfile(profileId);
+    upsertSettingsProfile({ ...current, settings: normalizePwaSettings({ ...current.settings, ...patch }) });
+    void syncActiveTerminalSettings();
+  };
+  const opt = (value: string, current: string, label: string): string =>
+    `<option value="${value}"${value === current ? ' selected' : ''}>${label}</option>`;
+  body.innerHTML =
+    `<div class="group-title">Text rendering</div>` +
+    setRow(
+      'Font smoothing',
+      `<select name="fontSmoothing">${opt('smooth', s.fontSmoothing, 'Smooth')}${opt('grayscale', s.fontSmoothing, 'Grayscale')}</select>`,
+      'Smooth uses gamma-corrected antialiasing; grayscale is sharper and flatter.',
+    ) +
+    setRow(
+      'Font hinting',
+      `<select name="fontHinting">${opt('light', s.fontHinting, 'Light')}${opt('normal', s.fontHinting, 'Normal')}${opt('off', s.fontHinting, 'Off')}</select>`,
+      'Aligns glyph stems to the pixel grid at small sizes.',
+    ) +
+    setRow(
+      'Ligatures',
+      `<select name="ligatures"><option value="on"${s.ligatures ? ' selected' : ''}>On</option><option value="off"${s.ligatures ? '' : ' selected'}>Off</option></select>`,
+      'Shapes programming ligatures (→, !=, =>) when the font provides them.',
+    ) +
+    setRow(
+      'Nerd Font icons',
+      `<select name="nerdFontFallback"><option value="on"${s.nerdFontFallback ? ' selected' : ''}>On</option><option value="off"${s.nerdFontFallback ? '' : ' selected'}>Off</option></select>`,
+      'Falls back to the bundled Symbols Nerd Font so prompt icons render with any text font.',
+    ) +
+    `<p class="set-hint set-note">Rendering changes apply to newly opened tabs.</p>`;
+  body.querySelector<HTMLSelectElement>('[name="fontSmoothing"]')?.addEventListener('change', (e) =>
+    save({ fontSmoothing: (e.target as HTMLSelectElement).value }),
+  );
+  body.querySelector<HTMLSelectElement>('[name="fontHinting"]')?.addEventListener('change', (e) =>
+    save({ fontHinting: (e.target as HTMLSelectElement).value }),
+  );
+  body.querySelector<HTMLSelectElement>('[name="ligatures"]')?.addEventListener('change', (e) =>
+    save({ ligatures: (e.target as HTMLSelectElement).value === 'on' }),
+  );
+  body.querySelector<HTMLSelectElement>('[name="nerdFontFallback"]')?.addEventListener('change', (e) =>
+    save({ nerdFontFallback: (e.target as HTMLSelectElement).value === 'on' }),
+  );
 }
 
 /** Shared on/off select, persisted to the settings profile and reapplied live. */
@@ -1154,7 +1246,10 @@ function renderTabs(): void {
       </div>`;
     })
     .join('');
-  tabStrip.innerHTML = `${tabs}<button class="term-tab-new" type="button" data-newtab aria-label="New tab">+</button>`;
+  tabStrip.innerHTML = `${tabs}<div class="term-tab-newgroup">
+      <button class="term-tab-new" type="button" data-newtab aria-label="New tab" title="New tab">${PLUS_SVG}</button>
+      <button class="term-tab-newmenu" type="button" data-newtab-menu aria-label="New tab from profile" title="New tab from profile">${CHEVRON_DOWN_SVG}</button>
+    </div>`;
 }
 
 let dragTabId: string | null = null;
@@ -1205,6 +1300,11 @@ function reorderTab(fromId: string, toId: string | null, clientX: number): void 
 
 function onTabStripClick(event: MouseEvent): void {
   const target = event.target as HTMLElement;
+  const menuBtn = target.closest<HTMLElement>('[data-newtab-menu]');
+  if (menuBtn) {
+    void openNewTabMenu(menuBtn);
+    return;
+  }
   if (target.closest('[data-newtab]')) {
     if (activeSpec) void openTab(activeSpec);
     return;
@@ -1218,6 +1318,24 @@ function onTabStripClick(event: MouseEvent): void {
   }
   const tab = target.closest<HTMLElement>('.term-tab');
   if (tab?.dataset.id) setActiveSession(tab.dataset.id);
+}
+
+/** Dropdown beside the new-tab "+" to open a tab from any saved profile. */
+async function openNewTabMenu(anchor: HTMLElement): Promise<void> {
+  const profiles = await listProfiles();
+  const rect = anchor.getBoundingClientRect();
+  const items: ContextMenuItem[] = profiles.length
+    ? profiles.map((profile) => ({
+        type: 'item' as const,
+        label: profileDisplayName(profile),
+        onSelect: () => void openTab(profileToSpec(profile)),
+      }))
+    : [{ type: 'item' as const, label: 'No saved connections', disabled: true, onSelect: () => undefined }];
+  if (activeSpec) {
+    items.unshift({ type: 'separator' });
+    items.unshift({ type: 'item', label: 'Duplicate current tab', onSelect: () => activeSpec && void openTab(activeSpec) });
+  }
+  showContextMenu(rect.left, rect.bottom + 2, items);
 }
 
 function cycleTab(direction: number): void {
