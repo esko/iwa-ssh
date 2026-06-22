@@ -22,8 +22,7 @@ type AcwWindow = Window & {
 };
 
 const TITLEBAR_ID = 'app-titlebar';
-/** Slot in the caption (left of the window controls) the terminal tab strip
- *  moves into when the window is unframed. Empty on non-tabbed pages. */
+/** Slot in the caption (left of the window controls) for custom terminal tabs. */
 export const CAPTION_TABS_SLOT_ID = 'app-titlebar-tabs';
 
 // 16×16 glyphs, centered, using currentColor so they follow the theme.
@@ -38,7 +37,7 @@ const ICONS = {
 function isAppWindow(): boolean {
   if (new URLSearchParams(location.search).get('chrome') === 'force') return true;
   // Only the frameless modes: the OS draws no title bar, so the app must draw
-  // its own. In standalone/tabbed the OS still draws a caption, and adding ours
+  // its own. In standalone the OS still draws a caption, and adding ours
   // there stacks a second title bar under the native one (device-confirmed).
   return ['borderless', 'unframed'].some(
     (mode) => window.matchMedia(`(display-mode: ${mode})`).matches,

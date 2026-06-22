@@ -20,8 +20,9 @@ Before changing product direction, frontend architecture, runtime transport, or 
 
 - **legacy PWA frontend**: Moshtty `legacy-pwa:web/`, used as the frontend base.
 - **profile**: `iwa-ssh` saved connection model, replacing legacy PWA workspaces, spaces, and sessions.
-- **native app tab**: ChromeOS/IWA tab. Native tabs are currently deferred; the interim model is one terminal session per window.
-- **transport boundary**: Small adapter between Ghostty terminal I/O and browser networking.
+- **tab**: An app-rendered tab in the custom unframed caption.
+- **pane session**: A Restty pane with its own connection intent, transport, and optional ET resume identity.
+- **transport boundary**: A narrow `TerminalSink` between pane I/O and browser networking.
 - **IWA infrastructure**: Vite/IWA packaging, manifests, signing/bundling scripts, Direct Sockets permissions, install docs, upstream nassh/wassh assets, and thin polyfills/adapters.
 
 Use terms defined in `CONTEXT.md` when it exists. Flag contradictions with existing ADRs or the legacy-PWA pivot explicitly instead of silently overriding them.

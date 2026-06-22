@@ -1,5 +1,5 @@
 import { Terminal } from '@eslzzyl/restty/esm/xterm';
-import type { TerminalAdapter, TerminalSubscription } from '../terminal/TerminalAdapter';
+import type { TerminalAdapter, TerminalSink, TerminalSubscription } from '../terminal/TerminalAdapter';
 import type { PwaTerminalSettings } from './types';
 import { DEFAULT_FONT_ID, bundledFontForSelection, isCustomSelection, customSelectionId } from './terminalFonts';
 import { getCustomFontData } from './customFontStore';
@@ -114,7 +114,7 @@ type PaneCallbacks = {
 type PaneConnectOptions = { url?: string; cols?: number; rows?: number; callbacks: PaneCallbacks };
 
 /** The per-pane sink a {@link TerminalTransport} binds to (one per split). */
-export type ResttyPaneSink = TerminalAdapter & { readonly paneId: number };
+export type ResttyPaneSink = TerminalSink & { readonly paneId: number };
 
 /**
  * Per-pane bridge between restty and a {@link TerminalTransport}.
@@ -132,7 +132,7 @@ export type ResttyPaneSink = TerminalAdapter & { readonly paneId: number };
  * One bridge per pane gives every split its own independent session, replacing
  * the spike's single shared loopback PTY + `term.write()` path.
  */
-class PaneBridge implements TerminalAdapter {
+class PaneBridge implements TerminalSink {
   private callbacks: PaneCallbacks | null = null;
   private connected = false;
   private cols = 80;
@@ -279,7 +279,7 @@ type PaneState = { bridge: PaneBridge; title: string | null; cwd: string | null;
 /**
  * Adapter backed by restty's xterm-compat shim (libghostty-vt → WASM,
  * WebGPU/WebGL2 GPU atlas). restty answers DA1/DSR queries and implements
- * scrollback, which wterm's libghostty build does not.
+ * scrollback through the vendored renderer backend.
  *
  * Each restty pane (split) runs an independent session through its own
  * {@link PaneBridge}; the adapter owns layout/appearance/title and exposes

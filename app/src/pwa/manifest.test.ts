@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 type Manifest = {
   display_override?: string[];
   permissions_policy?: Record<string, unknown>;
-  tab_strip?: { home_tab?: unknown; new_tab_button?: { url?: string } };
+  tab_strip?: unknown;
 };
 
 const read = (rel: string): Manifest =>
@@ -15,11 +15,11 @@ const read = (rel: string): Manifest =>
 const WELL_KNOWN = 'app/public/.well-known/manifest.webmanifest';
 const PUBLIC = 'app/public/manifest.webmanifest';
 
-describe('IWA native tab manifest', () => {
-  it('uses / as home tab and /terminal as native new-tab target', () => {
+describe('IWA window manifest', () => {
+  it('uses only the custom unframed window shell', () => {
     const manifest = read(WELL_KNOWN);
-    expect(manifest.tab_strip?.home_tab).toBeDefined();
-    expect(manifest.tab_strip?.new_tab_button?.url).toBe('/terminal.html');
+    expect(manifest.tab_strip).toBeUndefined();
+    expect(manifest.display_override).not.toContain('tabbed');
   });
 
   it('requests an unframed/borderless window and allows window-management', () => {

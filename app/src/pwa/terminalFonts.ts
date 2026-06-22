@@ -15,7 +15,7 @@
 export type BundledFont = {
   /** Stable id stored in settings. */
   id: string;
-  /** CSS family name (also used for @font-face + wterm). */
+  /** CSS family name used by @font-face and app UI. */
   family: string;
   /** Same-origin regular weight URL. */
   regular: string;

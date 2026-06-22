@@ -12,7 +12,6 @@ export type ReadinessDiagnostics = {
   /** Both the UDP transport and mosh-client.wasm are available. */
   moshReady: boolean;
   launchQueue: boolean;
-  tabbedDisplayMode: boolean;
 };
 
 let assetReadinessPromise: Promise<{ upstreamAssets: boolean; moshAssets: boolean }> | null = null;
@@ -47,9 +46,5 @@ export async function readDiagnostics(): Promise<ReadinessDiagnostics> {
     moshAssets,
     moshReady: udp && moshAssets,
     launchQueue: Boolean(global.launchQueue),
-    tabbedDisplayMode:
-      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-        ? window.matchMedia('(display-mode: tabbed)').matches
-        : false,
   };
 }

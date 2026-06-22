@@ -1,15 +1,15 @@
 # Agent Guide
 
-This repo has pivoted from a near-upstream Google Terminal UI reset to a Moshtty `legacy-pwa` frontend replacement. The frontend base is the legacy PWA/Ghostty shape; `iwa-ssh` keeps IWA packaging, manifests, signing/bundling scripts, Direct Sockets permissions, install docs, upstream nassh/wassh runtime assets, and thin platform adapters.
+This repo uses the Moshtty `legacy-pwa` frontend shape with Restty as its sole terminal renderer. `iwa-ssh` keeps IWA packaging, manifests, signing/bundling scripts, Direct Sockets permissions, install docs, upstream nassh/wassh runtime assets, and thin platform adapters.
 
 ## Current Product Direction
 
 - Base frontend work on Moshtty `legacy-pwa`, pruned for IWA.
-- Use Ghostty-web for the terminal renderer and terminal canvas/layout behavior.
-- One terminal session per window (interim): `/` (index.html) is the home/launcher and launching opens `/terminal.html` in its own window. Native ChromeOS app tabs are unavailable for IWAs for now and are deferred — keep the multi-page structure and manifest `tab_strip`/`display_override` config for re-enabling later. See `docs/adr/0007-one-session-per-window.md` and #45.
+- Use Restty for terminal rendering, native pane layout, and splits.
+- Use custom caption tabs inside each unframed terminal window. Each tab contains one or more pane sessions, and each pane owns an independent transport. See `CONTEXT.md` and ADR 0008.
 - Use `iwa-ssh` profiles as the launcher/session model, replacing legacy PWA workspaces, spaces, internal tabs, panes, splits, and durable Go-agent sessions.
 - Plug IWA Direct Sockets SSH transport into the frontend through a small transport boundary.
-- Match the ChromeOS Terminal design/functionality north star in `docs/references/chromeos-terminal/` (profile-first launcher home, native tabs, tabbed Appearance/Keyboard/Behavior settings).
+- Match the ChromeOS Terminal visual north star in `docs/references/chromeos-terminal/` while implementing tabs in the custom caption.
 
 Do not reuse old `iwa-ssh` app-shell routes, xterm terminal UI, upstream Terminal-shaped settings screens, session route UI, simulated tabs, dashboard, or debug-first frontend surfaces. Keep code under `app/src/ssh`, `app/upstream`, IWA manifests, and scripts only when it is low-level IWA/runtime infrastructure.
 

@@ -2,7 +2,7 @@
 
 ## Rule
 
-The active frontend reset is the Moshtty `legacy-pwa` pivot. Use the legacy PWA/Ghostty frontend as the base, not the old `iwa-ssh` app shell or xterm UI. Keep IWA packaging, Direct Sockets, upstream nassh/wassh assets, and platform adapters as local infrastructure.
+The active frontend uses the Moshtty `legacy-pwa` shape and Restty renderer. Custom caption tabs contain independent Restty pane sessions. Use `CONTEXT.md` and ADR 0008; do not revive Wterm, native tabs, the old app shell, or xterm UI.
 
 ## Read First
 
@@ -23,7 +23,7 @@ Before reset implementation work, read:
 2. Keep docs, PRD, and issue links current.
 3. Keep the active frontend under the legacy-PWA/Ghostty shape.
 4. Replace legacy workspaces/sessions with `iwa-ssh` profiles and recents.
-5. Keep one connection per native app tab; do not add internal tabs or splits.
+5. Keep tab and pane-session lifecycle consistent with ADR 0008.
 6. Plug Direct Sockets SSH through a transport boundary.
 7. Keep Mosh deferred until SSH acceptance passes.
 8. Remove obsolete app-shell/routes/xterm UI once replacement parity is verified.

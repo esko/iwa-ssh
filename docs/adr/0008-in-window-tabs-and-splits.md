@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted (2026-06-19). Extends/partially supersedes
-[ADR 0007](0007-one-session-per-window.md). Deliberately reverses the
+Accepted (2026-06-19). Supersedes [ADR 0007](0007-one-session-per-window.md).
+Deliberately reverses the
 "no simulated tabs / no splits / no panes" constraint from #38 for the
 unframed-window model, at the product owner's request.
 
@@ -98,8 +98,8 @@ window.
   output path (instead of `term.write()` + the loopback) is the cleanest base
   and removes the spike workaround — but it touches the working SSH path, so it
   is staged and verified before splits are enabled.
-- ADR 0007's "one session per window" still holds as the **default**; multiple
-  windows remain valid. Tabs/splits are additive within a window.
+- Multiple windows remain valid, but a window is no longer constrained to one
+  session. Its custom tabs contain Restty pane sessions.
 
 ## Phasing
 

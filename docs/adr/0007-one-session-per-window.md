@@ -1,8 +1,11 @@
-# ADR 0007: One session per window (native tabs deferred)
+# ADR 0007: One session per window (historical)
 
 ## Status
 
-Accepted (2026-06-17)
+Superseded by [ADR 0008](0008-in-window-tabs-and-splits.md) (2026-06-19).
+
+The native-tab manifest experiment described below has been removed. This ADR
+is retained only as the record of why platform tabs were rejected.
 
 ## Context
 

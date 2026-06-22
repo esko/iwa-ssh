@@ -3,7 +3,7 @@
  */
 
 import { log } from '../debug/logger';
-import type { TerminalAdapter, TerminalSubscription } from '../terminal/TerminalAdapter';
+import type { TerminalSink, TerminalSubscription } from '../terminal/TerminalAdapter';
 import type { ConnectionStatus, SessionDisconnectReason, SessionStatusMeta } from '../settings/types';
 import type { NasshIoShimOptions } from './NasshIoShim';
 import { NasshIoShim } from './NasshIoShim';
@@ -82,7 +82,7 @@ async function loadNasshModules(): Promise<NasshCommandModule & NasshJsModule> {
 }
 
 export class NasshCommandBridge {
-  private adapter: TerminalAdapter | null = null;
+  private adapter: TerminalSink | null = null;
   private resizeSubscription: TerminalSubscription | null = null;
   private ioShim: NasshIoShim | null = null;
   private commandInstance: NasshCommandInstance | null = null;
@@ -96,7 +96,7 @@ export class NasshCommandBridge {
 
   constructor(private readonly options: NasshCommandBridgeOptions) {}
 
-  attachTerminal(adapter: TerminalAdapter, options?: NasshIoShimOptions): void {
+  attachTerminal(adapter: TerminalSink, options?: NasshIoShimOptions): void {
     this.resizeSubscription?.dispose();
     this.adapter = adapter;
     this.attachOptions = options;

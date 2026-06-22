@@ -5,7 +5,7 @@
 
 import { log } from '../debug/logger';
 import { isNasshBootstrapOutput } from './nasshBootstrap';
-import type { TerminalAdapter, TerminalSubscription } from '../terminal/TerminalAdapter';
+import type { TerminalSink, TerminalSubscription } from '../terminal/TerminalAdapter';
 import type { HtermStubTerminal, HtermTerminalIo } from './upstreamTypes';
 
 export type NasshIoShimOptions = {
@@ -141,7 +141,7 @@ export class NasshIoShim {
   private overlayHideTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
-    private readonly adapter: TerminalAdapter,
+    private readonly adapter: TerminalSink,
     private readonly options: NasshIoShimOptions = {},
   ) {
     const { cols, rows } = adapter.getSize();

@@ -1,4 +1,4 @@
-import type { TerminalAdapter, TerminalSubscription } from '../terminal/TerminalAdapter';
+import type { TerminalSink, TerminalSubscription } from '../terminal/TerminalAdapter';
 import { NasshCommandBridge } from '../ssh/NasshCommandBridge';
 import { saveEtSession, type EtSessionRecord } from '../storage/indexedDb';
 import type { PwaConnectionSpec } from '../pwa/types';
@@ -12,7 +12,7 @@ function randomText(length: number): string {
   return [...random].map((value) => ALPHANUMERIC[value % ALPHANUMERIC.length]).join('');
 }
 
-class CaptureTerminal implements TerminalAdapter {
+class CaptureTerminal implements TerminalSink {
   private output = '';
   private readonly listeners = new Set<(value: string) => void>();
 

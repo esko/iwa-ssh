@@ -111,11 +111,11 @@ export function applyPwaAppearance(settings: PwaTerminalSettings): void {
   document.documentElement.style.setProperty('--terminal-padding', `${settings.terminalPadding}px`);
 }
 
-/** CSS family name a user-provided font is registered under (wterm/CSS only). */
+/** CSS family name used for a user-provided font in app UI. */
 const CUSTOM_FONT_FAMILY_PREFIX = 'iwa-custom-font-';
 
 /**
- * CSS `font-family` for the wterm renderer and app CSS. Bundled families are
+ * CSS `font-family` for app UI. Bundled families are
  * declared via @font-face in styles.css; a user-provided font is registered by
  * `ensureTerminalFontLoaded`. restty does not use this — it consumes its own
  * url/buffer fontSources (see resttyAdapter).
@@ -129,7 +129,7 @@ export function terminalFontFamily(settings: PwaTerminalSettings): string {
 }
 
 /**
- * Make the selected font available to CSS/wterm. Bundled fonts are already
+ * Make the selected font available to CSS. Bundled fonts are already
  * declared via @font-face; a user-provided font is registered as a FontFace
  * from its IndexedDB bytes. No-op for restty, which loads bytes directly.
  */
@@ -150,7 +150,7 @@ export async function ensureTerminalFontLoaded(settings: PwaTerminalSettings): P
     await face.load();
     document.fonts.add(face);
   } catch {
-    /* invalid bytes — wterm uses the fallback stack, restty falls back too */
+    /* Invalid bytes: CSS and Restty both use their fallback stacks. */
   }
 }
 
@@ -165,4 +165,3 @@ function normalizeHexColor(value: unknown, fallback: string): string {
   const cleaned = value.trim();
   return /^#[0-9A-Fa-f]{3}$|^#[0-9A-Fa-f]{4}$|^#[0-9A-Fa-f]{6}$|^#[0-9A-Fa-f]{8}$/.test(cleaned) ? cleaned : fallback;
 }
-

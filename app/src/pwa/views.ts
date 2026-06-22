@@ -4,7 +4,6 @@ import { encryptPrivateKey } from '../security/KeyCrypto';
 import { cacheIdentityPassphrase } from '../ssh/IdentityPassphrase';
 import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
-import { WtermTerminalAdapter } from './wtermAdapter';
 import { ResttyTerminalAdapter, type ResttyPaneSink } from './resttyAdapter';
 import type { TerminalSubscription } from '../terminal/TerminalAdapter';
 import { ensureTerminalFontLoaded, normalizePwaSettings, applyPwaAppearance } from './settings';
@@ -50,7 +49,7 @@ import type { SessionStatusMeta } from '../settings/types';
 
 // `active*` always point at the focused tab's session, so the existing helpers
 // (copy, reconnect, settings sync, context menu) keep operating on it.
-let activeTerminal: WtermTerminalAdapter | ResttyTerminalAdapter | null = null;
+let activeTerminal: ResttyTerminalAdapter | null = null;
 let activeSpec: PwaConnectionSpec | null = null;
 /** Font currently applied to the active terminal; guards redundant reapplies. */
 let appliedFontSelection: string | null = null;
@@ -80,14 +79,11 @@ type TermSession = {
   statusError?: string;
   container: HTMLElement;
   surface: HTMLElement;
-  terminal: WtermTerminalAdapter | ResttyTerminalAdapter;
-  /** wterm single-session transport; undefined for restty (uses `panes`). */
-  transport: TerminalTransport | null;
+  terminal: ResttyTerminalAdapter;
   /** restty per-pane transports, keyed by restty pane id. */
   panes: Map<number, PaneConn>;
   paneSubs: TerminalSubscription[];
   appliedFont: string;
-  reconnecting: boolean;
   titleSub: TerminalSubscription | null;
   /** Durable ET handle for this tab's primary pane only. */
   resumeEtSessionId?: string;
@@ -95,7 +91,6 @@ type TermSession = {
 
 const sessions: TermSession[] = [];
 let sessionSeq = 0;
-let terminalQuery: URLSearchParams = new URLSearchParams();
 let statusHideTimer = 0;
 let tabRenderFrame = 0;
 
@@ -848,7 +843,7 @@ async function renderAboutTab(body: HTMLElement): Promise<void> {
     ['Private / UDP sockets', diag.directSocketsPrivate],
     ['nassh / wassh assets', diag.upstreamAssets],
     ['Mosh (UDP + client)', diag.moshReady],
-    ['Tabbed display mode', diag.tabbedDisplayMode],
+    ['Custom caption tabs', true],
   ];
   const host = body.querySelector<HTMLElement>('[data-diag]')!;
   host.innerHTML = rows
@@ -856,19 +851,8 @@ async function renderAboutTab(body: HTMLElement): Promise<void> {
     .join('');
 }
 
-function spikeUseRestty(query: URLSearchParams): boolean {
-  // SPIKE branch: restty is default; ?renderer=wterm opts back to wterm for comparison.
-  return query.get('renderer') !== 'wterm';
-}
-
-function appendSpikeRendererParams(params: URLSearchParams): void {
-  const renderer = new URLSearchParams(window.location.search).get('renderer');
-  if (renderer === 'wterm') params.set('renderer', 'wterm');
-}
-
 export async function renderTerminal(root: HTMLElement): Promise<void> {
   const query = new URLSearchParams(window.location.search);
-  terminalQuery = query;
   let spec = specFromQuery(query);
   const resumeId = query.get('resume')?.trim();
   if (resumeId) {
@@ -966,11 +950,8 @@ async function createSession(spec: PwaConnectionSpec): Promise<TermSession> {
   container.append(surface);
   sessionsHost!.append(container);
 
-  const useRestty = spikeUseRestty(terminalQuery);
-  const terminal = useRestty
-    ? await ResttyTerminalAdapter.create(surface, settings)
-    : await WtermTerminalAdapter.create(surface, settings);
-  surface.dataset.renderer = useRestty ? 'restty' : 'wterm';
+  const terminal = await ResttyTerminalAdapter.create(surface, settings);
+  surface.dataset.renderer = 'restty';
 
   const session: TermSession = {
     id: `tab${++sessionSeq}`,
@@ -981,11 +962,9 @@ async function createSession(spec: PwaConnectionSpec): Promise<TermSession> {
     container,
     surface,
     terminal,
-    transport: null,
     panes: new Map(),
     paneSubs: [],
     appliedFont: settings.fontFamily,
-    reconnecting: false,
     titleSub: null,
     resumeEtSessionId,
   };
@@ -1000,19 +979,10 @@ async function createSession(spec: PwaConnectionSpec): Promise<TermSession> {
   renderTabs();
   await recordConnection(spec);
 
-  if (terminal instanceof ResttyTerminalAdapter) {
-    // Each restty pane (the first and every split) binds its own transport when
-    // restty connects it; registering the listener flushes the initial pane.
-    session.paneSubs.push(terminal.onPaneClose((id) => closePaneConn(session, id)));
-    session.paneSubs.push(terminal.onPaneOpen((sink) => void openPaneConn(session, sink)));
-  } else {
-    session.transport = createTransport(
-      { ...spec, etSessionId: session.resumeEtSessionId },
-      (state, error, meta) => onSessionStatus(session, state, error, meta),
-    );
-    await session.transport.connect(terminal);
-    session.resumeEtSessionId = session.transport.getPersistentSessionId?.();
-  }
+  // Each Restty pane (the first and every split) binds its own transport when
+  // Restty connects it; registering the listener flushes the initial pane.
+  session.paneSubs.push(terminal.onPaneClose((id) => closePaneConn(session, id)));
+  session.paneSubs.push(terminal.onPaneOpen((sink) => void openPaneConn(session, sink)));
   terminal.fit?.();
   return session;
 }
@@ -1072,25 +1042,7 @@ function onPaneStatus(session: TermSession, paneId: number, state: TerminalTrans
     window.setTimeout(() => {
       if (conn.reconnecting || !session.panes.has(paneId)) return;
       if (session.panes.size <= 1) closeSession(session);
-      else if (session.terminal instanceof ResttyTerminalAdapter) session.terminal.closePaneById(paneId);
-    }, 700);
-  }
-}
-
-function onSessionStatus(session: TermSession, state: TerminalTransportStatus, error?: string, meta?: SessionStatusMeta): void {
-  session.status = state === 'disconnected' && meta?.disconnectReason === 'transport' ? 'error' : state;
-  session.statusError = error;
-  if (session.id === activeSessionId) updateSharedStatus(session, session.status, error);
-  renderTabs();
-  if (state === 'connected') {
-    session.resumeEtSessionId = session.transport?.getPersistentSessionId?.() ?? session.resumeEtSessionId;
-    saveTabLayout();
-  }
-  // A clean disconnect ends the tab; errors stay so they can be read, a
-  // reconnect's own cycle is ignored, and "keep open" leaves the ended tab.
-  if (state === 'disconnected' && meta?.disconnectReason === 'normal-exit' && !session.reconnecting && resolveSettings(session.spec.settingsProfileId).closeOnExit) {
-    window.setTimeout(() => {
-      if (!session.reconnecting) closeSession(session);
+      else session.terminal.closePaneById(paneId);
     }, 700);
   }
 }
@@ -1135,10 +1087,6 @@ function closeSession(session: TermSession): void {
   session.titleSub?.dispose();
   session.paneSubs.forEach((sub) => sub.dispose());
   session.paneSubs = [];
-  if (session.transport) {
-    void session.transport.disconnect().catch(() => undefined);
-    session.transport.dispose();
-  }
   for (const conn of session.panes.values()) {
     void conn.transport.disconnect().catch(() => undefined);
     conn.transport.dispose();
@@ -1218,7 +1166,7 @@ function renderTabs(): void {
   tabStrip.dataset.count = String(sessions.length);
   const tabs = sessions
     .map((s) => {
-      const paneCount = s.terminal instanceof ResttyTerminalAdapter ? s.panes.size : 1;
+      const paneCount = s.panes.size;
       const splits = paneCount > 1 ? `<span class="term-tab-panes" title="${paneCount} panes">⊞${paneCount}</span>` : '';
       return `<div class="term-tab" role="tab" draggable="true" data-id="${s.id}" aria-selected="${s.id === activeSessionId}" title="${escapeHTML(s.title)}">
         <span class="term-tab-status" data-state="${escapeHTML(tabStatus(s))}" aria-hidden="true"></span>
@@ -1301,20 +1249,20 @@ function cycleTab(direction: number): void {
   setActiveSession(sessions[next].id);
 }
 
-/** Split the focused restty pane (no-op for wterm sessions). */
+/** Split the focused Restty pane. */
 function splitActivePane(direction: 'vertical' | 'horizontal'): boolean {
   const session = activeSession();
-  if (session?.terminal instanceof ResttyTerminalAdapter) {
+  if (session) {
     session.terminal.split(direction);
     return true;
   }
   return false;
 }
 
-/** Close the focused restty pane; returns false when there's nothing to close. */
+/** Close the focused Restty pane; returns false when there's nothing to close. */
 function closeActivePane(): boolean {
   const session = activeSession();
-  return session?.terminal instanceof ResttyTerminalAdapter ? session.terminal.closeActivePane() : false;
+  return session?.terminal.closeActivePane() ?? false;
 }
 
 /** In-window tab + split keys for the unframed app window (ADR 0008). */
@@ -1425,9 +1373,8 @@ function installTerminalDebugHud(
       const lines = [
         `origin: ${location.origin}`,
         `renderer: ${terminalRoot.dataset.renderer ?? '?'}`,
-        `backend: ${win.__resttyBackend ?? (terminalRoot.dataset.renderer === 'restty' ? 'pending' : 'n/a (wterm)')}`,
+        `backend: ${win.__resttyBackend ?? 'pending'}`,
         `canvas: ${canvas ? `${canvas.width}×${canvas.height} (client ${canvas.clientWidth}×${canvas.clientHeight})` : 'none'}`,
-        `wterm dom: ${terminalRoot.querySelector('.wterm') ? 'yes' : 'no'}`,
         `term size: ${size ? `${size.cols}×${size.rows}` : '?'}`,
         `transport: ${statusEl.dataset.state ?? '?'}`,
         `crossOriginIsolated: ${diag.crossOriginIsolated}`,
@@ -1454,7 +1401,7 @@ function installTerminalDebugHud(
       __resttyAdapter?: ResttyTerminalAdapter;
       __resttyPtyLog?: string[];
     };
-    if (!win.__resttyAdapter) return 'DA probe: n/a (wterm or hook missing)';
+    if (!win.__resttyAdapter) return 'DA probe: Restty hook missing';
     const before = (win.__resttyPtyLog ?? []).length;
     win.__resttyAdapter.write('\x1b[c');
     win.__resttyAdapter.write('\x1b[6n');
@@ -1499,21 +1446,18 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
     // restty copies its own canvas selection (no public selection-text query),
     // so enable Copy whenever that path exists; it's a no-op with no selection.
     const canCopy = (activeTerminal?.hasSelection() ?? false) || canCopyViaRenderer();
-    const isRestty = activeTerminal instanceof ResttyTerminalAdapter;
-    const paneCount = isRestty ? (activeTerminal as ResttyTerminalAdapter).paneCount() : 1;
+    const paneCount = activeTerminal?.paneCount() ?? 1;
     const items: ContextMenuItem[] = [
       { type: 'item', label: 'Copy', key: '⌃⇧C', disabled: !canCopy, onSelect: copySelection },
       { type: 'item', label: 'Paste', key: '⌃⇧V', onSelect: pasteClipboard },
       { type: 'item', label: 'Copy path', onSelect: copyPath },
       { type: 'separator' },
-      ...(isRestty
-        ? ([
+      ...([
             { type: 'item', label: 'Split right', key: '⌃⇧E', onSelect: () => void splitActivePane('vertical') },
             { type: 'item', label: 'Split down', key: '⌃⇧D', onSelect: () => void splitActivePane('horizontal') },
             { type: 'item', label: 'Close pane', key: '⌃⇧W', disabled: paneCount <= 1, onSelect: () => void closeActivePane() },
             { type: 'separator' },
-          ] as ContextMenuItem[])
-        : []),
+          ] as ContextMenuItem[]),
       { type: 'item', label: 'New window', onSelect: () => openWindow('/') },
       { type: 'item', label: 'Switch session…', onSelect: () => void openSessionPicker() },
       { type: 'item', label: 'Duplicate session', onSelect: duplicateSession },
@@ -1602,28 +1546,15 @@ function duplicateSession(): void {
 async function reconnect(): Promise<void> {
   const session = activeSession();
   if (!session) return;
-  // restty: reconnect the focused pane's transport; wterm: the single session.
-  if (session.terminal instanceof ResttyTerminalAdapter && !session.transport) {
-    const conn = session.panes.get(session.terminal.getActivePaneId());
-    if (!conn) return;
-    conn.reconnecting = true;
-    try {
-      session.terminal.write('\x1b[2J\x1b[H');
-      await conn.transport.disconnect();
-      await conn.transport.connect(conn.sink);
-    } finally {
-      conn.reconnecting = false;
-    }
-    return;
-  }
-  if (!session.transport) return;
-  session.reconnecting = true;
+  const conn = session.panes.get(session.terminal.getActivePaneId());
+  if (!conn) return;
+  conn.reconnecting = true;
   try {
     session.terminal.write('\x1b[2J\x1b[H');
-    await session.transport.disconnect();
-    await session.transport.connect(session.terminal);
+    await conn.transport.disconnect();
+    await conn.transport.connect(conn.sink);
   } finally {
-    session.reconnecting = false;
+    conn.reconnecting = false;
   }
 }
 
@@ -1651,7 +1582,6 @@ function renderTerminalConnect(root: HTMLElement): void {
     const at = target.includes('@') ? target.split('@') : [undefined, target];
     const params = new URLSearchParams({ protocol, host: at[1] ?? target });
     if (at[0]) params.set('username', at[0]);
-    appendSpikeRendererParams(params);
     navigate(`/terminal.html?${params.toString()}`);
   });
 }
@@ -1674,10 +1604,6 @@ export function disposeTerminal(): void {
   for (const session of sessions) {
     session.titleSub?.dispose();
     session.paneSubs.forEach((sub) => sub.dispose());
-    if (session.transport) {
-      void session.transport.disconnect().catch(() => undefined);
-      session.transport.dispose();
-    }
     for (const conn of session.panes.values()) {
       void conn.transport.disconnect().catch(() => undefined);
       conn.transport.dispose();

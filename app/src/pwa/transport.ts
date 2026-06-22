@@ -1,4 +1,4 @@
-import type { TerminalAdapter, TerminalSubscription } from '../terminal/TerminalAdapter';
+import type { TerminalSink, TerminalSubscription } from '../terminal/TerminalAdapter';
 import { NasshCommandBridge } from '../ssh/NasshCommandBridge';
 import { checkMoshPrerequisites } from '../ssh/moshGate';
 import { areUpstreamAssetsReady } from '../ssh/upstreamAssets';
@@ -11,7 +11,7 @@ import type { SessionStatusMeta } from '../settings/types';
 export type TransportStatusHandler = (status: TerminalTransportStatus, error?: string, meta?: SessionStatusMeta) => void;
 
 export type TerminalTransport = {
-  connect(adapter: TerminalAdapter): Promise<void>;
+  connect(adapter: TerminalSink): Promise<void>;
   disconnect(): Promise<void>;
   dispose(): void;
   getPersistentSessionId?(): string | undefined;
@@ -26,7 +26,7 @@ export class EchoTransport implements TerminalTransport {
     private readonly options?: { banner?: string }
   ) {}
 
-  async connect(adapter: TerminalAdapter): Promise<void> {
+  async connect(adapter: TerminalSink): Promise<void> {
     this.onStatus('connecting');
     const banner = this.options?.banner ?? `\x1b[1;36miwa-ssh Ghostty echo\x1b[0m\r\nTarget: ${this.spec.username ?? 'user'}@${this.spec.hostname}`;
     adapter.write(`\r\n${banner}\r\n\r\n$ `);
@@ -63,7 +63,7 @@ export class SshDirectSocketsTransport implements TerminalTransport {
     private readonly onStatus: TransportStatusHandler,
   ) {}
 
-  async connect(adapter: TerminalAdapter): Promise<void> {
+  async connect(adapter: TerminalSink): Promise<void> {
     const isMosh = this.spec.protocol === 'mosh';
 
     if (isMosh) {
@@ -160,7 +160,7 @@ export class EtDirectSocketsTransport implements TerminalTransport {
     return this.sessionId;
   }
 
-  async connect(adapter: TerminalAdapter): Promise<void> {
+  async connect(adapter: TerminalSink): Promise<void> {
     this.disposed = false;
     this.onStatus('connecting');
     if (!this.sessionId) this.sessionId = await createEtSession(this.spec);

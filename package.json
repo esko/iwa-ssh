@@ -1,6 +1,6 @@
 {
   "name": "iwa-ssh",
-  "version": "0.1.33",
+  "version": "0.1.34",
   "private": true,
   "type": "module",
   "scripts": {
@@ -21,7 +21,6 @@
     "smoke:e2e": "node scripts/smoke-terminal.mjs",
     "smoke:ssh": "node scripts/smoke-ssh-interactive.mjs",
     "smoke:echo": "node scripts/smoke-echo.mjs",
-    "spike:restty": "node scripts/spike-restty.mjs",
     "check:regression": "node --experimental-strip-types scripts/check-storage-regression.mjs",
     "iwa:keygen": "bash scripts/generate-iwa-signing-key.sh",
     "iwa:update-id": "node --experimental-strip-types scripts/update-webbundle-id.mjs"
@@ -29,9 +28,6 @@
   "dependencies": {
     "@bufbuild/protobuf": "^2.12.0",
     "@eslzzyl/restty": "file:vendor/restty",
-    "@wterm/core": "^0.3.0",
-    "@wterm/dom": "^0.3.0",
-    "@wterm/ghostty": "^0.3.0",
     "idb": "^8.0.3",
     "libsodium-wrappers": "^0.8.4"
   },
