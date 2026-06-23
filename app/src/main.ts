@@ -1,6 +1,6 @@
 import './security/trustedTypes';
 import { installBootErrorHandler, showBootError } from './security/bootError';
-import { renderHome } from './pwa/views';
+import { startRouter } from './pwa/views';
 import { installWindowControls } from './pwa/windowControls';
 import './pwa/styles.css';
 
@@ -10,7 +10,9 @@ async function boot(): Promise<void> {
   const root = document.getElementById('app');
   if (!root) throw new Error('Missing #app root element');
   installWindowControls();
-  await renderHome(root);
+  // SPA router: launching a profile swaps to the terminal view in place instead
+  // of reloading the document, so there's no white flash or bundle re-parse.
+  await startRouter(root);
 }
 
 boot().catch((error: unknown) => {

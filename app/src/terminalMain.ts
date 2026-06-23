@@ -1,6 +1,6 @@
 import './security/trustedTypes';
 import { installBootErrorHandler, showBootError } from './security/bootError';
-import { disposeTerminal, renderTerminal } from './pwa/views';
+import { startRouter } from './pwa/views';
 import { installWindowControls } from './pwa/windowControls';
 import './pwa/styles.css';
 
@@ -10,10 +10,10 @@ async function boot(): Promise<void> {
   const root = document.getElementById('app');
   if (!root) throw new Error('Missing #app root element');
   installWindowControls();
-  await renderTerminal(root);
-  // Native-tab close / navigation away is a full document unload; tear the
-  // transport down so sockets don't linger.
-  window.addEventListener('pagehide', () => disposeTerminal());
+  // Same router as the home entry: a direct/new-window load of /terminal.html
+  // routes straight to the terminal view, and "Back to menu" swaps in place.
+  // (pagehide transport teardown is handled inside startRouter.)
+  await startRouter(root);
 }
 
 boot().catch((error: unknown) => {

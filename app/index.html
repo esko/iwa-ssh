@@ -7,6 +7,11 @@
     <title>iwa-ssh</title>
     <link rel="manifest" href="/.well-known/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" />
+    <!-- Paint the dark base immediately so navigation/load never flashes a
+         white body before styles.css (loaded via the JS module) applies. -->
+    <style>
+      html { background-color: #16171b; color-scheme: dark; }
+    </style>
   </head>
   <body>
     <div id="app"></div>
