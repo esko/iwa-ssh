@@ -1,7 +1,10 @@
 import { defineConfig, type Plugin } from 'vite';
-import { cpSync, createReadStream, existsSync, statSync } from 'node:fs';
+import { cpSync, createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { resolve } from 'node:path';
+
+/** Surfaced in the UI (Settings → Diagnostics); kept in sync by bump-version. */
+const APP_VERSION = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')).version as string;
 import { patchResttyRenderer } from './scripts/restty-renderer-patches';
 
 /** Public URL base for copied upstream libapps assets (see scripts/fetch-upstream-assets.mjs). */
@@ -149,6 +152,7 @@ export default defineConfig({
     __IWA_WASSH_WORKER_URL__: JSON.stringify(WASSH_WORKER_URL),
     __IWA_PLUGIN_BASE__: JSON.stringify(UPSTREAM_PLUGIN_BASE),
     __IWA_DEFAULT_SSH_WASM__: JSON.stringify(`${UPSTREAM_PLUGIN_BASE}/wasm/ssh.wasm`),
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
   },
   assetsInclude: ['**/*.wasm'],
   plugins: [

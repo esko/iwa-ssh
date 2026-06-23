@@ -31,6 +31,7 @@ import {
   resolveSettings,
   DEFAULT_SETTINGS_PROFILE_ID,
   SETTINGS_PROFILES_STORAGE_KEY,
+  type SettingsProfile,
 } from './settingsProfiles';
 import {
   formatConnectionTarget,
@@ -235,20 +236,32 @@ function setThemeColor(color: string): void {
   meta.content = color;
 }
 
+// Topmost-only Escape, so a modal opened on top of another (e.g. the profile
+// editor over Settings) closes just itself, not the whole stack.
+const overlayStack: HTMLElement[] = [];
+
 function openOverlay(build: (close: () => void) => HTMLElement): void {
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
   const onKey = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape') close();
+    if (event.key === 'Escape' && overlayStack[overlayStack.length - 1] === overlay) {
+      event.stopPropagation();
+      close();
+    }
   };
   function close(): void {
     overlay.remove();
+    const index = overlayStack.indexOf(overlay);
+    if (index >= 0) overlayStack.splice(index, 1);
     window.removeEventListener('keydown', onKey, true);
   }
   overlay.addEventListener('pointerdown', (event) => {
     if (event.target === overlay) close();
   });
   window.addEventListener('keydown', onKey, true);
+  // Each stacked overlay paints above the previous one.
+  overlay.style.zIndex = String(50 + overlayStack.length);
+  overlayStack.push(overlay);
   overlay.append(build(close));
   document.body.append(overlay);
 }
@@ -787,8 +800,76 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'rendering', label: 'Rendering' },
   { id: 'keyboard', label: 'Keyboard' },
   { id: 'behavior', label: 'Behavior' },
-  { id: 'about', label: 'About' },
+  { id: 'about', label: 'Diagnostics' },
 ];
+
+/**
+ * Styled create/rename modal for a settings profile. Kept as a modal (not an
+ * inline field) so it can grow past just the name later. Replaces window.prompt.
+ */
+function openProfileModal(opts: { profile?: SettingsProfile; onSaved: (id: string) => void }): void {
+  const existing = opts.profile;
+  openOverlay((close) => {
+    const modal = elFromHTML(`
+      <div class="modal modal-sm">
+        <h2>${existing ? 'Rename profile' : 'New profile'}</h2>
+        <form id="profileForm">
+          <label class="field"><span>name</span><input name="name" value="${escapeHTML(existing?.name ?? '')}" placeholder="Work" autocomplete="off" spellcheck="false" required></label>
+          <div class="actions">
+            <button type="button" class="btn-ghost" data-cancel>Cancel</button>
+            <button type="submit" class="btn">${existing ? 'Save' : 'Create'}</button>
+          </div>
+        </form>
+      </div>
+    `);
+    const form = modal.querySelector<HTMLFormElement>('#profileForm')!;
+    modal.querySelector<HTMLButtonElement>('[data-cancel]')?.addEventListener('click', close);
+    setTimeout(() => {
+      const nameInput = form.querySelector<HTMLInputElement>('[name="name"]');
+      nameInput?.focus();
+      nameInput?.select();
+    }, 0);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const name = String(new FormData(form).get('name') ?? '').trim();
+      if (!name) return;
+      let id: string;
+      if (existing) {
+        renameSettingsProfile(existing.id, name);
+        id = existing.id;
+      } else {
+        id = createSettingsProfile(name).id;
+      }
+      close();
+      opts.onSaved(id);
+    });
+    return modal;
+  });
+}
+
+/** Styled confirm dialog — replaces window.confirm inside the styled surfaces. */
+function openConfirmModal(opts: { title: string; body: string; confirmLabel: string; danger?: boolean; onConfirm: () => void }): void {
+  openOverlay((close) => {
+    const modal = elFromHTML(`
+      <div class="modal modal-sm">
+        <h2>${escapeHTML(opts.title)}</h2>
+        <p class="prompt-body">${escapeHTML(opts.body)}</p>
+        <div class="actions">
+          <button type="button" class="btn-ghost" data-cancel>Cancel</button>
+          <button type="button" class="btn${opts.danger ? ' btn-danger' : ''}" data-confirm>${escapeHTML(opts.confirmLabel)}</button>
+        </div>
+      </div>
+    `);
+    modal.querySelector<HTMLButtonElement>('[data-cancel]')?.addEventListener('click', close);
+    const confirmBtn = modal.querySelector<HTMLButtonElement>('[data-confirm]')!;
+    confirmBtn.addEventListener('click', () => {
+      close();
+      opts.onConfirm();
+    });
+    setTimeout(() => confirmBtn.focus(), 0);
+    return modal;
+  });
+}
 
 export function openSettings(initial: SettingsTab = 'appearance'): void {
   openOverlay((close) => {
@@ -809,6 +890,7 @@ export function openSettings(initial: SettingsTab = 'appearance'): void {
             <nav class="aside-nav">
               ${TABS.map((t) => `<button class="nav-item" type="button" role="tab" data-tab="${t.id}" aria-selected="${t.id === initial}">${t.label}</button>`).join('')}
             </nav>
+            <div class="aside-version">iwa-ssh ${escapeHTML(__APP_VERSION__)}</div>
           </aside>
           <div class="settings-main">
             <button class="settings-close" type="button" data-close aria-label="Close settings">×</button>
@@ -849,36 +931,31 @@ export function openSettings(initial: SettingsTab = 'appearance'): void {
           {
             type: 'item',
             label: 'Rename',
-            onSelect: () => {
-              const name = window.prompt('Rename settings profile', b.textContent ?? '');
-              if (name) {
-                renameSettingsProfile(id, name);
-                close();
-                openSettings(activeTab);
-              }
-            },
+            onSelect: () =>
+              openProfileModal({
+                profile: getSettingsProfile(id),
+                onSaved: () => { close(); openSettings(activeTab); },
+              }),
           },
           {
             type: 'item',
             label: 'Delete',
             disabled: isDefault,
-            onSelect: () => {
-              deleteSettingsProfile(id);
-              close();
-              openSettings(activeTab);
-            },
+            onSelect: () =>
+              openConfirmModal({
+                title: 'Delete profile',
+                body: `Delete the settings profile “${b.textContent ?? ''}”? Connections using it fall back to the default.`,
+                confirmLabel: 'Delete',
+                danger: true,
+                onConfirm: () => { deleteSettingsProfile(id); close(); openSettings(activeTab); },
+              }),
           },
         ]);
       });
     });
     modal.querySelector<HTMLButtonElement>('[data-close]')?.addEventListener('click', close);
     modal.querySelector<HTMLButtonElement>('[data-add-profile]')?.addEventListener('click', () => {
-      const name = window.prompt('Name this settings profile', 'Work');
-      if (name) {
-        createSettingsProfile(name);
-        close();
-        openSettings(initial);
-      }
+      openProfileModal({ onSaved: () => { close(); openSettings(initial); } });
     });
     render();
     return modal;
@@ -1144,17 +1221,22 @@ README  <span style="color:${p.magenta}">.env</span></span>`;
 async function renderAboutTab(body: HTMLElement): Promise<void> {
   body.innerHTML = '<div class="group-title">Readiness</div><div data-diag></div>';
   const diag = await readDiagnostics();
-  const rows: [string, boolean][] = [
+  // Unavailable items get a one-line "why" so the panel isn't a dead end.
+  const iwaOnly = 'Available in the installed IWA on ChromeOS.';
+  const rows: [string, boolean, string?][] = [
     ['Cross-origin isolated', diag.crossOriginIsolated],
-    ['Direct Sockets', diag.directSockets],
-    ['Private / UDP sockets', diag.directSocketsPrivate],
-    ['nassh / wassh assets', diag.upstreamAssets],
-    ['Mosh (UDP + client)', diag.moshReady],
+    ['Direct Sockets', diag.directSockets, iwaOnly],
+    ['Private / UDP sockets', diag.directSocketsPrivate, iwaOnly],
+    ['nassh / wassh assets', diag.upstreamAssets, 'Run npm run fetch-assets.'],
+    ['Mosh (UDP + client)', diag.moshReady, iwaOnly],
     ['Custom caption tabs', true],
   ];
   const host = body.querySelector<HTMLElement>('[data-diag]')!;
   host.innerHTML = rows
-    .map(([label, ok]) => `<div class="diag-row"><span>${label}</span><span class="${ok ? 'ok' : 'bad'}">${ok ? 'Ready' : 'Unavailable'}</span></div>`)
+    .map(
+      ([label, ok, hint]) =>
+        `<div class="diag-row"><span class="diag-label">${escapeHTML(label)}${!ok && hint ? `<span class="diag-hint">${escapeHTML(hint)}</span>` : ''}</span><span class="${ok ? 'ok' : 'bad'}">${ok ? 'Ready' : 'Unavailable'}</span></div>`,
+    )
     .join('');
 }
 

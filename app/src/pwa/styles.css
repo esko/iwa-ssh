@@ -119,11 +119,11 @@ a {
   outline-offset: 2px;
 }
 
+/* Group headings: quiet sentence-case, not the uppercase-tracked AI kicker. */
 .section-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: normal;
   color: var(--faint);
 }
 
@@ -687,6 +687,17 @@ a {
   transform: translateY(1px);
 }
 
+/* Destructive primary — error-red tinted, still a raised dark surface. */
+.btn-danger {
+  border-color: rgba(224, 87, 75, 0.5);
+  background: linear-gradient(180deg, #3a2422 0%, #2f1d1c 100%);
+  color: #f0c5c5;
+}
+
+.btn-danger:hover {
+  border-color: rgba(224, 87, 75, 0.85);
+}
+
 /* Secondary action. Genuinely quiet: a faint wash, dim hairline, muted text
    that brightens on hover. Recedes next to the raised primary. */
 .btn-ghost {
@@ -905,6 +916,11 @@ textarea {
   overflow: hidden;
 }
 
+/* Compact modal for the profile editor / confirm dialogs. */
+.modal-sm {
+  width: min(380px, 100%);
+}
+
 /* -------------------------------------------------------------- settings -- */
 
 .settings {
@@ -912,6 +928,26 @@ textarea {
   grid-template-columns: 200px 1fr;
   height: 100%;
   min-height: 0;
+}
+
+/* Narrow window: stack the aside above the panel instead of cramping a
+   200px sidebar next to the content. */
+@media (max-width: 620px) {
+  .modal-wide {
+    width: 100%;
+    height: min(640px, 92vh);
+  }
+  .settings {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .settings-aside {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .aside-version {
+    margin-top: 12px;
+  }
 }
 
 .settings-aside {
@@ -933,6 +969,14 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* App version pinned to the bottom of the settings aside. */
+.aside-version {
+  margin: auto 6px 0;
+  padding-top: 16px;
+  font-size: 11.5px;
+  color: var(--faint);
 }
 
 .nav-item {
@@ -967,10 +1011,9 @@ textarea {
 .aside-label {
   display: block;
   margin: 0 6px 8px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: normal;
   color: var(--faint);
 }
 
@@ -1079,10 +1122,9 @@ textarea {
 
 .group-title {
   margin: 26px 0 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: normal;
   color: var(--faint);
 }
 
@@ -1248,11 +1290,23 @@ textarea {
 
 .diag-row {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   padding: 13px 0;
   border-top: 1px solid var(--line);
   font-size: 13px;
+}
+
+.diag-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.diag-hint {
+  font-size: 12px;
+  color: var(--faint);
 }
 
 .diag-row .ok {
