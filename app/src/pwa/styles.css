@@ -1560,7 +1560,6 @@ html.app-chrome .term-shell {
   height: 36px;
   padding: 4px 6px 0;
   background: var(--term-bg, #000);
-  border-bottom: 1px solid var(--line);
   overflow-x: auto;
   scrollbar-width: none;
 }
