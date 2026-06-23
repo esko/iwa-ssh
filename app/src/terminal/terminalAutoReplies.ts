@@ -14,8 +14,29 @@ function kittyQueryReply(id: string): string {
     : `\x1b_Gi=${id};EINVAL: unsupported medium\x1b\\`;
 }
 
+const textDecoder = new TextDecoder();
+/** Streaming decoder for ET output chunks that may split multibyte UTF-8. */
+const probeStripDecoder = new TextDecoder();
+
+function hasEscapeByte(chunk: Uint8Array | string): boolean {
+  if (typeof chunk === 'string') return chunk.includes('\x1b');
+  for (let i = 0; i < chunk.length; i += 1) {
+    if (chunk[i] === 0x1b) return true;
+  }
+  return false;
+}
+
 function decodeChunk(chunk: Uint8Array | string): string {
-  return typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+  return typeof chunk === 'string' ? chunk : textDecoder.decode(chunk, { stream: true });
+}
+
+function stripProbesFromText(text: string): string {
+  return text
+    .replace(KITTY_COMMAND, (match, control: string) => (QUERY_ACTION.test(control) ? '' : match))
+    .replaceAll(KITTY_ACK, '')
+    .replace(DA1_QUERY, '')
+    .replaceAll(DA1_REPLY, '')
+    .replaceAll(DSR_REPLY, '');
 }
 
 /** Stateful scanner for kitty/DA1 queries split across ET terminal buffers. */
@@ -70,14 +91,12 @@ export function terminalQueryReplies(chunk: Uint8Array | string): string[] {
  * answered in the ET worker; forwarding them causes visible control-character
  * garbage and races Restty's delayed DA1 shim against icat detect.
  */
-export function stripInboundTerminalProbes(chunk: Uint8Array | string): Uint8Array {
-  const stripped = decodeChunk(chunk)
-    .replace(KITTY_COMMAND, (match, control: string) => (QUERY_ACTION.test(control) ? '' : match))
-    .replaceAll(KITTY_ACK, '')
-    .replace(DA1_QUERY, '')
-    .replaceAll(DA1_REPLY, '')
-    .replaceAll(DSR_REPLY, '');
-  return new TextEncoder().encode(stripped);
+export function stripInboundTerminalProbes(chunk: Uint8Array | string): string {
+  if (typeof chunk === 'string') {
+    return hasEscapeByte(chunk) ? stripProbesFromText(chunk) : chunk;
+  }
+  if (!hasEscapeByte(chunk)) return probeStripDecoder.decode(chunk, { stream: true });
+  return stripProbesFromText(probeStripDecoder.decode(chunk, { stream: true }));
 }
 
 /** Remove terminal-generated query replies so duplicate late acks are not sent to ET. */

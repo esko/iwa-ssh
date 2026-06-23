@@ -154,6 +154,18 @@ function pushWheelLog(data: Record<string, unknown>): void {
   win.__resttyDebugLog = ring;
 }
 
+const PTY_LOG_LIMIT = 60;
+const sharedTextDecoder = new TextDecoder();
+
+/** Trim the PTY input ring (kept for the debug HUD; no network egress). */
+function pushPtyLog(data: string): void {
+  const win = window as unknown as { __resttyPtyLog?: string[] };
+  const log = win.__resttyPtyLog;
+  if (!log) return;
+  log.push(data);
+  if (log.length > PTY_LOG_LIMIT) log.shift();
+}
+
 // ---------------------------------------------------------------- pane I/O --
 
 /** restty's per-pane PtyTransport callbacks (see vendor/restty/dist/pty/types.d.ts). */
@@ -224,8 +236,7 @@ export class PaneBridge implements TerminalSink {
 
   sendInput(data: string): boolean {
     if (!data) return true;
-    const log = (window as unknown as { __resttyPtyLog?: string[] }).__resttyPtyLog;
-    if (log) log.push(data);
+    pushPtyLog(data);
     this.inputListeners.forEach((cb) => cb(data));
     return true;
   }
@@ -365,6 +376,8 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   private term: Terminal | null = null;
   private root: HTMLElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private layoutFrame = 0;
+  private scrollGuardCanvasCount = 0;
   private readonly panes = new Map<number, PaneState>();
   private activePaneId = -1;
   private readonly titleListeners = new Set<(title: string) => void>();
@@ -436,12 +449,9 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
       await adapter.waitForPaneReady(firstId);
     }
     adapter.syncLayout();
-    adapter.installScrollGuard(el);
+    adapter.installScrollGuardIfNeeded(el);
     adapter.installPointerFocus(el);
-    adapter.resizeObserver = new ResizeObserver(() => {
-      adapter.syncLayout();
-      adapter.installScrollGuard(el);
-    });
+    adapter.resizeObserver = new ResizeObserver(() => adapter.scheduleLayoutSync());
     adapter.resizeObserver.observe(el);
     adapter.setAppearance(settings);
     term.focus();
@@ -519,7 +529,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     this.registerPane(id);
     this.connectPane(id);
     this.syncLayout();
-    if (this.root) this.installScrollGuard(this.root);
+    if (this.root) this.installScrollGuardIfNeeded(this.root);
     if (this.settings) this.applyAppearanceToPane(id, this.settings);
   }
 
@@ -528,6 +538,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     this.openedPanes.delete(id);
     this.paneCloseListeners.forEach((cb) => cb(id));
     this.syncLayout();
+    if (this.root) this.installScrollGuardIfNeeded(this.root);
   }
 
   private handleActivePaneChange(id: number): void {
@@ -560,7 +571,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
 
   /** Inject output into the active pane (used by reconnect's clear-screen). */
   write(data: string | Uint8Array): void {
-    const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
+    const text = typeof data === 'string' ? data : sharedTextDecoder.decode(data);
     const bridge = this.panes.get(this.activePaneId)?.bridge;
     if (bridge) this.captureOsc(bridge, text); // keep title/cwd in sync with injected output
     this.activeHandle()?.sendInput(text, 'pty');
@@ -717,6 +728,8 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     this.wheelForwardCleanup = null;
     this.pointerFocusCleanup?.();
     this.pointerFocusCleanup = null;
+    if (this.layoutFrame) window.cancelAnimationFrame(this.layoutFrame);
+    this.layoutFrame = 0;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.term?.dispose();
@@ -762,6 +775,23 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
 
   private syncLayout(): void {
     this.surface?.updateSize?.(true);
+  }
+
+  /** Coalesce burst ResizeObserver callbacks into one layout sync per frame. */
+  private scheduleLayoutSync(): void {
+    if (this.layoutFrame) return;
+    this.layoutFrame = window.requestAnimationFrame(() => {
+      this.layoutFrame = 0;
+      this.syncLayout();
+    });
+  }
+
+  /** Rebuild scroll guard only when the canvas set changes (splits), not on resize. */
+  private installScrollGuardIfNeeded(root: HTMLElement): void {
+    const count = root.querySelectorAll('canvas').length;
+    if (count === this.scrollGuardCanvasCount && this.wheelForwardCleanup) return;
+    this.scrollGuardCanvasCount = count;
+    this.installScrollGuard(root);
   }
 
   /**
@@ -857,6 +887,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   captureOsc(bridge: PaneBridge, data: string): void {
     const state = this.panes.get(bridge.paneId);
     if (!state) return;
+    if (!state.oscBuffer && !data.includes('\x1b]')) return;
     state.oscBuffer = (state.oscBuffer + data).slice(-2048);
     let consumed = 0;
 

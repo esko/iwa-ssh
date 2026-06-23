@@ -94,17 +94,17 @@ describe('TerminalQueryScanner', () => {
 describe('stripInboundTerminalProbes', () => {
   it('removes kitty probes and DA1 queries before Restty renders ET output', () => {
     const raw = `prompt${ICAT_DIRECT_QUERY}\x1b[c`;
-    expect(new TextDecoder().decode(stripInboundTerminalProbes(raw))).toBe('prompt');
+    expect(stripInboundTerminalProbes(raw)).toBe('prompt');
   });
 
   it('removes echoed auto-replies so worker fast-path acks do not appear at the prompt', () => {
     const echoed = `prompt\x1b_Gi=1;OK\x1b\\${DA1_REPLY}more`;
-    expect(new TextDecoder().decode(stripInboundTerminalProbes(echoed))).toBe('promptmore');
+    expect(stripInboundTerminalProbes(echoed)).toBe('promptmore');
   });
 
   it('preserves kitty image transmit packets for Restty to render', () => {
     const transmit = '\x1b_Ga=T,f=100,i=1,s=1,v=1,m=1;AAAA\x1b\\';
-    expect(new TextDecoder().decode(stripInboundTerminalProbes(`x${transmit}y`))).toBe(`x${transmit}y`);
+    expect(stripInboundTerminalProbes(`x${transmit}y`)).toBe(`x${transmit}y`);
   });
 });
 

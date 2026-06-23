@@ -8,6 +8,14 @@ import {
 } from '../storage/indexedDb';
 
 const JOURNAL_LIMIT = 64 * 1024 * 1024;
+const SESSION_FLUSH_MS = 250;
+
+type PendingSessionFlush = {
+  session: EtSessionRecord;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+
+const pendingSessionFlush = new Map<string, PendingSessionFlush>();
 
 function bytes(value: ArrayBuffer): Uint8Array {
   return new Uint8Array(value);
@@ -17,6 +25,40 @@ function owned(value: Uint8Array): Uint8Array<ArrayBuffer> {
   const copy = new Uint8Array(value.byteLength);
   copy.set(value);
   return copy;
+}
+
+/** Clear debounced session checkpoints (tests / IDB reset). */
+export function resetSessionCheckpointFlushes(): void {
+  for (const entry of pendingSessionFlush.values()) {
+    if (entry.timer) clearTimeout(entry.timer);
+  }
+  pendingSessionFlush.clear();
+}
+
+/** Persist any debounced session-record checkpoint immediately. */
+export async function flushEtSessionCheckpoint(sessionId: string): Promise<EtSessionRecord | undefined> {
+  const entry = pendingSessionFlush.get(sessionId);
+  if (!entry) return undefined;
+  if (entry.timer) {
+    clearTimeout(entry.timer);
+    entry.timer = null;
+  }
+  pendingSessionFlush.delete(sessionId);
+  await saveEtSession(entry.session);
+  return entry.session;
+}
+
+function scheduleSessionRecordFlush(sessionId: string, session: EtSessionRecord): EtSessionRecord {
+  const entry = pendingSessionFlush.get(sessionId) ?? { session, timer: null };
+  entry.session = session;
+  if (!entry.timer) {
+    entry.timer = setTimeout(() => {
+      entry.timer = null;
+      void flushEtSessionCheckpoint(sessionId);
+    }, SESSION_FLUSH_MS);
+  }
+  pendingSessionFlush.set(sessionId, entry);
+  return session;
 }
 
 export async function wrapEtPasskey(passkey: string): Promise<{ iv: Uint8Array; ciphertext: ArrayBuffer }> {
@@ -47,15 +89,32 @@ export async function updateEtSession(
   return next;
 }
 
-export async function checkpointEtOutput(sessionId: string, sequence: number, data: Uint8Array): Promise<EtSessionRecord> {
+export async function checkpointEtOutput(
+  sessionId: string,
+  sequence: number,
+  data: Uint8Array,
+  sessionHint: EtSessionRecord,
+): Promise<EtSessionRecord> {
   const key = await getEtDeviceKey();
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, owned(data));
-  return checkpointEtInbound({ sessionId, sequence, iv, ciphertext, size: data.byteLength }, sessionId, sequence);
+  const next = await checkpointEtInbound(
+    { sessionId, sequence, iv, ciphertext, size: data.byteLength },
+    sessionId,
+    sequence,
+    { sessionHint, deferSessionPut: true },
+  );
+  scheduleSessionRecordFlush(sessionId, next);
+  return next;
 }
 
-export async function checkpointEtControl(sessionId: string, sequence: number): Promise<EtSessionRecord> {
-  return checkpointEtInbound(null, sessionId, sequence);
+export async function checkpointEtControl(
+  sessionId: string,
+  sequence: number,
+  sessionHint?: EtSessionRecord,
+): Promise<EtSessionRecord> {
+  await flushEtSessionCheckpoint(sessionId);
+  return checkpointEtInbound(null, sessionId, sequence, sessionHint ? { sessionHint } : undefined);
 }
 
 export async function readEtJournal(sessionId: string): Promise<Uint8Array[]> {

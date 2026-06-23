@@ -7,9 +7,10 @@ import { InitialResponseSchema, TerminalInfoSchema } from './proto/ETerminal_pb'
 import { EtClient, ET_SESSION_ENVIRONMENT, serializeEtTerminalInfo } from './client';
 import { frameHandshake, framePacket } from './wire';
 import { resetIndexedDbConnection, saveEtSession, getEtSession, type EtSessionRecord } from '../storage/indexedDb';
-import { wrapEtPasskey } from './sessionStore';
+import { resetSessionCheckpointFlushes, wrapEtPasskey } from './sessionStore';
 
 async function resetDb(): Promise<void> {
+  resetSessionCheckpointFlushes();
   await resetIndexedDbConnection();
   await new Promise<void>((resolve, reject) => {
     const request = indexedDB.deleteDatabase('iwa-ssh');

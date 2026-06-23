@@ -21,7 +21,7 @@ import {
   saveEtOutboundFrame,
   type EtSessionRecord,
 } from '../storage/indexedDb';
-import { checkpointEtControl, checkpointEtOutput, unwrapEtPasskey, updateEtSession } from './sessionStore';
+import { checkpointEtControl, checkpointEtOutput, flushEtSessionCheckpoint, unwrapEtPasskey, updateEtSession } from './sessionStore';
 import {
   decryptEtPayload,
   encryptEtPayload,
@@ -142,6 +142,7 @@ export class EtClient {
     this.stopped = true;
     this.stopKeepalive();
     await this.closeSocket();
+    await flushEtSessionCheckpoint(this.session.id);
     // Never resurrect a session the server already ended/forgot — otherwise a
     // dead session reappears on the launcher as 'detached' and resuming errors.
     if (this.session.phase !== 'stale' && this.session.phase !== 'ended') {
@@ -276,7 +277,7 @@ export class EtClient {
     const sequence = this.session.rxSequence + 1;
     if (!packet.encrypted) throw new Error('ET peer sent an unencrypted packet');
     const payload = await decryptEtPayload(this.passkey, sequence, packet.payload);
-    this.session = await checkpointEtControl(this.session.id, sequence);
+    this.session = await checkpointEtControl(this.session.id, sequence, this.session);
     return { ...packet, encrypted: false, payload };
   }
 
@@ -293,7 +294,7 @@ export class EtClient {
       if (sendDa1) {
         await this.sendInput(DA1_REPLY);
       }
-      const checkpoint = checkpointEtOutput(this.session.id, sequence, terminal);
+      const checkpoint = checkpointEtOutput(this.session.id, sequence, terminal, this.session);
       try {
         // Restty must see terminal queries immediately so its automatic
         // DA/DSR/Kitty replies reach short-lived remote probes. Preserve the
@@ -306,7 +307,7 @@ export class EtClient {
       }
       this.session = await checkpoint;
     } else {
-      this.session = await checkpointEtControl(this.session.id, sequence);
+      this.session = await checkpointEtControl(this.session.id, sequence, this.session);
       if (packet.type === TerminalPacketType.KEEP_ALIVE) this.lastKeepalive = Date.now();
     }
   }

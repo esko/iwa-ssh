@@ -93,12 +93,14 @@ export type EtJournalChunk = {
 };
 
 let dbPromise: Promise<IDBPDatabase<IwaSshDb>> | null = null;
+let deviceKeyPromise: Promise<CryptoKey> | null = null;
 
 /** Close the cached connection. Exported for deterministic storage migration tests. */
 export async function resetIndexedDbConnection(): Promise<void> {
   const db = await dbPromise?.catch(() => null);
   db?.close();
   dbPromise = null;
+  deviceKeyPromise = null;
 }
 
 function getDb(): Promise<IDBPDatabase<IwaSshDb>> {
@@ -125,9 +127,11 @@ function getDb(): Promise<IDBPDatabase<IwaSshDb>> {
       blocking() {
         dbPromise?.then((db) => db.close()).catch(() => undefined);
         dbPromise = null;
+        deviceKeyPromise = null;
       },
       terminated() {
         dbPromise = null;
+        deviceKeyPromise = null;
       },
     });
   }
@@ -135,6 +139,11 @@ function getDb(): Promise<IDBPDatabase<IwaSshDb>> {
 }
 
 export async function getEtDeviceKey(): Promise<CryptoKey> {
+  deviceKeyPromise ??= loadOrCreateEtDeviceKey();
+  return deviceKeyPromise;
+}
+
+async function loadOrCreateEtDeviceKey(): Promise<CryptoKey> {
   const db = await getDb();
   const stored = await db.get('etMeta', 'device-key');
   if (stored) return stored;
@@ -242,10 +251,15 @@ export async function pruneEtOutboundFrames(sessionId: string, throughSequence: 
   await tx.done;
 }
 
-export async function checkpointEtInbound(chunk: EtJournalChunk | null, sessionId: string, sequence: number): Promise<EtSessionRecord> {
+export async function checkpointEtInbound(
+  chunk: EtJournalChunk | null,
+  sessionId: string,
+  sequence: number,
+  options?: { sessionHint?: EtSessionRecord; deferSessionPut?: boolean },
+): Promise<EtSessionRecord> {
   const db = await getDb();
   const tx = db.transaction(['etJournal', 'etSessions'], 'readwrite');
-  const session = await tx.objectStore('etSessions').get(sessionId);
+  const session = options?.sessionHint ?? await tx.objectStore('etSessions').get(sessionId);
   if (!session) {
     tx.abort();
     await tx.done.catch(() => undefined);
@@ -274,7 +288,7 @@ export async function checkpointEtInbound(chunk: EtJournalChunk | null, sessionI
     journalTruncated,
     updatedAt: Date.now(),
   };
-  await tx.objectStore('etSessions').put(next);
+  if (!options?.deferSessionPut) await tx.objectStore('etSessions').put(next);
   await tx.done;
   return next;
 }
