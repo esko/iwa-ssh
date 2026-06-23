@@ -44,7 +44,7 @@ import { shouldPassThroughSystemShortcut } from './shortcuts';
 import { showContextMenu, type ContextMenuItem } from './contextMenu';
 import { CAPTION_TABS_SLOT_ID } from './windowControls';
 import { createTransport, type TerminalTransport } from './transport';
-import type { PwaTerminalSettings, TerminalTransportStatus } from './types';
+import type { PwaTerminalSettings, TerminalPalette, TerminalTransportStatus } from './types';
 import type { SessionStatusMeta } from '../settings/types';
 import { resolveConnectionIntent, type LaunchConnectionIntent } from '../connections/ConnectionIntent';
 import { parseTerminalConnectionCommand } from '../connections/sshCommandParser';
@@ -160,7 +160,9 @@ async function syncActiveTerminalSettings(): Promise<void> {
   const settings = resolveSettings(activeSpec.settingsProfileId);
   applyPwaAppearance(settings); // accent / density / terminal padding
   activeTerminal.setAppearance(settings);
-  setThemeColor(getThemePalette(settings.theme).background);
+  const palette = getThemePalette(settings.theme);
+  setThemeColor(palette.background);
+  applyTerminalChromeColors(palette); // keep the chrome in sync on live theme change
   activeTerminal.fit?.(); // padding change resizes the grid
   if (settings.fontFamily === appliedFontSelection) return;
   appliedFontSelection = settings.fontFamily;
@@ -279,6 +281,28 @@ function openWindow(url: string): void {
   window.open(url, '_blank', 'noopener');
 }
 
+/**
+ * Tint the window chrome (caption bar, tab strip, padded surround) with the
+ * active terminal's palette so the frame reads as part of the terminal instead
+ * of a black band around it. `--term-fg` keeps caption/tab text legible on light
+ * themes, and `data-term-kind` lets the active-tab shade pick its direction
+ * (lighter on dark themes, darker on light ones) — see styles.css.
+ */
+function applyTerminalChromeColors(palette: TerminalPalette): void {
+  const root = document.documentElement;
+  root.style.setProperty('--term-bg', palette.background);
+  root.style.setProperty('--term-fg', palette.foreground);
+  root.dataset.termKind = palette.kind;
+}
+
+/** Drop the terminal tint so the launcher/connect views use their own surface. */
+function clearTerminalChromeColors(): void {
+  const root = document.documentElement;
+  root.style.removeProperty('--term-bg');
+  root.style.removeProperty('--term-fg');
+  delete root.dataset.termKind;
+}
+
 /** Drive the PWA/IWA toolbar color to match the active terminal background. */
 function setThemeColor(color: string): void {
   let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
@@ -324,6 +348,7 @@ function openOverlay(build: (close: () => void) => HTMLElement): void {
 
 export async function renderHome(root: HTMLElement): Promise<void> {
   setThemeColor('#000000');
+  clearTerminalChromeColors();
   document.title = 'iwa-ssh';
   homeKeydownCleanup?.();
   homeKeydownCleanup = null;
@@ -1491,7 +1516,7 @@ function setActiveSession(id: string): void {
   applyPwaAppearance(settings);
   const palette = getThemePalette(settings.theme);
   setThemeColor(palette.background);
-  document.documentElement.style.setProperty('--term-bg', palette.background);
+  applyTerminalChromeColors(palette);
 
   document.title = session.title;
   updateSharedStatus(session, tabStatus(session), session.statusError);
@@ -2182,6 +2207,7 @@ async function reconnect(): Promise<void> {
 
 function renderTerminalConnect(root: HTMLElement): void {
   setThemeColor('#000000');
+  clearTerminalChromeColors();
   document.title = 'iwa-ssh';
   root.innerHTML = `
     <div class="connect-page">
