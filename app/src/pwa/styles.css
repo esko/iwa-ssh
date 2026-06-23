@@ -921,6 +921,113 @@ textarea {
   width: min(380px, 100%);
 }
 
+/* ------------------------------------------------------- command palette -- */
+
+.palette {
+  width: min(560px, 100%);
+  /* Sit near the top like a spotlight bar rather than dead-centre. */
+  align-self: start;
+  margin-top: 10vh;
+  max-height: 70vh;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.palette-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.palette-search .filter-icon {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.palette-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--fg);
+  font-size: 15px;
+  font-family: var(--ui);
+}
+
+.palette-input::placeholder {
+  color: var(--muted);
+}
+
+.palette-input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.palette-list {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 6px;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.palette-row[aria-selected='true'] {
+  background: var(--line-2);
+}
+
+.palette-row:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.palette-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-key {
+  flex: none;
+  color: var(--faint);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.palette-hint {
+  flex: none;
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.palette-empty {
+  margin: 0;
+  padding: 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* -------------------------------------------------------------- settings -- */
 
 .settings {

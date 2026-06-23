@@ -65,6 +65,9 @@ let sharedStatus: HTMLElement | null = null;
 let captionCleanup: (() => void) | null = null;
 /** Removes the launcher's document-level "/" focus shortcut before each re-render. */
 let homeKeydownCleanup: (() => void) | null = null;
+/** Removes the terminal view's document-level keydown listeners on teardown. */
+let tabShortcutsCleanup: (() => void) | null = null;
+let passThroughCleanup: (() => void) | null = null;
 
 /** One restty split pane: its own transport bound to the pane's sink (ADR 0008). */
 type PaneConn = {
@@ -217,8 +220,59 @@ function isPemEncrypted(pemText: string): boolean {
   }
 }
 
+// In-place SPA router. Home and terminal both render into the same #app root
+// from this module, so switching between them in the same window is a view swap
+// — no full document reload, which is what caused the white flash + delay when
+// launching a profile. `openWindow` still opens a true second document (needed
+// for "Open in new window"), and a hard reload of /terminal.html still renders
+// the terminal directly via routeFor().
+let appRoot: HTMLElement | null = null;
+let currentRoute: 'home' | 'terminal' | null = null;
+
+function routeFor(url: string): 'home' | 'terminal' {
+  const path = new URL(url, window.location.origin).pathname;
+  return path.endsWith('terminal.html') ? 'terminal' : 'home';
+}
+
+function teardownCurrentView(): void {
+  if (currentRoute === 'home') {
+    homeKeydownCleanup?.();
+    homeKeydownCleanup = null;
+  } else if (currentRoute === 'terminal') {
+    disposeTerminal();
+  }
+}
+
+async function renderRoute(root: HTMLElement, route: 'home' | 'terminal'): Promise<void> {
+  root.innerHTML = '';
+  currentRoute = route;
+  if (route === 'terminal') await renderTerminal(root);
+  else await renderHome(root);
+}
+
+/** Boot entry: mount the view that matches the current URL and start routing. */
+export async function startRouter(root: HTMLElement): Promise<void> {
+  appRoot = root;
+  window.addEventListener('popstate', () => {
+    if (!appRoot) return;
+    teardownCurrentView();
+    void renderRoute(appRoot, routeFor(window.location.href));
+  });
+  // A real document unload (tab close, hard reload, new-window open) must still
+  // tear the transport down so sockets don't linger.
+  window.addEventListener('pagehide', () => disposeTerminal());
+  await renderRoute(root, routeFor(window.location.href));
+}
+
 function navigate(url: string): void {
-  window.location.assign(url);
+  // Fallback to a hard navigation if the router hasn't booted (defensive).
+  if (!appRoot) {
+    window.location.assign(url);
+    return;
+  }
+  teardownCurrentView();
+  history.pushState(null, '', url);
+  void renderRoute(appRoot, routeFor(url));
 }
 
 function openWindow(url: string): void {
@@ -1443,8 +1497,14 @@ function setActiveSession(id: string): void {
   updateSharedStatus(session, tabStatus(session), session.statusError);
   renderTabs();
   saveTabLayout();
-  session.terminal.focus();
   session.terminal.fit?.();
+  // Focus on the next frame: the container was just unhidden above, and when a
+  // session is activated straight after creation (profile launch) the canvas
+  // isn't laid out yet, so a synchronous focus() no-ops and focus falls back to
+  // <body>. Guard against rapid re-activation focusing a stale session.
+  requestAnimationFrame(() => {
+    if (activeSessionId === id) session.terminal.focus();
+  });
 }
 
 function closeSession(session: TermSession): void {
@@ -1659,9 +1719,7 @@ function closeActivePane(): boolean {
 
 /** In-window tab + split keys for the unframed app window (ADR 0008). */
 function installTabShortcuts(): void {
-  document.addEventListener(
-    'keydown',
-    (event) => {
+  const handler = (event: KeyboardEvent): void => {
       if (!event.ctrlKey || event.metaKey) return;
       if (event.shiftKey && event.code === 'KeyV') {
         event.preventDefault();
@@ -1679,6 +1737,14 @@ function installTabShortcuts(): void {
         return;
       }
       if (event.shiftKey) {
+        // The command palette is an app feature (not a system shortcut), so it
+        // is always claimed regardless of the capture-shortcuts setting.
+        if (event.code === 'KeyP') {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          openCommandPalette();
+          return;
+        }
         // Splits are an app feature (not a system shortcut), so always handled:
         // Ctrl+Shift+E → right, Ctrl+Shift+D → down, Ctrl+Shift+W → close pane.
         if (event.code === 'KeyE' && splitActivePane('vertical')) {
@@ -1708,9 +1774,9 @@ function installTabShortcuts(): void {
           if (confirmCloseSession(session)) closeSession(session);
         }
       }
-    },
-    { capture: true },
-  );
+  };
+  document.addEventListener('keydown', handler, { capture: true });
+  tabShortcutsCleanup = () => document.removeEventListener('keydown', handler, { capture: true });
 }
 
 function installTerminalDebugHud(
@@ -1859,6 +1925,7 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
             { type: 'item', label: 'Close pane', key: '⌃⇧W', disabled: paneCount <= 1, onSelect: () => void closeActivePane() },
             { type: 'separator' },
           ] as ContextMenuItem[]),
+      { type: 'item', label: 'Command palette…', key: '⌃⇧P', onSelect: openCommandPalette },
       { type: 'item', label: 'New window', onSelect: () => openWindow('/') },
       { type: 'item', label: 'Switch session…', onSelect: () => void openSessionPicker() },
       { type: 'item', label: 'Duplicate session', onSelect: duplicateSession },
@@ -1869,6 +1936,132 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
     ];
     showContextMenu(event.clientX, event.clientY, items);
   }, { capture: true });
+}
+
+/** One runnable entry in the command palette. */
+type PaletteCommand = { label: string; key?: string; hint?: string; disabled?: boolean; run: () => void };
+
+/**
+ * Every terminal action that the context menu and tab shortcuts expose, as a
+ * flat searchable list. Enabled state is computed against the focused session
+ * at open time, mirroring the context menu's own gating.
+ */
+function buildPaletteCommands(): PaletteCommand[] {
+  const session = activeSession();
+  const paneCount = activeTerminal?.paneCount() ?? 1;
+  const canCopy = (activeTerminal?.hasSelection() ?? false) || canCopyViaRenderer();
+  const commands: PaletteCommand[] = [
+    { label: 'New tab', key: '⌃T', disabled: !activeSpec, run: () => activeSpec && void openTab(activeSpec) },
+    { label: 'Duplicate session', disabled: !activeSpec, run: duplicateSession },
+    { label: 'Close tab', key: '⌃W', disabled: !session, run: () => session && confirmCloseSession(session) && closeSession(session) },
+    { label: 'Next tab', key: '⌃Tab', disabled: sessions.length < 2, run: () => cycleTab(1) },
+    { label: 'Previous tab', key: '⌃⇧Tab', disabled: sessions.length < 2, run: () => cycleTab(-1) },
+    { label: 'Split right', key: '⌃⇧E', run: () => void splitActivePane('vertical') },
+    { label: 'Split down', key: '⌃⇧D', run: () => void splitActivePane('horizontal') },
+    { label: 'Close pane', key: '⌃⇧W', disabled: paneCount <= 1, run: () => void closeActivePane() },
+    { label: 'Copy', key: '⌃⇧C', disabled: !canCopy, run: copySelection },
+    { label: 'Paste', key: '⌃⇧V', run: () => void pasteClipboard() },
+    { label: 'Upload image and paste path', key: '⌃⌥⇧V', run: () => void uploadClipboardImageAndPastePath() },
+    { label: 'Copy path', run: copyPath },
+    { label: 'Reconnect', disabled: !session, run: () => void reconnect() },
+    { label: 'Switch session…', run: () => void openSessionPicker() },
+    { label: 'New window', run: () => openWindow('/') },
+    { label: 'Settings', run: () => openSettings() },
+    { label: 'Back to menu', run: () => navigate('/') },
+  ];
+  // Jump straight to any other open tab by name.
+  for (const other of sessions) {
+    if (other.id === activeSessionId) continue;
+    commands.push({ label: `Switch to tab: ${other.title}`, hint: 'tab', run: () => setActiveSession(other.id) });
+  }
+  return commands;
+}
+
+/**
+ * Fuzzy-filterable command palette (Ctrl+Shift+P). Type to narrow, arrows to
+ * move, Enter to run. Reuses the shared overlay so Escape/backdrop close and
+ * the stacking/focus rules match every other modal.
+ */
+function openCommandPalette(): void {
+  const commands = buildPaletteCommands();
+  openOverlay((close) => {
+    const modal = elFromHTML(`
+      <div class="modal palette" role="dialog" aria-label="Command palette">
+        <div class="palette-search">
+          <span class="filter-icon">${SEARCH_SVG}</span>
+          <input type="search" class="palette-input" placeholder="Type a command…" autocomplete="off" spellcheck="false" aria-label="Search commands" data-palette-input>
+        </div>
+        <div class="palette-list" role="listbox" data-palette-list></div>
+      </div>
+    `);
+    const input = modal.querySelector<HTMLInputElement>('[data-palette-input]')!;
+    const list = modal.querySelector<HTMLElement>('[data-palette-list]')!;
+    let matches: PaletteCommand[] = [];
+    let selected = 0;
+
+    const run = (cmd?: PaletteCommand): void => {
+      if (!cmd || cmd.disabled) return;
+      close();
+      cmd.run();
+    };
+
+    const syncSelection = (): void => {
+      const rows = [...list.querySelectorAll<HTMLElement>('.palette-row')];
+      rows.forEach((row, i) => row.setAttribute('aria-selected', String(i === selected)));
+      rows[selected]?.scrollIntoView({ block: 'nearest' });
+    };
+
+    const renderList = (query: string): void => {
+      const needle = query.trim().toLowerCase();
+      matches = needle ? commands.filter((c) => c.label.toLowerCase().includes(needle)) : commands;
+      selected = 0;
+      list.innerHTML = matches.length
+        ? matches
+            .map(
+              (cmd, i) => `
+                <button class="palette-row" type="button" role="option" data-index="${i}"${cmd.disabled ? ' disabled' : ''} aria-selected="${i === 0}">
+                  <span class="palette-label">${escapeHTML(cmd.label)}</span>
+                  ${cmd.key ? `<span class="palette-key">${escapeHTML(cmd.key)}</span>` : cmd.hint ? `<span class="palette-hint">${escapeHTML(cmd.hint)}</span>` : ''}
+                </button>`,
+            )
+            .join('')
+        : '<p class="palette-empty">No matching commands.</p>';
+      syncSelection();
+    };
+
+    const move = (delta: number): void => {
+      if (matches.length === 0) return;
+      // Skip disabled rows so Enter always lands on something runnable.
+      let next = selected;
+      for (let i = 0; i < matches.length; i += 1) {
+        next = (next + delta + matches.length) % matches.length;
+        if (!matches[next].disabled) break;
+      }
+      selected = next;
+      syncSelection();
+    };
+
+    input.addEventListener('input', () => renderList(input.value));
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown') { event.preventDefault(); move(1); }
+      else if (event.key === 'ArrowUp') { event.preventDefault(); move(-1); }
+      else if (event.key === 'Enter') { event.preventDefault(); run(matches[selected]); }
+    });
+    list.addEventListener('click', (event) => {
+      const row = (event.target as HTMLElement).closest<HTMLElement>('.palette-row');
+      if (row?.dataset.index !== undefined) run(matches[Number(row.dataset.index)]);
+    });
+    list.addEventListener('pointermove', (event) => {
+      const row = (event.target as HTMLElement).closest<HTMLElement>('.palette-row');
+      if (row?.dataset.index === undefined) return;
+      selected = Number(row.dataset.index);
+      syncSelection();
+    });
+
+    renderList('');
+    setTimeout(() => input.focus(), 0);
+    return modal;
+  });
 }
 
 /** Overlay picker to jump to a resumable ET session or a saved connection. */
@@ -2011,13 +2204,11 @@ function renderTerminalConnect(root: HTMLElement): void {
 // ------------------------------------------------------------------- misc --
 
 function installShortcutPassThrough(): void {
-  document.addEventListener(
-    'keydown',
-    (event) => {
-      if (shouldPassThroughSystemShortcut(event)) event.stopImmediatePropagation();
-    },
-    { capture: true },
-  );
+  const handler = (event: KeyboardEvent): void => {
+    if (shouldPassThroughSystemShortcut(event)) event.stopImmediatePropagation();
+  };
+  document.addEventListener('keydown', handler, { capture: true });
+  passThroughCleanup = () => document.removeEventListener('keydown', handler, { capture: true });
 }
 
 export function disposeTerminal(): void {
@@ -2038,6 +2229,10 @@ export function disposeTerminal(): void {
   fontSyncCleanup = null;
   captionCleanup?.();
   captionCleanup = null;
+  tabShortcutsCleanup?.();
+  tabShortcutsCleanup = null;
+  passThroughCleanup?.();
+  passThroughCleanup = null;
   appliedFontSelection = null;
   activeTerminal = null;
   activeSpec = null;
