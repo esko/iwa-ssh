@@ -644,21 +644,37 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
         <h2>${existing ? 'Edit connection' : 'New connection'}</h2>
         <form id="connForm">
           <label class="field"><span>name — optional</span><input name="name" value="${escapeHTML(nameValue)}" placeholder="defaults to user@host" autocomplete="off" spellcheck="false"></label>
-          <label class="field"><span>address</span><input name="host" value="${escapeHTML(existing?.host ?? '')}" placeholder="192.168.1.60" autocomplete="off" spellcheck="false" required></label>
+          <label class="field"><span>host</span><input name="host" value="${escapeHTML(existing?.host ?? '')}" placeholder="192.168.1.60" autocomplete="off" spellcheck="false" required></label>
           <div class="field-row">
             <label class="field"><span>user</span><input name="user" value="${escapeHTML(existing?.username ?? '')}" placeholder="esko" autocomplete="off" spellcheck="false" required></label>
             <label class="field"><span>port</span><input name="port" type="number" min="1" max="65535" value="${existing?.port ?? 22}"></label>
           </div>
           <label class="field"><span>protocol</span><select name="protocol"><option value="ssh" ${sel('ssh')}>SSH</option><option value="et" ${sel('et')}>Eternal Terminal</option><option value="mosh" ${sel('mosh')}>Mosh</option></select></label>
           <label class="field" data-et-port hidden><span>ET port</span><input name="etPort" type="number" min="1" max="65535" value="${existing?.etPort ?? 2022}"></label>
-          <label class="field"><span>ssh key — ${existing?.identityId ? 'replace existing' : 'optional'}</span><textarea name="key" placeholder="paste a private key…" spellcheck="false"></textarea></label>
-          <label class="field"><span>or choose a key file</span><input type="file" name="keyfile" accept=".pem,.key,text/plain,application/octet-stream"></label>
-          <label class="field" data-pass hidden><span>key passphrase — encrypts the key on this device</span><input name="passphrase" type="password" autocomplete="off"></label>
           ${spField}
-          <p class="set-hint" data-err hidden style="color:#f0c5c5"></p>
+          <div class="key-section">
+            <button type="button" class="key-toggle" data-key-toggle aria-expanded="false">
+              <span class="key-chevron" aria-hidden="true">${CHEVRON_DOWN_SVG}</span>
+              <span class="key-toggle-label">${existing?.identityId ? 'Replace SSH key' : 'Add an SSH key'}</span>
+              <span class="key-toggle-opt">optional</span>
+            </button>
+            <div class="key-body" data-key-body hidden>
+              <label class="field"><span>paste a private key</span><textarea name="key" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" spellcheck="false"></textarea></label>
+              <div class="field">
+                <span>or choose a key file</span>
+                <div class="file-pick">
+                  <button type="button" class="btn-ghost" data-keyfile-btn>Choose file…</button>
+                  <span class="file-name" data-keyfile-name>No file chosen</span>
+                </div>
+                <input type="file" name="keyfile" accept=".pem,.key,text/plain,application/octet-stream" hidden>
+              </div>
+              <label class="field" data-pass hidden><span>passphrase — encrypts the key on this device</span><input name="passphrase" type="password" autocomplete="off"></label>
+              <p class="set-hint field-error" data-err role="alert" hidden></p>
+            </div>
+          </div>
           <div class="actions">
             <button type="button" class="btn-ghost" data-cancel>Cancel</button>
-            <button type="submit" class="btn">${existing ? 'Save' : 'Connect'}</button>
+            <button type="submit" class="btn" data-submit>${existing ? 'Save' : 'Connect'}</button>
           </div>
         </form>
       </div>
@@ -667,6 +683,7 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
     const form = modal.querySelector<HTMLFormElement>('#connForm')!;
     const passField = modal.querySelector<HTMLElement>('[data-pass]')!;
     const errEl = modal.querySelector<HTMLElement>('[data-err]')!;
+    const submitBtn = modal.querySelector<HTMLButtonElement>('[data-submit]')!;
     const keyArea = form.querySelector<HTMLTextAreaElement>('[name="key"]')!;
     const keyFile = form.querySelector<HTMLInputElement>('[name="keyfile"]')!;
     const protocolField = form.querySelector<HTMLSelectElement>('[name="protocol"]')!;
@@ -674,13 +691,33 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
     const syncProtocolFields = (): void => { etPortField.hidden = protocolField.value !== 'et'; };
     protocolField.addEventListener('change', syncProtocolFields);
     syncProtocolFields();
+    const showError = (message: string): void => { errEl.hidden = false; errEl.textContent = message; };
     const revealPass = (): void => {
       passField.hidden = !(keyArea.value.trim() || (keyFile.files?.length ?? 0) > 0);
     };
     keyArea.addEventListener('input', revealPass);
     keyFile.addEventListener('change', revealPass);
 
+    // Collapse the whole key block by default — the common case is host/user/
+    // protocol, and the key UI is long. Opens on demand.
+    const keyToggle = modal.querySelector<HTMLButtonElement>('[data-key-toggle]')!;
+    const keyBody = modal.querySelector<HTMLElement>('[data-key-body]')!;
+    keyToggle.addEventListener('click', () => {
+      keyBody.hidden = !keyBody.hidden;
+      keyToggle.setAttribute('aria-expanded', String(!keyBody.hidden));
+      if (!keyBody.hidden) keyArea.focus();
+    });
+
+    // Styled file picker (the native input clashes with the dark form).
+    const keyFileName = modal.querySelector<HTMLElement>('[data-keyfile-name]')!;
+    modal.querySelector<HTMLButtonElement>('[data-keyfile-btn]')?.addEventListener('click', () => keyFile.click());
+    keyFile.addEventListener('change', () => {
+      keyFileName.textContent = keyFile.files?.[0]?.name ?? 'No file chosen';
+    });
+
     modal.querySelector<HTMLButtonElement>('[data-cancel]')?.addEventListener('click', close);
+    // Focus the first thing worth typing once the modal is in the DOM.
+    setTimeout(() => form.querySelector<HTMLInputElement>('[name="host"]')?.focus(), 0);
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const data = new FormData(form);
@@ -695,36 +732,47 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
 
       const keyText = String(data.get('key') ?? '').trim();
       const file = keyFile.files?.[0];
-      let identityId = existing?.identityId;
-      if (keyText || file) {
-        const passphrase = String(data.get('passphrase') ?? '');
-        if (!passphrase) {
-          errEl.hidden = false;
-          errEl.textContent = 'Enter a passphrase to encrypt the key on this device.';
-          return;
-        }
-        const pemBytes = file ? await file.arrayBuffer() : (new TextEncoder().encode(keyText).buffer as ArrayBuffer);
-        const pemText = file ? new TextDecoder().decode(pemBytes) : keyText;
-        const encryptedPrivateKey = await encryptPrivateKey(pemBytes, passphrase);
-        identityId = crypto.randomUUID();
-        await saveIdentity({
-          id: identityId,
-          label: `${user}@${host}`,
-          publicKey: '',
-          encryptedPrivateKey,
-          opensshKeyEncrypted: isPemEncrypted(pemText),
-          createdAt: Date.now(),
-        });
-        cacheIdentityPassphrase(identityId, passphrase);
+      const passphrase = String(data.get('passphrase') ?? '');
+      if ((keyText || file) && !passphrase) {
+        keyBody.hidden = false;
+        keyToggle.setAttribute('aria-expanded', 'true');
+        showError('Enter a passphrase to encrypt the key on this device.');
+        return;
       }
 
-      const profile: Profile = { ...existing, id: existing?.id ?? crypto.randomUUID(), name, protocol, host, port, etPort, username: user, identityId, settingsProfileId };
-      await saveProfile(profile);
-      if (existing) {
-        close();
-        await opts.onSaved?.();
-      } else {
-        navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
+      errEl.hidden = true;
+      submitBtn.disabled = true;
+      submitBtn.textContent = existing ? 'Saving…' : 'Connecting…';
+      try {
+        let identityId = existing?.identityId;
+        if (keyText || file) {
+          const pemBytes = file ? await file.arrayBuffer() : (new TextEncoder().encode(keyText).buffer as ArrayBuffer);
+          const pemText = file ? new TextDecoder().decode(pemBytes) : keyText;
+          const encryptedPrivateKey = await encryptPrivateKey(pemBytes, passphrase);
+          identityId = crypto.randomUUID();
+          await saveIdentity({
+            id: identityId,
+            label: `${user}@${host}`,
+            publicKey: '',
+            encryptedPrivateKey,
+            opensshKeyEncrypted: isPemEncrypted(pemText),
+            createdAt: Date.now(),
+          });
+          cacheIdentityPassphrase(identityId, passphrase);
+        }
+
+        const profile: Profile = { ...existing, id: existing?.id ?? crypto.randomUUID(), name, protocol, host, port, etPort, username: user, identityId, settingsProfileId };
+        await saveProfile(profile);
+        if (existing) {
+          close();
+          await opts.onSaved?.();
+        } else {
+          navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
+        }
+      } catch (error) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = existing ? 'Save' : 'Connect';
+        showError(`Could not save the connection.${error instanceof Error ? ` ${error.message}` : ''}`);
       }
     });
     return modal;

@@ -758,6 +758,18 @@ select {
   background-size: 12px 12px;
 }
 
+/* The control is translucent, but the native options popup needs a *solid*
+   dark fill or it renders light/muddy on the dark form. */
+option,
+optgroup {
+  background-color: var(--surface);
+  color: var(--fg);
+}
+
+optgroup {
+  font-weight: 600;
+}
+
 textarea {
   resize: vertical;
   min-height: 84px;
@@ -775,6 +787,82 @@ textarea {
   gap: 10px;
   justify-content: flex-end;
   margin-top: 24px;
+}
+
+/* Collapsed SSH-key disclosure in the connect form. */
+.key-section {
+  margin-bottom: 16px;
+}
+
+.key-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.key-toggle:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.key-chevron {
+  display: inline-grid;
+  place-items: center;
+  color: var(--muted);
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.key-chevron svg {
+  display: block;
+}
+
+.key-toggle[aria-expanded='true'] .key-chevron {
+  transform: rotate(180deg);
+}
+
+.key-toggle-opt {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.key-body {
+  padding-top: 14px;
+}
+
+/* Styled file picker (the native control clashes with the dark form). */
+.file-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.file-pick .btn-ghost {
+  flex: 0 0 auto;
+}
+
+.file-name {
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-error {
+  color: #f0c5c5;
 }
 
 /* ----------------------------------------------------------------- modal -- */
