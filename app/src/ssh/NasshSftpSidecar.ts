@@ -90,7 +90,7 @@ export async function connectNasshSftpSidecar(spec: ConnectionIntent, signal?: A
   instance.secureInput = async (prompt, length, echo) => {
     const hostKey = await guard.consumePendingHostKeyResponse(prompt);
     if (hostKey) return hostKey.slice(0, length);
-    return (await showSecureInputPrompt(prompt, length, echo) ?? '').slice(0, length);
+    return ((await showSecureInputPrompt(prompt, length, echo)).value ?? '').slice(0, length);
   };
   let identity: string | undefined;
   if (spec.identityId) identity = await stageIdentityForNassh(spec.identityId);

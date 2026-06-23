@@ -26,6 +26,7 @@ export const DEFAULT_PWA_SETTINGS: PwaTerminalSettings = {
   fontHinting: 'light',
   ligatures: true,
   nerdFontFallback: true,
+  nerdFontScale: 0.75,
   captureShortcuts: true,
   confirmClose: false,
   closeOnExit: true,
@@ -48,6 +49,7 @@ export function normalizePwaSettings(value: Partial<PwaTerminalSettings> | Recor
   const fontSize = Number(value.fontSize);
   const scrollback = Number(value.scrollback);
   const scrollSensitivity = Number(value.scrollSensitivity);
+  const nerdFontScale = Number(value.nerdFontScale);
   const accent = value.accent === 'blue' || value.accent === 'amber' ? value.accent : 'green';
   const density = value.density === 'compact' ? value.density : 'comfortable';
   const cursorStyle = value.cursorStyle === 'underline' || value.cursorStyle === 'bar' ? value.cursorStyle : 'block';
@@ -109,6 +111,7 @@ export function normalizePwaSettings(value: Partial<PwaTerminalSettings> | Recor
     fontHinting,
     ligatures: typeof value.ligatures === 'boolean' ? value.ligatures : DEFAULT_PWA_SETTINGS.ligatures,
     nerdFontFallback: typeof value.nerdFontFallback === 'boolean' ? value.nerdFontFallback : DEFAULT_PWA_SETTINGS.nerdFontFallback,
+    nerdFontScale: Number.isFinite(nerdFontScale) ? clamp(nerdFontScale, 0.5, 1.5) : DEFAULT_PWA_SETTINGS.nerdFontScale,
     captureShortcuts: typeof value.captureShortcuts === 'boolean' ? value.captureShortcuts : DEFAULT_PWA_SETTINGS.captureShortcuts,
     confirmClose: typeof value.confirmClose === 'boolean' ? value.confirmClose : DEFAULT_PWA_SETTINGS.confirmClose,
     closeOnExit: typeof value.closeOnExit === 'boolean' ? value.closeOnExit : DEFAULT_PWA_SETTINGS.closeOnExit,

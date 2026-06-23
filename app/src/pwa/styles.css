@@ -729,6 +729,24 @@ a {
   color: var(--muted);
 }
 
+/* Inline opt-in checkbox (e.g. "Save password on this device"). */
+.field-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 16px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.field-check input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+  flex: none;
+  cursor: pointer;
+}
+
 input,
 select,
 textarea {
@@ -1338,6 +1356,24 @@ textarea {
 .set-row .control {
   flex: 0 0 auto;
   width: 220px;
+}
+
+/* Standalone hint paragraph (Security tab) — not nested in a .set-row. */
+p.set-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+/* Master-password state chip. */
+.set-state {
+  font-size: 13px;
+  color: var(--fg);
+}
+
+/* Locked is a connection-status signal → Connecting Amber from the palette. */
+.set-state.is-warn {
+  color: #e0b341;
 }
 
 .set-row input,

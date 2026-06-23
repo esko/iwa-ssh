@@ -40,10 +40,18 @@ interface IwaSshDb extends DBSchema {
     value: EtJournalChunk;
     indexes: { 'by-session': string };
   };
+  savedPasswords: {
+    key: string;
+    value: SavedPasswordRecord;
+  };
+  vaultMeta: {
+    key: string;
+    value: VaultKeyRecord;
+  };
 }
 
 const DB_NAME = 'iwa-ssh';
-const DB_VERSION = 2;
+const DB_VERSION = 4;
 
 export type EtSessionPhase = 'bootstrapping' | 'active' | 'detached' | 'stale' | 'ended';
 
@@ -92,6 +100,38 @@ export type EtJournalChunk = {
   size: number;
 };
 
+/**
+ * An SSH password encrypted at rest with the device key (AES-GCM, non-extractable
+ * CryptoKey held in `etMeta`). Keyed by `${username}@${host}:${port}` so a saved
+ * password auto-fills the next connect to the same target. The device-key model
+ * means the password is protected against disk/export inspection but not behind a
+ * master passphrase — it is usable by anyone with the unlocked app, which is why
+ * saving is strictly opt-in.
+ */
+export type SavedPasswordRecord = {
+  credentialKey: string;
+  username: string;
+  host: string;
+  port: number;
+  iv: Uint8Array;
+  ciphertext: ArrayBuffer;
+  savedAt: number;
+};
+
+/**
+ * A wrapped copy of the credential-vault data key (DEK). The same 32-byte DEK is
+ * stored under two ids: `dek-device` (sealed with the non-extractable device key,
+ * enables silent auto-unlock) and `dek-master` (sealed with a PBKDF2 key derived
+ * from the user's master password, the durable copy + recovery path). `salt` is
+ * present only on the master-wrapped record. See {@link credentialVault}.
+ */
+export type VaultKeyRecord = {
+  id: string;
+  salt?: Uint8Array;
+  iv: Uint8Array;
+  ciphertext: ArrayBuffer;
+};
+
 let dbPromise: Promise<IDBPDatabase<IwaSshDb>> | null = null;
 let deviceKeyPromise: Promise<CryptoKey> | null = null;
 
@@ -122,6 +162,12 @@ function getDb(): Promise<IDBPDatabase<IwaSshDb>> {
           frames.createIndex('by-session', 'sessionId');
           const journal = db.createObjectStore('etJournal', { keyPath: ['sessionId', 'sequence'] });
           journal.createIndex('by-session', 'sessionId');
+        }
+        if (oldVersion < 3) {
+          db.createObjectStore('savedPasswords', { keyPath: 'credentialKey' });
+        }
+        if (oldVersion < 4) {
+          db.createObjectStore('vaultMeta', { keyPath: 'id' });
         }
       },
       blocking() {
@@ -408,4 +454,32 @@ export async function listKnownHosts(): Promise<KnownHost[]> {
 export async function deleteKnownHost(host: string, port: number): Promise<void> {
   const db = await getDb();
   await db.delete('knownHosts', knownHostKey(host, port));
+}
+
+export async function putSavedPassword(record: SavedPasswordRecord): Promise<void> {
+  await (await getDb()).put('savedPasswords', record);
+}
+
+export async function getSavedPasswordRecord(credentialKey: string): Promise<SavedPasswordRecord | undefined> {
+  return (await getDb()).get('savedPasswords', credentialKey);
+}
+
+export async function deleteSavedPasswordRecord(credentialKey: string): Promise<void> {
+  await (await getDb()).delete('savedPasswords', credentialKey);
+}
+
+export async function listSavedPasswordRecords(): Promise<SavedPasswordRecord[]> {
+  return (await getDb()).getAll('savedPasswords');
+}
+
+export async function getVaultKeyRecord(id: string): Promise<VaultKeyRecord | undefined> {
+  return (await getDb()).get('vaultMeta', id);
+}
+
+export async function putVaultKeyRecord(record: VaultKeyRecord): Promise<void> {
+  await (await getDb()).put('vaultMeta', record);
+}
+
+export async function deleteVaultKeyRecord(id: string): Promise<void> {
+  await (await getDb()).delete('vaultMeta', id);
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionStatusMeta } from '../settings/types';
-import { composeSshArgstr, NASSH_ENVIRONMENT, NasshCommandBridge } from './NasshCommandBridge';
+import { composeSshArgstr, isLoginPasswordPrompt, NASSH_ENVIRONMENT, NasshCommandBridge } from './NasshCommandBridge';
 
 describe('composeSshArgstr', () => {
   it('returns trimmed extra args when there is no remote command', () => {
@@ -15,6 +15,28 @@ describe('composeSshArgstr', () => {
     );
   });
 });
+describe('isLoginPasswordPrompt', () => {
+  it('treats masked password prompts as the savable login password', () => {
+    expect(isLoginPasswordPrompt("user@host's password: ", false)).toBe(true);
+    expect(isLoginPasswordPrompt('Password:', false)).toBe(true);
+  });
+
+  it('never offers to save echoed responses', () => {
+    expect(isLoginPasswordPrompt("user@host's password: ", true)).toBe(false);
+  });
+
+  it('excludes one-time / 2FA prompts that also mask input', () => {
+    expect(isLoginPasswordPrompt('Verification code: ', false)).toBe(false);
+    expect(isLoginPasswordPrompt('One-time password: ', false)).toBe(false);
+    expect(isLoginPasswordPrompt('Enter your OTP: ', false)).toBe(false);
+    expect(isLoginPasswordPrompt('Authenticator token: ', false)).toBe(false);
+  });
+
+  it('ignores non-password prompts', () => {
+    expect(isLoginPasswordPrompt('Are you sure you want to continue connecting?', false)).toBe(false);
+  });
+});
+
 type ExitHarness = {
   handleExit(code: number, source: 'nassh' | 'nassh-exit' | 'wassh'): void;
   ioShim: { dispose(): void } | null;

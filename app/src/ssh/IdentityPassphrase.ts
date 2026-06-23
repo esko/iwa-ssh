@@ -24,5 +24,5 @@ export function clearAllIdentityPassphrases(): void {
 
 /** Prompt for the storage passphrase used to decrypt an identity at connect time. */
 export async function promptIdentityPassphrase(label: string): Promise<string | null> {
-  return showSecureInputPrompt(`Enter passphrase for identity “${label}”`, 256, false);
+  return (await showSecureInputPrompt(`Enter passphrase for identity “${label}”`, 256, false)).value;
 }

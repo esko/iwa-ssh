@@ -48,12 +48,14 @@ describe('PWA settings normalization', () => {
       fontHinting: 'light',
       ligatures: true,
       nerdFontFallback: true,
+      nerdFontScale: 0.75,
     });
-    expect(normalizePwaSettings({ fontSmoothing: 'grayscale', fontHinting: 'normal', ligatures: false, nerdFontFallback: false })).toMatchObject({
+    expect(normalizePwaSettings({ fontSmoothing: 'grayscale', fontHinting: 'normal', ligatures: false, nerdFontFallback: false, nerdFontScale: 1.25 })).toMatchObject({
       fontSmoothing: 'grayscale',
       fontHinting: 'normal',
       ligatures: false,
       nerdFontFallback: false,
+      nerdFontScale: 1.25,
     });
     // Unsupported enum / non-boolean inputs fall back to defaults.
     expect(normalizePwaSettings({ fontSmoothing: 'lcd', fontHinting: 'full', ligatures: 'on', nerdFontFallback: 'on' })).toMatchObject({
@@ -61,7 +63,12 @@ describe('PWA settings normalization', () => {
       fontHinting: 'light',
       ligatures: true,
       nerdFontFallback: true,
+      nerdFontScale: 0.75,
     });
+    // Out-of-range and non-numeric scales clamp / fall back to the default.
+    expect(normalizePwaSettings({ nerdFontScale: 9 }).nerdFontScale).toBe(1.5);
+    expect(normalizePwaSettings({ nerdFontScale: 0.1 }).nerdFontScale).toBe(0.5);
+    expect(normalizePwaSettings({ nerdFontScale: 'big' }).nerdFontScale).toBe(0.75);
   });
 
   it('normalizes the former 11px UI option to the supported 12px minimum', () => {

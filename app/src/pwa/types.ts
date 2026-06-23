@@ -48,6 +48,8 @@ export type PwaTerminalSettings = {
   ligatures: boolean;
   /** Append the bundled Symbols Nerd Font so icon glyphs render with any font. */
   nerdFontFallback: boolean;
+  /** Size of Nerd Font icon glyphs relative to text (1 = match the text em square). */
+  nerdFontScale: number;
   /** Capture Ctrl+T / Ctrl+W / Ctrl+Tab in-app instead of passing to the OS. */
   captureShortcuts: boolean;
   /** Ask for confirmation before closing a tab whose session is connected. */

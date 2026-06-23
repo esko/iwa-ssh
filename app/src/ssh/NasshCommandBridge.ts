@@ -20,6 +20,8 @@ import {
 import { showKnownHostPrompt } from './KnownHostPrompt';
 import { deleteKnownHost, getKnownHost, saveKnownHost } from '../storage/indexedDb';
 import { showSecureInputPrompt } from './SecureInputPrompt';
+import { canSavePassword, forgetPassword, loadPassword, savePassword } from '../security/savedPasswords';
+import { ensureVaultUnlocked } from './vaultUnlock';
 import type {
   NasshCommandInstance,
   NasshCommandModule,
@@ -56,6 +58,18 @@ export function composeSshArgstr(connectionArgs: string | undefined, remoteComma
   const command = (remoteCommand ?? '').trim();
   if (!command) return base;
   return base ? `${base} -- ${command}` : `-- ${command}`;
+}
+
+/**
+ * True when a masked secureInput prompt is the SSH login password (the only
+ * prompt eligible for saving/auto-fill). Echoed responses are excluded, as are
+ * the common one-time / 2FA prompts that also mask input — those are entered
+ * fresh each connect and must never be stored.
+ */
+export function isLoginPasswordPrompt(message: string, echo: boolean): boolean {
+  if (echo) return false;
+  if (!/password/i.test(message)) return false;
+  return !/verification|one[-\s]?time|\botp\b|token|authenticator|\bcode\b/i.test(message);
 }
 
 export const NASSH_ENVIRONMENT = {
@@ -194,16 +208,54 @@ export class NasshCommandBridge {
       },
     });
 
+    const credentialTarget = { username: this.options.username, host: this.options.host, port: this.options.port };
+    // Once the login password has been provided (auto-filled or typed) this guards
+    // against re-using a rejected stored password and against treating a later 2FA
+    // prompt as the password. Reset per connection (this closure is per connect()).
+    let loginPasswordProvided = false;
+
     instance.secureInput = async (message, bufLen, echo) => {
       log.ssh.debug('secureInput requested', { echo, bufLen });
       const hostKeyResponse = await this.hostKeyGuard?.consumePendingHostKeyResponse(message);
       if (hostKeyResponse) return hostKeyResponse.slice(0, bufLen);
-      const input = await showSecureInputPrompt(message, bufLen, echo);
-      if (input === null) {
+
+      const eligible = isLoginPasswordPrompt(message, echo) && canSavePassword(credentialTarget);
+      // Unlock the vault once before touching saved passwords. If the user
+      // cancels the master-password prompt, fall back to a plain prompt with no
+      // save offer (vault stays locked, nothing is read or written).
+      const vaultReady = eligible ? await ensureVaultUnlocked() : false;
+
+      if (eligible && vaultReady && !loginPasswordProvided) {
+        // First login-password prompt: silently supply a stored password if present.
+        const saved = await loadPassword(credentialTarget).catch(() => null);
+        if (saved) {
+          loginPasswordProvided = true;
+          return saved.slice(0, bufLen);
+        }
+      } else if (eligible && vaultReady && loginPasswordProvided) {
+        // Re-prompted after we already supplied one → the stored password was
+        // wrong; forget it so it does not loop, then ask the user.
+        await forgetPassword(credentialTarget);
+      }
+
+      const offerSave = eligible && vaultReady;
+      const { value, save } = await showSecureInputPrompt(message, bufLen, echo, { offerSave });
+      if (value === null) {
         log.ssh.warn('secureInput cancelled');
         return '';
       }
-      return input.slice(0, bufLen);
+      if (offerSave) {
+        loginPasswordProvided = true;
+        if (save) {
+          await savePassword(credentialTarget, value).catch((error) =>
+            log.ssh.warn('failed to save password', { error: String(error) }),
+          );
+        } else {
+          // An unchecked box forgets any password previously stored for this target.
+          await forgetPassword(credentialTarget);
+        }
+      }
+      return value.slice(0, bufLen);
     };
 
     instance.onPluginExit = async (code) => {

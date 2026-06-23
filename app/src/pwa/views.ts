@@ -1,6 +1,7 @@
 import type { Identity, Profile } from '../settings/types';
 import { deleteIdentity, deleteProfile, forgetEtSession, getEtSession, getProfile, listEtSessionSummaries, listIdentities, listProfiles, purgeStaleEtSessions, saveIdentity, saveProfile, type EtSessionSummary } from '../storage/indexedDb';
 import { encryptPrivateKey } from '../security/KeyCrypto';
+import { credentialVault } from '../security/credentialVault';
 import { cacheIdentityPassphrase } from '../ssh/IdentityPassphrase';
 import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
@@ -873,12 +874,13 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
 
 // ------------------------------------------------------------- settings ----
 
-type SettingsTab = 'appearance' | 'rendering' | 'keyboard' | 'behavior' | 'about';
+type SettingsTab = 'appearance' | 'rendering' | 'keyboard' | 'behavior' | 'security' | 'about';
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'rendering', label: 'Rendering' },
   { id: 'keyboard', label: 'Keyboard' },
   { id: 'behavior', label: 'Behavior' },
+  { id: 'security', label: 'Security' },
   { id: 'about', label: 'Diagnostics' },
 ];
 
@@ -1046,7 +1048,108 @@ function renderSettingsTab(body: HTMLElement, tab: SettingsTab, profileId: strin
   if (tab === 'rendering') return renderRenderingTab(body, profileId);
   if (tab === 'about') return void renderAboutTab(body);
   if (tab === 'keyboard') return renderKeyboardTab(body, profileId);
+  if (tab === 'security') return void renderSecurityTab(body);
   return renderBehaviorTab(body, profileId);
+}
+
+/**
+ * App-global (profile-independent) saved-password security. Manages the master
+ * password that protects the credential vault and the manual lock. With
+ * "remember indefinitely" the vault auto-unlocks after the password is set, so
+ * the master password is only re-entered after an explicit lock.
+ */
+async function renderSecurityTab(body: HTMLElement): Promise<void> {
+  const gen = body.dataset.gen;
+  const [hasMaster, locked] = await Promise.all([credentialVault.hasMasterPassword(), credentialVault.isLocked()]);
+  if (body.dataset.gen !== gen) return;
+  const rerender = (): void => void renderSecurityTab(body);
+
+  const status = !hasMaster
+    ? 'No master password set. Saved passwords are encrypted with a device key and unlock automatically.'
+    : locked
+      ? 'Locked. Your master password is required before saved passwords can be used again.'
+      : 'Unlocked. Your master password protects saved passwords; the app stays unlocked until you lock it.';
+
+  const buttons = !hasMaster
+    ? `<button class="btn" type="button" data-set>Set master password…</button>`
+    : `
+        <button class="btn" type="button" data-lock${locked ? ' disabled' : ''}>${locked ? 'Locked' : 'Lock now'}</button>
+        <button class="btn-ghost" type="button" data-change>Change master password…</button>
+        <button class="btn-ghost btn-danger" type="button" data-remove>Remove master password…</button>
+      `;
+
+  body.innerHTML =
+    `<div class="group-title">Saved passwords</div>` +
+    setRow('Master password', `<span class="set-state${locked ? ' is-warn' : ''}">${hasMaster ? (locked ? 'Locked' : 'Set') : 'Not set'}</span>`,
+      'An extra password that encrypts every saved SSH password on this device.') +
+    `<p class="set-hint" style="margin:0 0 16px">${escapeHTML(status)}</p>` +
+    `<div class="actions" style="justify-content:flex-start;gap:10px">${buttons}</div>`;
+
+  body.querySelector<HTMLButtonElement>('[data-set]')?.addEventListener('click', () =>
+    openMasterPasswordModal({ mode: 'set', onDone: rerender }));
+  body.querySelector<HTMLButtonElement>('[data-change]')?.addEventListener('click', () =>
+    openMasterPasswordModal({ mode: 'change', onDone: rerender }));
+  body.querySelector<HTMLButtonElement>('[data-lock]')?.addEventListener('click', async () => {
+    await credentialVault.lock();
+    rerender();
+  });
+  body.querySelector<HTMLButtonElement>('[data-remove]')?.addEventListener('click', () =>
+    openMasterPasswordModal({ mode: 'remove', onDone: rerender }));
+}
+
+/**
+ * Set / change / remove the vault master password. "set" and "change" take a new
+ * password plus confirmation (change also takes the current one); "remove" only
+ * verifies the current password. Server-side verification is the vault's
+ * constant-time AES-GCM unwrap, surfaced here as an inline error.
+ */
+function openMasterPasswordModal(opts: { mode: 'set' | 'change' | 'remove'; onDone: () => void }): void {
+  const titles = { set: 'Set master password', change: 'Change master password', remove: 'Remove master password' } as const;
+  const needsCurrent = opts.mode === 'change' || opts.mode === 'remove';
+  const needsNew = opts.mode === 'set' || opts.mode === 'change';
+  openOverlay((close) => {
+    const modal = elFromHTML(`
+      <div class="modal modal-sm">
+        <h2>${titles[opts.mode]}</h2>
+        <form id="masterForm">
+          ${needsCurrent ? `<label class="field"><span>current master password</span><input name="current" type="password" autocomplete="off" required></label>` : ''}
+          ${needsNew ? `<label class="field"><span>${opts.mode === 'change' ? 'new master password' : 'master password'}</span><input name="next" type="password" autocomplete="off" minlength="8" required></label>` : ''}
+          ${needsNew ? `<label class="field"><span>confirm</span><input name="confirm" type="password" autocomplete="off" required></label>` : ''}
+          ${opts.mode === 'remove' ? `<p class="prompt-body">Saved passwords stay on this device, protected by the device key only.</p>` : ''}
+          <p class="field-error" data-error hidden></p>
+          <div class="actions">
+            <button type="button" class="btn-ghost" data-cancel>Cancel</button>
+            <button type="submit" class="btn${opts.mode === 'remove' ? ' btn-danger' : ''}">${opts.mode === 'remove' ? 'Remove' : 'Save'}</button>
+          </div>
+        </form>
+      </div>
+    `);
+    const form = modal.querySelector<HTMLFormElement>('#masterForm')!;
+    const error = modal.querySelector<HTMLElement>('[data-error]')!;
+    const fail = (message: string): void => { error.textContent = message; error.hidden = false; };
+    modal.querySelector<HTMLButtonElement>('[data-cancel]')?.addEventListener('click', close);
+    setTimeout(() => form.querySelector<HTMLInputElement>('input')?.focus(), 0);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const data = new FormData(form);
+      const current = String(data.get('current') ?? '');
+      const next = String(data.get('next') ?? '');
+      const confirm = String(data.get('confirm') ?? '');
+      if (needsNew && next.length < 8) return fail('Use at least 8 characters.');
+      if (needsNew && next !== confirm) return fail('The passwords do not match.');
+      try {
+        if (opts.mode === 'set') await credentialVault.setMasterPassword(next);
+        else if (opts.mode === 'change') {
+          if (!(await credentialVault.changeMasterPassword(current, next))) return fail('Current master password is incorrect.');
+        } else if (!(await credentialVault.removeMasterPassword(current))) return fail('Master password is incorrect.');
+      } catch {
+        return fail('Could not update the master password.');
+      }
+      close();
+      opts.onDone();
+    });
+    return modal;
+  });
 }
 
 function renderRenderingTab(body: HTMLElement, profileId: string): void {
@@ -1080,6 +1183,13 @@ function renderRenderingTab(body: HTMLElement, profileId: string): void {
       `<select name="nerdFontFallback"><option value="on"${s.nerdFontFallback ? ' selected' : ''}>On</option><option value="off"${s.nerdFontFallback ? '' : ' selected'}>Off</option></select>`,
       'Falls back to the bundled Symbols Nerd Font so prompt icons render with any text font.',
     ) +
+    setRow(
+      'Nerd Font icon scale',
+      `<select name="nerdFontScale">${NERD_SCALE_STEPS.map(
+        (value) => opt(String(value), String(s.nerdFontScale), `${Math.round(value * 100)}%`),
+      ).join('')}</select>`,
+      'Scales icon glyphs relative to text (100% matches the text em square).',
+    ) +
     `<p class="set-hint set-note">Rendering changes apply to newly opened tabs.</p>`;
   body.querySelector<HTMLSelectElement>('[name="fontSmoothing"]')?.addEventListener('change', (e) =>
     save({ fontSmoothing: (e.target as HTMLSelectElement).value }),
@@ -1093,7 +1203,13 @@ function renderRenderingTab(body: HTMLElement, profileId: string): void {
   body.querySelector<HTMLSelectElement>('[name="nerdFontFallback"]')?.addEventListener('change', (e) =>
     save({ nerdFontFallback: (e.target as HTMLSelectElement).value === 'on' }),
   );
+  body.querySelector<HTMLSelectElement>('[name="nerdFontScale"]')?.addEventListener('change', (e) =>
+    save({ nerdFontScale: Number((e.target as HTMLSelectElement).value) }),
+  );
 }
+
+/** Discrete Nerd Font icon-scale steps, rendered as percentages (within the 0.5–1.5 clamp). */
+const NERD_SCALE_STEPS: number[] = [0.5, 0.65, 0.75, 0.9, 1, 1.25, 1.5];
 
 /** Shared on/off select, persisted to the settings profile and reapplied live. */
 function renderToggleTab(
@@ -2020,6 +2136,7 @@ function buildPaletteCommands(): PaletteCommand[] {
     { label: 'Copy path', group: 'Clipboard', run: copyPath },
     { label: 'Reconnect', group: 'Session', disabled: !session, run: () => void reconnect() },
     { label: 'Switch session…', group: 'Session', run: () => void openSessionPicker() },
+    { label: 'Lock saved passwords', group: 'Session', run: () => void credentialVault.lock() },
     { label: 'New window', group: 'App', run: () => openWindow('/') },
     { label: 'Settings', group: 'App', run: () => openSettings() },
     { label: 'Back to menu', group: 'App', run: () => navigate('/') },
