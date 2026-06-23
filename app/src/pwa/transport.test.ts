@@ -51,7 +51,7 @@ import { EtDirectSocketsTransport, SshDirectSocketsTransport } from './transport
 const adapter = {
   open: () => {},
   write: () => {},
-  onInput: vi.fn(() => {
+  onInput: vi.fn((_cb: (data: string) => void) => {
     mocks.et.onInputCalls += 1;
     return { dispose: mocks.et.inputDispose };
   }),
@@ -144,7 +144,9 @@ describe('EtDirectSocketsTransport', () => {
     mocks.et.connectResolve?.();
     await connecting;
 
-    const handler = vi.mocked(adapter.onInput).mock.calls.at(-1)?.[0] as (data: string) => void;
+    const lastCall = vi.mocked(adapter.onInput).mock.calls.at(-1);
+    expect(lastCall).toBeDefined();
+    const handler = lastCall![0];
     handler('\x1b_Gi=1;OK\x1b\\');
     handler('echo hi\r');
     expect(mocks.et.controller.sendInput).toHaveBeenCalledTimes(1);

@@ -99,7 +99,7 @@ describe('EtClient live terminal latency', () => {
     await sodium.ready;
     let releaseCheckpoint!: (value: EtSessionRecord) => void;
     mocks.checkpointOutput.mockReturnValue(new Promise<EtSessionRecord>((resolve) => { releaseCheckpoint = resolve; }));
-    const sendInput = vi.fn(async () => undefined);
+    const sendInput = vi.fn<(data: string) => Promise<void>>(async () => undefined);
     const onOutput = vi.fn();
     const current = session();
     const client = new (EtClient as unknown as new (

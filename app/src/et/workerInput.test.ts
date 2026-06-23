@@ -4,7 +4,7 @@ import { EtWorkerInputGate } from './workerInput';
 describe('EtWorkerInputGate', () => {
   it('buffers input until a client is attached', async () => {
     const gate = new EtWorkerInputGate();
-    const sendInput = vi.fn(async () => undefined);
+    const sendInput = vi.fn<(data: string) => Promise<void>>(async () => undefined);
     const onError = vi.fn();
 
     gate.deliver('a', null, onError);
@@ -19,7 +19,7 @@ describe('EtWorkerInputGate', () => {
 
   it('forwards input immediately once a client exists', async () => {
     const gate = new EtWorkerInputGate();
-    const sendInput = vi.fn(async () => undefined);
+    const sendInput = vi.fn<(data: string) => Promise<void>>(async () => undefined);
     const client = { sendInput };
 
     gate.deliver('live', client, vi.fn());
@@ -28,7 +28,7 @@ describe('EtWorkerInputGate', () => {
 
   it('clears buffered input on reset', async () => {
     const gate = new EtWorkerInputGate();
-    const sendInput = vi.fn(async () => undefined);
+    const sendInput = vi.fn<(data: string) => Promise<void>>(async () => undefined);
 
     gate.deliver('drop-me', null, vi.fn());
     gate.reset();
