@@ -268,10 +268,29 @@ export async function renderHome(root: HTMLElement): Promise<void> {
   // that it's just chrome over a glanceable list.
   const showFilter = profiles.length >= FILTER_MIN;
 
-  const activeSessionsSection = etSessions.length
+  // Group each resumable ET session under the profile that owns it — by stored
+  // profileId, else by matching the connection target (legacy sessions). Any
+  // that match no current profile surface in a top "Other sessions" group.
+  const sessionsByProfile = new Map<string, EtSessionSummary[]>();
+  const orphanSessions: EtSessionSummary[] = [];
+  for (const session of etSessions) {
+    const owner =
+      (session.profileId && profiles.some((p) => p.id === session.profileId) && session.profileId) ||
+      profiles.find(
+        (p) =>
+          p.protocol === 'et' &&
+          p.host === session.host &&
+          p.username === session.username &&
+          (p.etPort ?? 2022) === (session.etPort ?? 2022),
+      )?.id;
+    if (owner) (sessionsByProfile.get(owner) ?? sessionsByProfile.set(owner, []).get(owner)!).push(session);
+    else orphanSessions.push(session);
+  }
+
+  const otherSessionsSection = orphanSessions.length
     ? `<section class="home-section">
-        <div class="home-head"><span class="section-label">Active sessions</span></div>
-        <div class="conn-list">${etSessions.map(etSessionRow).join('')}</div>
+        <div class="home-head"><span class="section-label">Other sessions</span></div>
+        <div class="conn-list">${orphanSessions.map(etSessionRow).join('')}</div>
       </section>`
     : '';
 
@@ -291,7 +310,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
             </div>`
           : ''}
         <div class="conn-list" data-conn-list>
-          ${profiles.map(profileRow).join('')}
+          ${profiles.map((p) => profileGroup(p, sessionsByProfile.get(p.id) ?? [])).join('')}
           <p class="conn-none" data-filter-empty hidden>No connections match.</p>
         </div>
         <button class="conn-row conn-add" type="button" data-new>
@@ -312,7 +331,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
         <span class="home-mark">${BRAND_MARK}</span>
         <span class="home-wordmark">iwa<span class="home-wordmark-dim">-ssh</span></span>
       </header>
-      ${activeSessionsSection}
+      ${otherSessionsSection}
       ${connectionsSection}
       ${keysPanel}
       <footer class="home-foot">
@@ -351,14 +370,32 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     });
   });
 
+  const launchProfile = (profile: Profile): void => navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
+  const toggleGroup = (rowEl: HTMLElement): void => {
+    const list = rowEl.closest('[data-profile-group]')?.querySelector<HTMLElement>('[data-sessions]');
+    if (!list) return;
+    list.hidden = !list.hidden;
+    rowEl.setAttribute('aria-expanded', String(!list.hidden));
+  };
+
   root.querySelectorAll<HTMLElement>('[data-launch-id]').forEach((rowEl) => {
     const profile = profiles.find((item) => item.id === rowEl.dataset.launchId);
     if (!profile) return;
-    activate(rowEl, () => navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`));
+    // A profile with live sessions expands to list them; otherwise the row is a
+    // direct launch. The "New session" button always launches regardless.
+    activate(rowEl, () => (rowEl.hasAttribute('data-expandable') ? toggleGroup(rowEl) : launchProfile(profile)));
     rowEl.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
       showProfileMenu(event, profile, root);
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>('[data-new-session]').forEach((btn) => {
+    btn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const profile = profiles.find((item) => item.id === btn.dataset.newSession);
+      if (profile) launchProfile(profile);
     });
   });
 
@@ -403,14 +440,14 @@ export async function renderHome(root: HTMLElement): Promise<void> {
   // launches the top match, Escape clears, and "/" focuses it from anywhere.
   const filterInput = root.querySelector<HTMLInputElement>('[data-filter]');
   if (filterInput) {
-    const launchRows = [...root.querySelectorAll<HTMLElement>('[data-conn-list] [data-launch-id]')];
+    const groups = [...root.querySelectorAll<HTMLElement>('[data-conn-list] [data-profile-group]')];
     const noMatch = root.querySelector<HTMLElement>('[data-filter-empty]');
     const applyFilter = (query: string): void => {
       const needle = query.trim().toLowerCase();
       let visible = 0;
-      for (const rowEl of launchRows) {
-        const show = !needle || (rowEl.dataset.search ?? '').includes(needle);
-        rowEl.hidden = !show;
+      for (const group of groups) {
+        const show = !needle || (group.dataset.search ?? '').includes(needle);
+        group.hidden = !show;
         if (show) visible += 1;
       }
       if (noMatch) noMatch.hidden = visible > 0;
@@ -418,7 +455,10 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     filterInput.addEventListener('input', () => applyFilter(filterInput.value));
     filterInput.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
-        launchRows.find((rowEl) => !rowEl.hidden)?.click();
+        // Enter always launches the top match fresh (never just expands it).
+        const topId = groups.find((g) => !g.hidden)?.querySelector<HTMLElement>('[data-launch-id]')?.dataset.launchId;
+        const profile = profiles.find((p) => p.id === topId);
+        if (profile) launchProfile(profile);
       } else if (event.key === 'Escape' && filterInput.value) {
         event.stopPropagation();
         filterInput.value = '';
@@ -469,22 +509,54 @@ function profileDisplayName(profile: Profile): string {
   return name && name !== target ? name : target;
 }
 
-function profileRow(profile: Profile): string {
+/**
+ * A profile as the unit of launching: the header row starts a new terminal (or,
+ * when the profile owns live ET sessions, expands to list them), and a persistent
+ * "New session" button always launches a fresh one. Resumable sessions nest in a
+ * collapsible list below (ADR 0008 — only ET sessions are durable; SSH/Mosh have
+ * no resumable record, so those profiles are a plain launch row).
+ */
+function profileGroup(profile: Profile, sessions: EtSessionSummary[]): string {
   const target = formatConnectionTarget(profileToSpec(profile));
   const primary = profileDisplayName(profile);
   const named = primary !== target;
   const secondary = named ? target : profile.lastConnectedAt ? formatTime(profile.lastConnectedAt) : '';
   const search = `${primary} ${target} ${profile.protocol ?? 'ssh'}`.toLowerCase();
+  const has = sessions.length > 0;
+  const countLabel = `${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`;
   return `
-    <div class="conn-row" data-launch-id="${escapeHTML(profile.id)}" data-search="${escapeHTML(search)}" role="button" tabindex="0">
-      ${protocolPill(profile.protocol)}
+    <div class="conn-group" data-profile-group data-search="${escapeHTML(search)}">
+      <div class="conn-row conn-profile" data-launch-id="${escapeHTML(profile.id)}" role="button" tabindex="0"${has ? ' data-expandable aria-expanded="false"' : ''}>
+        ${protocolPill(profile.protocol)}
+        <span class="conn-body">
+          <span class="conn-target">${escapeHTML(primary)}</span>
+          ${secondary ? `<span class="conn-meta">${escapeHTML(secondary)}</span>` : ''}
+        </span>
+        ${has ? `<span class="conn-count">${countLabel}</span>` : ''}
+        <span class="conn-actions">
+          <button class="icon-btn icon-sm" type="button" data-edit-id="${escapeHTML(profile.id)}" aria-label="Edit ${escapeHTML(primary)}" title="Edit">${PENCIL_SVG}</button>
+          <button class="icon-btn icon-sm" type="button" data-delete-id="${escapeHTML(profile.id)}" aria-label="Delete ${escapeHTML(primary)}" title="Delete">${TRASH_SVG}</button>
+        </span>
+        <button class="icon-btn icon-sm conn-newbtn" type="button" data-new-session="${escapeHTML(profile.id)}" aria-label="New session on ${escapeHTML(primary)}" title="New session">${PLUS_SVG}</button>
+        ${has ? `<span class="conn-expand" aria-hidden="true">${CHEVRON_DOWN_SVG}</span>` : ''}
+      </div>
+      ${has ? `<div class="session-list" data-sessions hidden>${sessions.map(etSessionSubRow).join('')}</div>` : ''}
+    </div>
+  `;
+}
+
+/** A resumable ET session nested under its profile. */
+function etSessionSubRow(session: EtSessionSummary): string {
+  const live = session.phase === 'active';
+  return `
+    <div class="session-row" data-resume-id="${escapeHTML(session.id)}" role="button" tabindex="0">
+      <span class="session-dot" data-state="${live ? 'active' : 'detached'}" aria-hidden="true"></span>
       <span class="conn-body">
-        <span class="conn-target">${escapeHTML(primary)}</span>
-        ${secondary ? `<span class="conn-meta">${escapeHTML(secondary)}</span>` : ''}
+        <span class="session-label">${live ? 'Active' : 'Suspended'} session</span>
+        <span class="conn-meta">${escapeHTML(formatTime(session.updatedAt))}</span>
       </span>
       <span class="conn-actions">
-        <button class="icon-btn icon-sm" type="button" data-edit-id="${escapeHTML(profile.id)}" aria-label="Edit ${escapeHTML(primary)}" title="Edit">${PENCIL_SVG}</button>
-        <button class="icon-btn icon-sm" type="button" data-delete-id="${escapeHTML(profile.id)}" aria-label="Delete ${escapeHTML(primary)}" title="Delete">${TRASH_SVG}</button>
+        <button class="icon-btn icon-sm" type="button" data-forget-id="${escapeHTML(session.id)}" aria-label="Forget session" title="Forget session">${TRASH_SVG}</button>
       </span>
     </div>
   `;
