@@ -1964,7 +1964,37 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
 }
 
 /** One runnable entry in the command palette. */
-type PaletteCommand = { label: string; key?: string; hint?: string; disabled?: boolean; run: () => void };
+type PaletteGroup = 'Tabs' | 'Panes' | 'Clipboard' | 'Session' | 'App';
+type PaletteCommand = {
+  label: string;
+  group: PaletteGroup;
+  key?: string;
+  hint?: string;
+  disabled?: boolean;
+  run: () => void;
+};
+
+/**
+ * Subsequence fuzzy match. Returns -1 when `needle` is not a subsequence of
+ * `label`, otherwise a score where consecutive and word-start hits rank higher
+ * and shorter labels win ties. `needle` is expected pre-lowercased.
+ */
+function fuzzyScore(label: string, needle: string): number {
+  const text = label.toLowerCase();
+  let score = 0;
+  let from = 0;
+  let prev = -2;
+  for (const ch of needle) {
+    const at = text.indexOf(ch, from);
+    if (at === -1) return -1;
+    if (at === prev + 1) score += 3; // consecutive run
+    if (at === 0 || text[at - 1] === ' ') score += 5; // word boundary
+    score += 1;
+    prev = at;
+    from = at + 1;
+  }
+  return score - text.length * 0.05;
+}
 
 /**
  * Every terminal action that the context menu and tab shortcuts expose, as a
@@ -1976,28 +2006,28 @@ function buildPaletteCommands(): PaletteCommand[] {
   const paneCount = activeTerminal?.paneCount() ?? 1;
   const canCopy = (activeTerminal?.hasSelection() ?? false) || canCopyViaRenderer();
   const commands: PaletteCommand[] = [
-    { label: 'New tab', key: '⌃T', disabled: !activeSpec, run: () => activeSpec && void openTab(activeSpec) },
-    { label: 'Duplicate session', disabled: !activeSpec, run: duplicateSession },
-    { label: 'Close tab', key: '⌃W', disabled: !session, run: () => session && confirmCloseSession(session) && closeSession(session) },
-    { label: 'Next tab', key: '⌃Tab', disabled: sessions.length < 2, run: () => cycleTab(1) },
-    { label: 'Previous tab', key: '⌃⇧Tab', disabled: sessions.length < 2, run: () => cycleTab(-1) },
-    { label: 'Split right', key: '⌃⇧E', run: () => void splitActivePane('vertical') },
-    { label: 'Split down', key: '⌃⇧D', run: () => void splitActivePane('horizontal') },
-    { label: 'Close pane', key: '⌃⇧W', disabled: paneCount <= 1, run: () => void closeActivePane() },
-    { label: 'Copy', key: '⌃⇧C', disabled: !canCopy, run: copySelection },
-    { label: 'Paste', key: '⌃⇧V', run: () => void pasteClipboard() },
-    { label: 'Upload image and paste path', key: '⌃⌥⇧V', run: () => void uploadClipboardImageAndPastePath() },
-    { label: 'Copy path', run: copyPath },
-    { label: 'Reconnect', disabled: !session, run: () => void reconnect() },
-    { label: 'Switch session…', run: () => void openSessionPicker() },
-    { label: 'New window', run: () => openWindow('/') },
-    { label: 'Settings', run: () => openSettings() },
-    { label: 'Back to menu', run: () => navigate('/') },
+    { label: 'New tab', group: 'Tabs', key: '⌃T', disabled: !activeSpec, run: () => activeSpec && void openTab(activeSpec) },
+    { label: 'Duplicate session', group: 'Tabs', disabled: !activeSpec, run: duplicateSession },
+    { label: 'Close tab', group: 'Tabs', key: '⌃W', disabled: !session, run: () => session && confirmCloseSession(session) && closeSession(session) },
+    { label: 'Next tab', group: 'Tabs', key: '⌃Tab', disabled: sessions.length < 2, run: () => cycleTab(1) },
+    { label: 'Previous tab', group: 'Tabs', key: '⌃⇧Tab', disabled: sessions.length < 2, run: () => cycleTab(-1) },
+    { label: 'Split right', group: 'Panes', key: '⌃⇧E', run: () => void splitActivePane('vertical') },
+    { label: 'Split down', group: 'Panes', key: '⌃⇧D', run: () => void splitActivePane('horizontal') },
+    { label: 'Close pane', group: 'Panes', key: '⌃⇧W', disabled: paneCount <= 1, run: () => void closeActivePane() },
+    { label: 'Copy', group: 'Clipboard', key: '⌃⇧C', disabled: !canCopy, run: copySelection },
+    { label: 'Paste', group: 'Clipboard', key: '⌃⇧V', run: () => void pasteClipboard() },
+    { label: 'Upload image and paste path', group: 'Clipboard', key: '⌃⌥⇧V', run: () => void uploadClipboardImageAndPastePath() },
+    { label: 'Copy path', group: 'Clipboard', run: copyPath },
+    { label: 'Reconnect', group: 'Session', disabled: !session, run: () => void reconnect() },
+    { label: 'Switch session…', group: 'Session', run: () => void openSessionPicker() },
+    { label: 'New window', group: 'App', run: () => openWindow('/') },
+    { label: 'Settings', group: 'App', run: () => openSettings() },
+    { label: 'Back to menu', group: 'App', run: () => navigate('/') },
   ];
   // Jump straight to any other open tab by name.
   for (const other of sessions) {
     if (other.id === activeSessionId) continue;
-    commands.push({ label: `Switch to tab: ${other.title}`, hint: 'tab', run: () => setActiveSession(other.id) });
+    commands.push({ label: `Switch to tab: ${other.title}`, group: 'Tabs', hint: 'tab', run: () => setActiveSession(other.id) });
   }
   return commands;
 }
@@ -2036,21 +2066,42 @@ function openCommandPalette(): void {
       rows[selected]?.scrollIntoView({ block: 'nearest' });
     };
 
+    const rowHTML = (cmd: PaletteCommand, i: number): string => `
+      <button class="palette-row" type="button" role="option" data-index="${i}"${cmd.disabled ? ' disabled' : ''} aria-selected="${i === 0}">
+        <span class="palette-label">${escapeHTML(cmd.label)}</span>
+        ${cmd.key ? `<span class="palette-key">${escapeHTML(cmd.key)}</span>` : cmd.hint ? `<span class="palette-hint">${escapeHTML(cmd.hint)}</span>` : ''}
+      </button>`;
+
     const renderList = (query: string): void => {
       const needle = query.trim().toLowerCase();
-      matches = needle ? commands.filter((c) => c.label.toLowerCase().includes(needle)) : commands;
       selected = 0;
-      list.innerHTML = matches.length
-        ? matches
-            .map(
-              (cmd, i) => `
-                <button class="palette-row" type="button" role="option" data-index="${i}"${cmd.disabled ? ' disabled' : ''} aria-selected="${i === 0}">
-                  <span class="palette-label">${escapeHTML(cmd.label)}</span>
-                  ${cmd.key ? `<span class="palette-key">${escapeHTML(cmd.key)}</span>` : cmd.hint ? `<span class="palette-hint">${escapeHTML(cmd.hint)}</span>` : ''}
-                </button>`,
-            )
-            .join('')
-        : '<p class="palette-empty">No matching commands.</p>';
+      if (needle) {
+        // Filtered: fuzzy subsequence rank, flat list (groups break ordering).
+        matches = commands
+          .map((cmd) => ({ cmd, score: fuzzyScore(cmd.label, needle) }))
+          .filter((m) => m.score >= 0)
+          .sort((a, b) => b.score - a.score)
+          .map((m) => m.cmd);
+        list.innerHTML = matches.length
+          ? matches.map((cmd, i) => rowHTML(cmd, i)).join('')
+          : '<p class="palette-empty">No matching commands.</p>';
+        syncSelection();
+        return;
+      }
+      // Unfiltered: bucket under group headers. Sort by group order (stable, so
+      // intra-group order holds) to keep dynamic tab-switch rows under one header.
+      const order: PaletteGroup[] = ['Tabs', 'Panes', 'Clipboard', 'Session', 'App'];
+      matches = [...commands].sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));
+      let html = '';
+      let lastGroup: PaletteGroup | null = null;
+      matches.forEach((cmd, i) => {
+        if (cmd.group !== lastGroup) {
+          html += `<div class="palette-group" role="presentation">${cmd.group}</div>`;
+          lastGroup = cmd.group;
+        }
+        html += rowHTML(cmd, i);
+      });
+      list.innerHTML = html;
       syncSelection();
     };
 

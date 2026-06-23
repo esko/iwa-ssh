@@ -973,6 +973,19 @@ textarea {
   padding: 6px;
 }
 
+.palette-group {
+  padding: 10px 12px 4px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.palette-group:first-child {
+  padding-top: 4px;
+}
+
 .palette-row {
   display: flex;
   align-items: center;
@@ -1600,6 +1613,7 @@ html.app-chrome .term-shell {
 .term-tab[aria-selected='true'] {
   background: color-mix(in srgb, var(--term-bg, #000), #fff 13%);
   color: var(--term-fg, var(--fg));
+  font-weight: 500;
 }
 
 [data-term-kind='light'] .term-tab:not([aria-selected='true']):hover {
