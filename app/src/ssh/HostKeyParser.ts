@@ -1,7 +1,7 @@
-const KEY_TYPE = 'ED25519|RSA|ECDSA|EC|DSA|SK-ED25519|SK-ECDSA';
+const KEY_TYPE = '[A-Za-z0-9@._+-]+';
 
-export const SSH_FINGERPRINT_PATTERN = 'SHA256:[A-Za-z0-9+/]+=*';
-const FINGERPRINT_RE = new RegExp(`(${KEY_TYPE}) key fingerprint is (${SSH_FINGERPRINT_PATTERN})`, 'i');
+export const SSH_FINGERPRINT_PATTERN = '(?:SHA256:[A-Za-z0-9+/_=-]+|MD5:[0-9a-f:]+|[A-Za-z0-9+/_=-]{16,})';
+const FINGERPRINT_RE = new RegExp(`(${KEY_TYPE})\\s+(?:host\\s+)?key fingerprint is\\s+(${SSH_FINGERPRINT_PATTERN})`, 'i');
 const CONTINUE_PROMPT_RE =
   /(?:continue connecting \(yes\/no(?:\/\[fingerprint\])?\)|are you sure you want to continue connecting \(yes\/no(?:\/\[fingerprint\])?\)|can't be established|are you sure you want to continue)\??\s*/i;
 const PERMANENTLY_ADDED_RE = /Permanently added (.+?) to the list of known hosts/i;
@@ -93,11 +93,22 @@ export function extractHostKeyOffer(text: string): { fingerprint: string; keyTyp
 }
 
 export function normalizeKeyType(raw: string): string {
+  const lower = raw.toLowerCase();
   const upper = raw.toUpperCase();
   if (upper === 'EC') return 'ecdsa-sha2-nistp256';
-  if (upper.startsWith('SK-')) return `ssh-${raw.toLowerCase()}@openssh.com`;
+  if (upper === 'SK-ED25519' || upper === 'ED25519-SK') return 'sk-ssh-ed25519@openssh.com';
+  if (upper === 'SK-ECDSA' || upper === 'ECDSA-SK') return 'sk-ecdsa-sha2-nistp256@openssh.com';
+  if (
+    lower.startsWith('ssh-') ||
+    lower.startsWith('ecdsa-sha2-') ||
+    lower.startsWith('rsa-sha2-') ||
+    lower.startsWith('sk-')
+  ) {
+    return lower;
+  }
   if (upper === 'RSA') return 'ssh-rsa';
   if (upper === 'ED25519') return 'ssh-ed25519';
   if (upper === 'DSA') return 'ssh-dss';
-  return `ssh-${raw.toLowerCase()}`;
+  if (upper === 'ECDSA') return 'ssh-ecdsa';
+  return lower;
 }

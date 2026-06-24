@@ -140,6 +140,42 @@ describe('HostKeyGuard', () => {
     );
   });
 
+  it('recognizes host-key prompts with URL-safe SHA256 fingerprints', async () => {
+    ensureHostTrusted.mockResolvedValueOnce('once');
+    const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse: vi.fn() });
+
+    await expect(
+      guard.consumePendingHostKeyResponse(
+        "The authenticity of host 'target' can't be established.\nED25519 host key fingerprint is SHA256:abc_DEF-123.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? ",
+      ),
+    ).resolves.toBe('yes');
+
+    expect(ensureHostTrusted).toHaveBeenCalledWith(
+      'target',
+      22,
+      'SHA256:abc_DEF-123',
+      'ssh-ed25519',
+      { useLiveVerification: true },
+    );
+  });
+
+  it('keeps host-key-looking prompts out of the generic secure input modal even without a parsed fingerprint', async () => {
+    ensureHostTrusted.mockResolvedValueOnce('once');
+    const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse: vi.fn() });
+
+    await expect(
+      guard.consumePendingHostKeyResponse('Are you sure you want to continue connecting (yes/no/[fingerprint])? '),
+    ).resolves.toBe('yes');
+
+    expect(ensureHostTrusted).toHaveBeenCalledWith(
+      'target',
+      22,
+      'unknown',
+      'unknown',
+      { useLiveVerification: true },
+    );
+  });
+
   it('filters inline host-key prompts from terminal output while preserving surrounding output', () => {
     const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse: vi.fn() });
 

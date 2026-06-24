@@ -27,4 +27,20 @@ describe('HostKeyParser', () => {
       { type: 'HostKeyPromptDetected', fingerprint: 'SHA256:xyz123', keyType: 'ssh-ecdsa' },
     ]);
   });
+
+  it.each([
+    ['ssh-ed25519', 'ssh-ed25519'],
+    ['rsa-sha2-512', 'rsa-sha2-512'],
+    ['ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp384'],
+    ['sk-ssh-ed25519@openssh.com', 'sk-ssh-ed25519@openssh.com'],
+    ['sk-ecdsa-sha2-nistp256@openssh.com', 'sk-ecdsa-sha2-nistp256@openssh.com'],
+    ['SK-ED25519', 'sk-ssh-ed25519@openssh.com'],
+    ['ECDSA-SK', 'sk-ecdsa-sha2-nistp256@openssh.com'],
+  ])('recognizes %s host-key prompts', (rawKeyType, normalized) => {
+    const parser = new HostKeyParser();
+
+    expect(parser.parse(prompt('target', rawKeyType, 'SHA256:abc_DEF-123'))).toEqual([
+      { type: 'HostKeyPromptDetected', fingerprint: 'SHA256:abc_DEF-123', keyType: normalized },
+    ]);
+  });
 });

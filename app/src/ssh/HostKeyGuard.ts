@@ -79,8 +79,9 @@ export class HostKeyGuard {
       await Promise.race([this.waitForPendingPromptRegistration(), handled]);
       const pending = this.pendingPrompt;
       if (!pending) {
-        if (!isHostKeyQuestion(prompt) || !this.lastHostKeyOffer) return null;
-        this.registerHostKeyPrompt(this.lastHostKeyOffer);
+        const fallback = this.lastHostKeyOffer ?? fallbackHostKeyOffer(prompt);
+        if (!isHostKeyQuestion(prompt) || !fallback) return null;
+        this.registerHostKeyPrompt(fallback);
         const registered = this.pendingPrompt;
         if (!registered) return null;
         registered.consumedBySecureInput = true;
@@ -210,5 +211,12 @@ function findHostKeyPromptStart(text: string): number {
 }
 
 function isHostKeyQuestion(text: string): boolean {
-  return /yes\/no(?:\/\[fingerprint\])?|\bfingerprint\b|continue connecting/i.test(text);
+  return /authenticity of host|yes\/no(?:\/\[fingerprint\])?|\bfingerprint\b|continue connecting/i.test(text);
+}
+
+function fallbackHostKeyOffer(text: string): { fingerprint: string; keyType: string } | null {
+  const offer = extractHostKeyOffer(text);
+  if (offer) return offer;
+  if (!isHostKeyQuestion(text)) return null;
+  return { fingerprint: 'unknown', keyType: 'unknown' };
 }
