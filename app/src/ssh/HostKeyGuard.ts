@@ -205,21 +205,6 @@ export class HostKeyGuard {
       }
       if (!pending.consumedBySecureInput && this.options.allowTtyResponse !== false) {
         // #region agent log
-        if (import.meta.env.DEV) {
-          fetch('http://127.0.0.1:7869/ingest/5b03efa9-2224-4a73-9a56-c6a816107ee6', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a26731' },
-            body: JSON.stringify({
-              sessionId: 'a26731',
-              location: 'HostKeyGuard.ts:sendResponse',
-              message: 'injecting TTY host-key response',
-              data: { response, fingerprint },
-              hypothesisId: 'A',
-              timestamp: Date.now(),
-              runId: 'et-bootstrap',
-            }),
-          }).catch(() => {});
-        }
         console.info('[iwa-ssh et-debug] HostKeyGuard sendResponse', { response, fingerprint });
         // #endregion
         this.options.sendResponse(`${response}\n`);

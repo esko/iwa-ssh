@@ -22,6 +22,7 @@ import {
   type EtSessionRecord,
 } from '../storage/indexedDb';
 import { checkpointEtControl, checkpointEtOutput, flushEtSessionCheckpoint, prepareEtSessionForConnect, unwrapEtPasskey, updateEtSession } from './sessionStore';
+import { getEtSession } from '../storage/indexedDb';
 import {
   decryptEtPayload,
   encryptEtPayload,
@@ -377,6 +378,17 @@ export class EtClient {
     this.reconnecting = true;
     this.stopKeepalive();
     await this.closeSocket();
+    const flushed = await flushEtSessionCheckpoint(this.session.id).catch(() => undefined);
+    if (flushed) this.session = flushed;
+    else {
+      const stored = await getEtSession(this.session.id).catch(() => undefined);
+      if (stored) this.session = stored;
+    }
+    etConnectDebugLog('client.ts:handleConnectionLoss', 'reconnect after checkpoint flush', {
+      rxSequence: this.session.rxSequence,
+      txSequence: this.session.txSequence,
+      error: error instanceof Error ? error.message : String(error),
+    });
     const message = error instanceof Error ? error.message : String(error);
     if (this.session.phase === 'stale') {
       // onStale() already signaled the clean end; don't also raise an error.

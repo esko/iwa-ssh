@@ -88,6 +88,15 @@ describe('IndexedDB v2 Eternal Terminal state', () => {
     expect(next).toMatchObject({ rxSequence: 1, txSequence: 1 });
   });
 
+  it('checkpointEtOutput accepts consecutive sequences while session put is deferred', async () => {
+    await saveEtSession(record());
+    const hint = (await getEtSession('local-session'))!;
+    await checkpointEtOutput('local-session', 1, new Uint8Array([1]), hint);
+    await checkpointEtOutput('local-session', 2, new Uint8Array([2]), { ...hint, rxSequence: 1 });
+    await flushEtSessionCheckpoint('local-session');
+    expect(await getEtSession('local-session')).toMatchObject({ rxSequence: 2 });
+  });
+
   it('deferred journal flush preserves outbound progress made during encryption', async () => {
     await saveEtSession(record());
     const hint = await getEtSession('local-session');

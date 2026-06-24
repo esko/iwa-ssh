@@ -311,15 +311,24 @@ export async function checkpointEtInbound(
     await tx.done.catch(() => undefined);
     throw new Error(`ET session ${sessionId} is missing`);
   }
-  if (sequence !== stored.rxSequence + 1) {
+  const baselineRx = Math.max(stored.rxSequence, options?.sessionHint?.rxSequence ?? -1);
+  if (sequence !== baselineRx + 1) {
     tx.abort();
     await tx.done.catch(() => undefined);
-    throw new Error(`Non-contiguous ET inbound sequence ${sequence}; expected ${stored.rxSequence + 1}`);
+    throw new Error(`Non-contiguous ET inbound sequence ${sequence}; expected ${baselineRx + 1}`);
   }
   let journalBytes = stored.journalBytes + (chunk?.size ?? 0);
   let journalTruncated = stored.journalTruncated;
   const journalStore = tx.objectStore('etJournal');
-  if (chunk) await journalStore.add(chunk);
+  if (chunk) {
+    const key: [string, number] = [chunk.sessionId, chunk.sequence];
+    const existing = await journalStore.get(key);
+    if (!existing) {
+      await journalStore.add(chunk);
+    } else {
+      journalBytes = stored.journalBytes;
+    }
+  }
   let cursor = await journalStore.index('by-session').openCursor(IDBKeyRange.only(sessionId));
   while (cursor && journalBytes > 64 * 1024 * 1024) {
     journalBytes -= cursor.value.size;
