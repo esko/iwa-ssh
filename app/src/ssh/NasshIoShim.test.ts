@@ -52,4 +52,18 @@ describe('NasshIoShim UTF-8 decoding', () => {
     expect(output.join('')).toBe('�');
     expect(inputDispose).toHaveBeenCalledOnce();
   });
+
+  it('filters displayed output after notifying raw-output listeners', () => {
+    const { adapter, output } = fakeAdapter();
+    const onOutput = vi.fn();
+    const shim = new NasshIoShim(adapter, {
+      onOutput,
+      filterOutput: (data) => String(data).replace('secret prompt', ''),
+    });
+
+    shim.io.print('before secret prompt after');
+
+    expect(onOutput).toHaveBeenCalledWith('before secret prompt after');
+    expect(output.join('')).toBe('before  after');
+  });
 });

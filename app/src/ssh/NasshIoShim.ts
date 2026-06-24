@@ -10,6 +10,7 @@ import type { HtermStubTerminal, HtermTerminalIo } from './upstreamTypes';
 
 export type NasshIoShimOptions = {
   onOutput?: (data: string | Uint8Array) => void;
+  filterOutput?: (data: string | Uint8Array) => string | Uint8Array;
 };
 
 /** @deprecated Use NasshIoShimOptions */
@@ -171,10 +172,11 @@ export class NasshIoShim {
 
     this.stubTerminal = {
       interpret: (message) => {
-        if (!isNasshBootstrapOutput(message)) {
-          this.adapter.write(message);
-        }
         this.options.onOutput?.(message);
+        const display = this.options.filterOutput?.(message) ?? message;
+        if (!isNasshBootstrapOutput(display)) {
+          this.adapter.write(display);
+        }
       },
       clearHome: () => {
         this.adapter.write('\x1b[2J\x1b[H');

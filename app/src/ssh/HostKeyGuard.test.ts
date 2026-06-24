@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { HostKeyGuard } from './HostKeyGuard';
 
 const { ensureHostTrusted } = vi.hoisted(() => ({ ensureHostTrusted: vi.fn() }));
@@ -9,6 +9,10 @@ function prompt(host: string, fingerprint: string): string {
 }
 
 describe('HostKeyGuard', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('does not latch after auto-accepting a session-trusted host key', async () => {
     const sendResponse = vi.fn();
     const guard = new HostKeyGuard({
@@ -75,6 +79,14 @@ describe('HostKeyGuard', () => {
     expect(sendResponse).not.toHaveBeenCalled();
   });
 
+  it('returns null for non-host-key secureInput prompts', async () => {
+    const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse: vi.fn() });
+
+    await expect(guard.consumePendingHostKeyResponse("user@target's password: ")).resolves.toBeNull();
+
+    expect(ensureHostTrusted).not.toHaveBeenCalled();
+  });
+
   it('waits for queued terminal output before classifying secureInput host keys', async () => {
     ensureHostTrusted.mockResolvedValueOnce('once');
     const sendResponse = vi.fn();
@@ -86,5 +98,17 @@ describe('HostKeyGuard', () => {
     ).resolves.toBe('yes');
     await slowPrior;
     expect(sendResponse).not.toHaveBeenCalled();
+  });
+
+  it('filters inline host-key prompts from terminal output while preserving surrounding output', () => {
+    const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse: vi.fn() });
+
+    const first = guard.filterTerminalOutput('banner\nThe authenticity of host ');
+    const second = guard.filterTerminalOutput(
+      "'target' can't be established.\nED25519 key fingerprint is SHA256:inline.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? tail",
+    );
+
+    expect(first).toBe('banner\n');
+    expect(second).toBe('tail');
   });
 });

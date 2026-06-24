@@ -5,7 +5,7 @@
 import { log } from '../debug/logger';
 import { ensureHostTrusted, type HostTrustChoice } from './KnownHostPrompt';
 import { syncKnownHostsFromNassh } from './nasshKnownHosts';
-import { HostKeyParser } from './HostKeyParser';
+import { HostKeyParser, hostKeyPromptEnd } from './HostKeyParser';
 
 export type HostKeyChange = {
   fingerprint?: string;
@@ -30,6 +30,7 @@ export class HostKeyGuard {
   private promptInFlight = false;
   private outputQueue: Promise<void> = Promise.resolve();
   private generation = 0;
+  private terminalOutputBuffer = '';
   private pendingPrompt: {
     response: Promise<'yes' | 'no'>;
     consumedBySecureInput: boolean;
@@ -42,6 +43,7 @@ export class HostKeyGuard {
     this.generation += 1;
     this.parser.reset();
     this.promptInFlight = false;
+    this.terminalOutputBuffer = '';
     this.pendingPrompt = null;
     this.pendingPromptWaiters = [];
     this.outputQueue = Promise.resolve();
@@ -70,12 +72,38 @@ export class HostKeyGuard {
     // printing the complete prompt to the tty. Feed that structured syscall
     // payload through the same parser/guard queue so classification remains
     // here rather than leaking into the generic password modal.
-    if (prompt) void this.handleOutput(prompt);
+    if (prompt) {
+      const handled = this.handleOutput(prompt);
+      await Promise.race([this.waitForPendingPromptRegistration(), handled]);
+      const pending = this.pendingPrompt;
+      if (!pending) return null;
+      pending.consumedBySecureInput = true;
+      return pending.response;
+    }
     await this.waitForPendingPromptRegistration();
     const pending = this.pendingPrompt;
     if (!pending) return null;
     pending.consumedBySecureInput = true;
     return pending.response;
+  }
+
+  filterTerminalOutput(data: string | Uint8Array): string {
+    const chunk = typeof data === 'string' ? data : new TextDecoder().decode(data);
+    const combined = this.terminalOutputBuffer + chunk;
+    this.terminalOutputBuffer = '';
+
+    const promptStart = findHostKeyPromptStart(combined);
+    if (promptStart < 0) return combined;
+
+    const before = combined.slice(0, promptStart);
+    const candidate = combined.slice(promptStart);
+    const promptEnd = hostKeyPromptEnd(candidate);
+    if (promptEnd === null) {
+      this.terminalOutputBuffer = candidate;
+      return before;
+    }
+
+    return before + candidate.slice(promptEnd);
   }
 
   handleOutput(data: string | Uint8Array): Promise<void> {
@@ -154,4 +182,15 @@ export class HostKeyGuard {
       }
     }
   }
+}
+
+function findHostKeyPromptStart(text: string): number {
+  const authenticityStart = text.search(/The authenticity of host/i);
+  if (authenticityStart >= 0) return authenticityStart;
+
+  const fingerprintStart = text.search(/\b(?:ED25519|RSA|ECDSA|EC|DSA|SK-ED25519|SK-ECDSA) key fingerprint is SHA256:/i);
+  if (fingerprintStart < 0) return -1;
+
+  const lineStart = text.lastIndexOf('\n', fingerprintStart);
+  return lineStart >= 0 ? lineStart + 1 : fingerprintStart;
 }

@@ -181,6 +181,7 @@ export class NasshCommandBridge {
         this.attachOptions?.onOutput?.(data);
         void this.hostKeyGuard?.handleOutput(data);
       },
+      filterOutput: (data) => this.hostKeyGuard?.filterTerminalOutput(data) ?? data,
     });
     this.ioShim.bindInput();
     this.ioShim.resize(this.adapter.getSize());

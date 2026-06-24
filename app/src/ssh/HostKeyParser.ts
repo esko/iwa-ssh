@@ -3,7 +3,7 @@ const KEY_TYPE = 'ED25519|RSA|ECDSA|EC|DSA|SK-ED25519|SK-ECDSA';
 export const SSH_FINGERPRINT_PATTERN = 'SHA256:[A-Za-z0-9+/]+=*';
 const FINGERPRINT_RE = new RegExp(`(${KEY_TYPE}) key fingerprint is (${SSH_FINGERPRINT_PATTERN})`, 'i');
 const CONTINUE_PROMPT_RE =
-  /(?:continue connecting \(yes\/no(?:\/\[fingerprint\])?\)|can't be established|are you sure you want to continue)/i;
+  /(?:continue connecting \(yes\/no(?:\/\[fingerprint\])?\)|are you sure you want to continue connecting \(yes\/no(?:\/\[fingerprint\])?\)|can't be established|are you sure you want to continue)\??\s*/i;
 const PERMANENTLY_ADDED_RE = /Permanently added (.+?) to the list of known hosts/i;
 
 const HOST_KEY_CHANGED_RE = /REMOTE HOST IDENTIFICATION HAS CHANGED/i;
@@ -72,6 +72,15 @@ export class HostKeyParser {
 
     return events;
   }
+}
+
+export function hostKeyPromptEnd(text: string): number | null {
+  const fingerprintMatch = FINGERPRINT_RE.exec(text);
+  if (!fingerprintMatch) return null;
+  const fingerprintEnd = fingerprintMatch.index + fingerprintMatch[0].length;
+  const continueMatch = CONTINUE_PROMPT_RE.exec(text.slice(fingerprintEnd));
+  if (!continueMatch) return null;
+  return fingerprintEnd + continueMatch.index + continueMatch[0].length;
 }
 
 export function normalizeKeyType(raw: string): string {
