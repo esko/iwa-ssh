@@ -3,6 +3,7 @@
  */
 
 import { log } from '../debug/logger';
+import { agentDebugLog } from '../debug/agentLog';
 import type { TerminalSink, TerminalSubscription, TerminalViewport } from '../terminal/TerminalAdapter';
 import type { ConnectionStatus, SessionDisconnectReason, SessionStatusMeta } from '../settings/types';
 import type { NasshIoShimOptions } from './NasshIoShim';
@@ -219,7 +220,12 @@ export class NasshCommandBridge {
       log.ssh.debug('secureInput requested', { echo, bufLen });
       const hostKeyResponse = await this.hostKeyGuard?.consumePendingHostKeyResponse(message);
       // #region agent log
-      fetch('http://127.0.0.1:7869/ingest/5b03efa9-2224-4a73-9a56-c6a816107ee6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a26731'},body:JSON.stringify({sessionId:'a26731',location:'NasshCommandBridge.ts:secureInput',message:'secureInput host key result',data:{messagePreview:message.slice(0,200),echo,bufLen,hostKeyResponse},timestamp:Date.now(),hypothesisId:'D,E'})}).catch(()=>{});
+      agentDebugLog('NasshCommandBridge.ts:secureInput', 'secureInput host key result', {
+        messagePreview: message.slice(0, 200),
+        echo,
+        bufLen,
+        hostKeyResponse,
+      }, 'D,E');
       // #endregion
       if (hostKeyResponse) return hostKeyResponse.slice(0, bufLen);
 

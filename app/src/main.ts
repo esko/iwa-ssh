@@ -1,8 +1,24 @@
 import './security/trustedTypes';
 import { installBootErrorHandler, showBootError } from './security/bootError';
+import { getRecentLogs, setVerboseLogging } from './debug/logger';
 import { startRouter } from './pwa/views';
 import { installWindowControls } from './pwa/windowControls';
 import './pwa/styles.css';
+
+declare global {
+  interface Window {
+    /** DevTools: copy(JSON.stringify(__IWA_SSH_DEBUG__.getRecentLogs(), null, 2)) */
+    __IWA_SSH_DEBUG__?: {
+      getRecentLogs: typeof getRecentLogs;
+      enableVerbose: () => void;
+    };
+  }
+}
+
+window.__IWA_SSH_DEBUG__ = {
+  getRecentLogs,
+  enableVerbose: () => setVerboseLogging(true),
+};
 
 installBootErrorHandler();
 
