@@ -360,7 +360,9 @@ export class EtClient {
       if (sendDa1) {
         await this.sendInput(DA1_REPLY);
       }
-      const checkpoint = checkpointEtOutput(this.session.id, sequence, terminal, this.session);
+      const sessionHint = this.session;
+      this.applySession({ ...this.session, rxSequence: sequence });
+      const checkpoint = checkpointEtOutput(this.session.id, sequence, terminal, sessionHint);
       try {
         // Restty must see terminal queries immediately so its automatic
         // DA/DSR/Kitty replies reach short-lived remote probes. Preserve the
@@ -371,7 +373,9 @@ export class EtClient {
         await checkpoint.catch(() => undefined);
         throw error;
       }
-      this.applySession(await checkpoint);
+      void checkpoint
+        .then((next) => this.applySession(next))
+        .catch((error) => this.handleConnectionLoss(error));
     } else {
       this.applySession(await checkpointEtControl(this.session.id, sequence, this.session));
     }
@@ -404,8 +408,13 @@ export class EtClient {
     this.stopKeepalive();
     await this.closeSocket();
     await this.drainInboundQueue();
+    const needsResync = /sequence|secret key|authentication/i.test(
+      error instanceof Error ? error.message : String(error),
+    );
     try {
-      this.session = await prepareEtSessionForConnect(this.session.id);
+      this.session = needsResync
+        ? await prepareEtSessionForConnect(this.session.id)
+        : (await flushEtSessionCheckpoint(this.session.id)) ?? this.session;
     } catch {
       const flushed = await flushEtSessionCheckpoint(this.session.id).catch(() => undefined);
       if (flushed) this.session = flushed;

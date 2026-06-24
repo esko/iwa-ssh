@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { IWA_PERMISSIONS_POLICY } from '../iwa/permissionsPolicy';
 
 type Manifest = {
   display_override?: string[];
@@ -34,5 +35,9 @@ describe('IWA window manifest', () => {
 
   it('keeps the public and well-known permissions policies in sync', () => {
     expect(read(PUBLIC).permissions_policy).toEqual(read(WELL_KNOWN).permissions_policy);
+  });
+
+  it('allows window-management in dev server Permissions-Policy headers', () => {
+    expect(IWA_PERMISSIONS_POLICY).toContain('window-management=(self)');
   });
 });

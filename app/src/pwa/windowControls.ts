@@ -57,17 +57,33 @@ function isMaximized(): boolean {
 }
 
 /** Request window-management up front so borderless + ACW are usable. */
+async function requestWindowManagement(): Promise<void> {
+  if (!('getScreenDetails' in window)) return;
+  try {
+    await (window as unknown as { getScreenDetails: () => Promise<unknown> }).getScreenDetails();
+  } catch {
+    /* needs a user gesture on fresh install — retried from pointerdown below */
+  }
+  mountCaption();
+}
+
 async function ensureWindowManagement(): Promise<void> {
   try {
     const status = await navigator.permissions?.query({ name: 'window-management' as PermissionName });
-    if (status && status.state === 'prompt' && 'getScreenDetails' in window) {
-      // getScreenDetails triggers the permission prompt under a user gesture; if
-      // called without one it simply rejects and we keep the default frame.
-      await (window as unknown as { getScreenDetails: () => Promise<unknown> }).getScreenDetails().catch(() => undefined);
-    }
+    status?.addEventListener?.('change', () => {
+      void requestWindowManagement();
+    });
+    if (status?.state === 'granted') await requestWindowManagement();
   } catch {
     /* permission API unavailable — controls still render, actions feature-detect */
   }
+}
+
+function currentDisplayMode(): string {
+  for (const mode of ['unframed', 'borderless', 'standalone', 'fullscreen']) {
+    if (window.matchMedia(`(display-mode: ${mode})`).matches) return mode;
+  }
+  return 'browser';
 }
 
 export function installWindowControls(): void {
@@ -76,11 +92,17 @@ export function installWindowControls(): void {
   // Mount immediately if already frameless, and re-check on display-mode changes
   // so the caption appears once the mode flips — without it the user is stuck
   // with the native standalone bar even after the grant.
+  console.info('[iwa-ssh et-debug] windowControls install', { displayMode: currentDisplayMode() });
   mountCaption();
   for (const mode of ['unframed', 'borderless']) {
-    window.matchMedia(`(display-mode: ${mode})`).addEventListener?.('change', mountCaption);
+    window.matchMedia(`(display-mode: ${mode})`).addEventListener?.('change', () => {
+      console.info('[iwa-ssh et-debug] display-mode change', { displayMode: currentDisplayMode() });
+      mountCaption();
+    });
   }
   void ensureWindowManagement();
+  // Fresh installs often need a user gesture before window-management grants.
+  document.addEventListener('pointerdown', () => { void requestWindowManagement(); }, { once: true, capture: true });
 }
 
 function mountCaption(): void {

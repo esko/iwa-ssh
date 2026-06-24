@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 /** Surfaced in the UI (Settings → Diagnostics); kept in sync by bump-version. */
 const APP_VERSION = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')).version as string;
 import { patchResttyRenderer } from './scripts/restty-renderer-patches';
+import { IWA_PERMISSIONS_POLICY } from './app/src/iwa/permissionsPolicy';
 
 /** Public URL base for copied upstream libapps assets (see scripts/fetch-upstream-assets.mjs). */
 const UPSTREAM_BASE = '/upstream';
@@ -25,8 +26,7 @@ const crossOriginIsolationHeaders = {
 };
 
 /** IWA / Dev Mode Proxy: relax feature policy for terminal fonts + dbg clipboard. */
-const iwaDevPermissionsPolicy =
-  'clipboard-read=(self), clipboard-write=(self), local-fonts=(self)';
+const iwaDevPermissionsPolicy = IWA_PERMISSIONS_POLICY;
 
 const iwaDevHeaders = {
   ...crossOriginIsolationHeaders,
