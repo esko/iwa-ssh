@@ -227,6 +227,11 @@ a {
   background-color: rgba(0, 0, 0, 0.32);
 }
 
+.filter-input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .filter-input::-webkit-search-cancel-button {
   -webkit-appearance: none;
 }
@@ -252,6 +257,30 @@ a {
 
 .filter-input:focus ~ .filter-kbd {
   opacity: 0;
+}
+
+/* Visible quick-connect affordance under the search field: appears only when the
+   typed text parses as a remote target, so Enter's connect mode is never a
+   surprise. Reads as an actionable row, distinct from the muted "no match" line. */
+.filter-connect {
+  appearance: none;
+  display: block;
+  width: 100%;
+  margin: 8px 0 0;
+  padding: 9px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--fg);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.filter-connect:hover {
+  border-color: var(--line-2);
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .conn-none {
@@ -718,6 +747,36 @@ a {
   color: var(--fg);
 }
 
+/* Split primary action: "Connect & Save" is the main submit; the caret half
+   reveals the quieter "Connect without saving" (throwaway). Mirrors the
+   segmented new-tab control — the two halves read as one raised-dark button
+   joined by a hairline. */
+.btn-split {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.btn-split-main {
+  border-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.btn-split-caret {
+  width: 34px;
+  padding: 0;
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  /* Keep the primary's top highlight + soft cast, add a hairline divider. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 2px 6px -3px rgba(0, 0, 0, 0.6),
+    inset 1px 0 0 rgba(255, 255, 255, 0.16);
+}
+
+.btn-split-caret svg {
+  display: block;
+}
+
 .field {
   display: grid;
   gap: 7px;
@@ -975,6 +1034,11 @@ textarea {
   color: var(--fg);
   font-size: 15px;
   font-family: var(--ui);
+}
+
+.palette-input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
 }
 
 .palette-input::placeholder {
@@ -2105,4 +2169,15 @@ html.app-chrome .term-debug-btn {
 
 html.app-chrome .term-debug-panel {
   top: calc(var(--titlebar-h) + 40px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

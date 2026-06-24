@@ -368,7 +368,13 @@ export async function renderHome(root: HTMLElement): Promise<void> {
   homeKeydownCleanup?.();
   homeKeydownCleanup = null;
   await purgeStaleEtSessions();
-  const [profiles, etSessions, identities] = await Promise.all([listProfiles(), listEtSessionSummaries(), listIdentities()]);
+  // Degrade to an empty (but functional) launcher if storage is unavailable
+  // rather than rendering a blank route; the New-host / quick-connect paths
+  // and ⌘K picker still work without saved data.
+  const [profiles, etSessions, identities] = await Promise.all([listProfiles(), listEtSessionSummaries(), listIdentities()]).catch((error) => {
+    console.warn('launcher: failed to load saved data', error);
+    return [[], [], []] as [Profile[], EtSessionSummary[], Identity[]];
+  });
   // Recent connections (incl. throwaway sessions) that aren't already a saved
   // host — clicking one relaunches it; saving is a deliberate choice in the form.
   const savedKeys = new Set(profiles.map((p) => hostTargetKey(profileToSpec(p))));
@@ -419,7 +425,8 @@ export async function renderHome(root: HTMLElement): Promise<void> {
               <span class="filter-icon">${SEARCH_SVG}</span>
               <input type="search" class="filter-input" placeholder="Find a host or ssh user@hostname…" autocomplete="off" spellcheck="false" aria-label="Find a host or connect" data-filter>
               <kbd class="filter-kbd" aria-hidden="true">/</kbd>
-            </div>`
+            </div>
+            <button type="button" class="filter-connect" data-connect-hint hidden></button>`
           : ''}
         <div class="conn-list" data-conn-list>
           ${profiles.map((p) => profileGroup(p, sessionsByProfile.get(p.id) ?? [])).join('')}
@@ -582,13 +589,35 @@ export async function renderHome(root: HTMLElement): Promise<void> {
       }
       if (noMatch) noMatch.hidden = visible > 0;
     };
-    filterInput.addEventListener('input', () => applyFilter(filterInput.value));
+    // The field doubles as a quick-connect bar: when the text parses as a remote
+    // `user@host`, surface a visible "Connect to …" affordance so Enter's mode
+    // switch (launch top match vs. connect to a typed target) isn't a surprise.
+    const connectHint = root.querySelector<HTMLButtonElement>('[data-connect-hint]');
+    const typedTarget = (): LaunchConnectionIntent | null => {
+      const typed = parseTerminalConnectionCommand(filterInput.value.trim());
+      return typed?.username && typed.hostname ? typed : null;
+    };
+    const syncConnectHint = (): void => {
+      if (!connectHint) return;
+      const typed = typedTarget();
+      if (typed) {
+        connectHint.textContent = `↵  Connect to ${formatConnectionTarget(typed)}`;
+        connectHint.hidden = false;
+      } else {
+        connectHint.hidden = true;
+      }
+    };
+    connectHint?.addEventListener('click', () => {
+      const typed = typedTarget();
+      if (typed) navigate(`/terminal.html?${specToQuery(typed)}`);
+    });
+    filterInput.addEventListener('input', () => { applyFilter(filterInput.value); syncConnectHint(); });
     filterInput.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
         // A typed remote `user@host` / `ssh …` quick-connects (throwaway);
         // otherwise Enter launches the top filtered match fresh.
-        const typed = parseTerminalConnectionCommand(filterInput.value.trim());
-        if (typed?.username && typed.hostname) {
+        const typed = typedTarget();
+        if (typed) {
           navigate(`/terminal.html?${specToQuery(typed)}`);
           return;
         }
@@ -599,6 +628,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
         event.stopPropagation();
         filterInput.value = '';
         applyFilter('');
+        syncConnectHint();
       }
     });
     const focusFilter = (event: KeyboardEvent): void => {
@@ -835,8 +865,12 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
           </div>
           <div class="actions">
             <button type="button" class="btn-ghost" data-cancel>Cancel</button>
-            ${existing ? '' : `<button type="button" class="btn-ghost" data-connect>Connect</button>`}
-            <button type="submit" class="btn" data-submit>${existing ? 'Save' : 'Connect & Save'}</button>
+            ${existing
+              ? `<button type="submit" class="btn" data-submit>Save</button>`
+              : `<div class="btn-split">
+                  <button type="submit" class="btn btn-split-main" data-submit>Connect &amp; Save</button>
+                  <button type="button" class="btn btn-split-caret" data-connect-menu aria-label="Connect without saving" aria-haspopup="menu" title="Connect without saving">${CHEVRON_DOWN_SVG}</button>
+                </div>`}
           </div>
         </form>
       </div>
@@ -908,7 +942,7 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
 
       errEl.hidden = true;
       submitBtn.disabled = true;
-      if (connectBtn) connectBtn.disabled = true;
+      if (caretBtn) caretBtn.disabled = true;
       submitBtn.textContent = existing ? 'Saving…' : 'Connecting…';
       try {
         // A pasted key is always persisted as an identity (a separate store), so
@@ -947,14 +981,21 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
         }
       } catch (error) {
         submitBtn.disabled = false;
-        if (connectBtn) connectBtn.disabled = false;
+        if (caretBtn) caretBtn.disabled = false;
         submitBtn.textContent = existing ? 'Save' : 'Connect & Save';
         showError(`Could not ${save ? 'save the host' : 'connect'}.${error instanceof Error ? ` ${error.message}` : ''}`);
       }
     };
 
-    const connectBtn = modal.querySelector<HTMLButtonElement>('[data-connect]');
-    connectBtn?.addEventListener('click', () => void submitForm(false));
+    // "Connect & Save" is the primary submit; the caret reveals the throwaway
+    // "Connect without saving" so the secondary action stays available but quiet.
+    const caretBtn = modal.querySelector<HTMLButtonElement>('[data-connect-menu]');
+    caretBtn?.addEventListener('click', () => {
+      const rect = caretBtn.getBoundingClientRect();
+      showContextMenu(rect.left, rect.bottom + 4, [
+        { type: 'item', label: 'Connect without saving', onSelect: () => void submitForm(false) },
+      ]);
+    });
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       void submitForm(true);
@@ -2456,7 +2497,17 @@ async function renderHostPicker(
   container: HTMLElement,
   opts: { onPick: (spec: LaunchConnectionIntent) => void; autofocus?: boolean },
 ): Promise<void> {
-  const profiles = await listProfiles();
+  // Saved hosts come from IndexedDB, which can be unavailable on IWA first-run
+  // or under storage pressure. Fail to a usable, explained state rather than a
+  // silently blank picker — recents (localStorage) and typed connect still work.
+  let profiles: Profile[] = [];
+  let loadError = false;
+  try {
+    profiles = await listProfiles();
+  } catch (error) {
+    loadError = true;
+    console.warn('host picker: failed to load saved hosts', error);
+  }
   const recents = loadRecentConnections();
   const savedKeys = new Set(profiles.map((p) => hostTargetKey(profileToSpec(p))));
 
@@ -2527,7 +2578,10 @@ async function renderHostPicker(
         if (entry.group !== lastGroup) { html += `<div class="palette-group">${entry.group}</div>`; lastGroup = entry.group; }
         html += rowHTML(entry, i);
       });
-      list.innerHTML = html || '<p class="palette-empty">No saved hosts yet. Type ssh user@host to connect.</p>';
+      const emptyMessage = loadError
+        ? 'Couldn’t load saved hosts. Recent connections and typing ssh user@host still work.'
+        : 'No saved hosts yet. Type ssh user@host to connect.';
+      list.innerHTML = html || `<p class="palette-empty">${emptyMessage}</p>`;
       syncSelection();
       return;
     }
