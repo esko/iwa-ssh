@@ -54,6 +54,12 @@ const encoder = new TextEncoder();
 /** Abort a connect/handshake attempt that hangs (e.g. offline) so it can retry. */
 const ET_CONNECT_TIMEOUT_MS = 12_000;
 
+// #region agent log
+function etConnectDebugLog(location: string, message: string, data: Record<string, unknown>): void {
+  console.info('[iwa-ssh et-debug]', location, message, data);
+}
+// #endregion
+
 export function serializeEtTerminalInfo(clientId: string, viewport: TerminalViewport): Uint8Array {
   return toBinary(TerminalInfoSchema, create(TerminalInfoSchema, {
     id: clientId,
@@ -110,7 +116,15 @@ export class EtClient {
       this.startKeepalive();
       void this.readLoop();
     } catch (error) {
-      await this.handleConnectionLoss(error);
+      const message = error instanceof Error ? error.message : String(error);
+      etConnectDebugLog('client.ts:connect', 'initial ET connect failed', {
+        host: this.session.host,
+        etPort: this.session.etPort,
+        phase: this.session.phase,
+        message,
+      });
+      this.callbacks.onStatus('error', message);
+      throw error instanceof Error ? error : new Error(message);
     }
   }
 
@@ -176,6 +190,11 @@ export class EtClient {
   private async openAndHandshake(): Promise<void> {
     const Socket = (globalThis as typeof globalThis & { TCPSocket?: typeof window.TCPSocket }).TCPSocket;
     if (!Socket) throw new Error('Direct Sockets (TCPSocket) is unavailable');
+    etConnectDebugLog('client.ts:openAndHandshake', 'opening ET TCP socket', {
+      host: this.session.host,
+      etPort: this.session.etPort,
+      clientId: this.session.clientId,
+    });
     const socket = new Socket(this.session.host, this.session.etPort);
     this.rawSocket = socket;
     this.socket = await socket.opened;
@@ -188,6 +207,11 @@ export class EtClient {
     }));
     await this.write(frameHandshake(request));
     const response = fromBinary(ConnectResponseSchema, await this.reader.handshake());
+    etConnectDebugLog('client.ts:openAndHandshake', 'connect response', {
+      status: ConnectStatus[response.status] ?? response.status,
+      error: response.error ?? null,
+      clientId: this.session.clientId,
+    });
     if (response.status === ConnectStatus.INVALID_KEY) {
       this.session = await updateEtSession(this.session.id, { phase: 'stale', lastError: response.error || 'ET server forgot this session' });
       this.callbacks.onStale();

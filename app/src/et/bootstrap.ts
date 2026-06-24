@@ -54,6 +54,13 @@ export function isEtBootstrapFailure(output: string): boolean {
   return ET_BOOTSTRAP_FAILURE.test(output.replace(BENIGN_SSH_NOISE, ''));
 }
 
+/** Parse `IDPASSKEY:clientId/passkey` emitted by etterminal after registration. */
+export function parseEtBootstrapIdPasskey(output: string): { clientId: string; passkey: string } | null {
+  const match = output.match(/IDPASSKEY:([A-Za-z0-9]{16})\/([A-Za-z0-9]{32})/);
+  if (!match) return null;
+  return { clientId: match[1]!, passkey: match[2]! };
+}
+
 function bootstrapError(output: string, clientId: string, passkey: string): Error {
   const redacted = output
     .replaceAll(clientId, '[client-id]')
@@ -164,7 +171,6 @@ export async function createEtSession(spec: ConnectionIntent): Promise<string> {
   await runEtBootstrapPreflight(spec);
 
   const terminal = new CaptureTerminal();
-  const expected = `IDPASSKEY:${clientId}/${passkey}`;
   const command = buildEtBootstrapCommand(clientId, passkey);
   let resolveOutput!: () => void;
   let rejectOutput!: (error: Error) => void;
@@ -174,8 +180,13 @@ export async function createEtSession(spec: ConnectionIntent): Promise<string> {
   });
   const timeout = window.setTimeout(() => rejectOutput(bootstrapError(terminal.getOutput(), clientId, passkey)), 30_000);
   const subscription = terminal.onOutput((output) => {
-    if (output.includes(expected)) {
-      etBootstrapDebugLog('bootstrap.ts:onOutput', 'IDPASSKEY seen', { outputLen: output.length }, 'D');
+    const parsed = parseEtBootstrapIdPasskey(output);
+    if (parsed) {
+      etBootstrapDebugLog('bootstrap.ts:onOutput', 'IDPASSKEY seen', {
+        outputLen: output.length,
+        clientId: parsed.clientId,
+        passkeyMatchesLocal: parsed.passkey === passkey,
+      }, 'D');
       resolveOutput();
     } else if (isEtBootstrapFailure(output)) {
       etBootstrapDebugLog('bootstrap.ts:onOutput', 'bootstrap failure pattern', {
@@ -208,7 +219,26 @@ export async function createEtSession(spec: ConnectionIntent): Promise<string> {
   try {
     await bridge.connect();
     await outputReady;
-    await saveEtSession({ ...record, phase: 'detached', updatedAt: Date.now() });
+    const parsed = parseEtBootstrapIdPasskey(terminal.getOutput());
+    const finalClientId = parsed?.clientId ?? clientId;
+    const finalPasskey = parsed?.passkey ?? passkey;
+    const credentials = finalPasskey !== passkey
+      ? { ...(await wrapEtPasskey(finalPasskey)) }
+      : { iv: record.passkeyIv, ciphertext: record.wrappedPasskey };
+    etBootstrapDebugLog('bootstrap.ts:createEtSession', 'persisting ET credentials', {
+      clientId: finalClientId,
+      host: spec.hostname,
+      etPort: spec.etPort ?? 2022,
+      credentialsFromOutput: Boolean(parsed),
+    }, 'D');
+    await saveEtSession({
+      ...record,
+      clientId: finalClientId,
+      wrappedPasskey: credentials.ciphertext,
+      passkeyIv: credentials.iv,
+      phase: 'detached',
+      updatedAt: Date.now(),
+    });
     return localId;
   } catch (error) {
     await saveEtSession({ ...record, phase: 'stale', lastError: error instanceof Error ? error.message : String(error), updatedAt: Date.now() });

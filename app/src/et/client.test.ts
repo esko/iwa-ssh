@@ -88,6 +88,37 @@ describe('EtClient over Direct Sockets', () => {
     expect(ET_SESSION_ENVIRONMENT).toMatchObject({ COLORTERM: 'truecolor' });
   });
 
+  it('rejects the first connect attempt instead of entering the reconnect loop', async () => {
+    await sodium.ready;
+    const passkey = '12345678901234567890123456789012';
+    const wrapped = await wrapEtPasskey(passkey);
+    const now = Date.now();
+    await saveEtSession({
+      id: 'local', clientId: '1234567890123456', host: 'host', sshPort: 22, etPort: 2022,
+      username: 'user', wrappedPasskey: wrapped.ciphertext, passkeyIv: wrapped.iv,
+      phase: 'detached', protocolVersion: 6, storageFormatVersion: 1, rxSequence: 0,
+      txSequence: 0, txAcknowledged: 0, outboundBytes: 0, journalBytes: 0,
+      journalTruncated: false, cols: 80, rows: 24, createdAt: now, updatedAt: now,
+    });
+    class FailingSocket {
+      opened = Promise.reject(new Error('network unreachable'));
+      constructor() { this.opened.catch(() => undefined); }
+      async close(): Promise<void> {}
+    }
+    (globalThis as unknown as { window: Window }).window = globalThis as unknown as Window;
+    window.TCPSocket = FailingSocket as unknown as typeof window.TCPSocket;
+
+    const statuses: string[] = [];
+    const client = await EtClient.create('local', {
+      onOutput() {},
+      onStatus(status, error) { statuses.push(`${status}:${error ?? ''}`); },
+      onStale() {},
+    });
+    await expect(client.connect()).rejects.toThrow('network unreachable');
+    expect(statuses).toContain('connecting:');
+    expect(statuses).toContain('error:network unreachable');
+  });
+
   it('detach does not resurrect a stale (server-ended) session', async () => {
     await sodium.ready;
     const passkey = '12345678901234567890123456789012';

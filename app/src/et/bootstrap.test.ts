@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isEtBootstrapFailure } from './bootstrap';
+import { isEtBootstrapFailure, parseEtBootstrapIdPasskey } from './bootstrap';
 
 describe('isEtBootstrapFailure', () => {
   it('ignores benign OpenSSH known_hosts maintenance warnings', () => {
@@ -56,5 +56,13 @@ describe('isEtBootstrapFailure', () => {
       'update_known_hosts: hostfile_replace_entries failed for /.ssh/known_hosts2: No such file or directory',
     ].join('\n');
     expect(isEtBootstrapFailure(output)).toBe(false);
+  });
+
+  it('parses IDPASSKEY credentials from etterminal output', () => {
+    const passkey = 'a'.repeat(32);
+    expect(parseEtBootstrapIdPasskey(`noise\nIDPASSKEY:abcd1234567890ef/${passkey}\n`)).toEqual({
+      clientId: 'abcd1234567890ef',
+      passkey,
+    });
   });
 });
