@@ -358,6 +358,38 @@ export async function forgetEtSession(id: string): Promise<void> {
   await tx.done;
 }
 
+/** Drop recovery rows for a session without deleting the session record itself. */
+export async function clearEtSessionRecovery(sessionId: string): Promise<EtSessionRecord | undefined> {
+  const db = await getDb();
+  const tx = db.transaction(['etSessions', 'etOutboundFrames', 'etJournal'], 'readwrite');
+  const session = await tx.objectStore('etSessions').get(sessionId);
+  if (!session) {
+    tx.abort();
+    await tx.done.catch(() => undefined);
+    return undefined;
+  }
+  for (const name of ['etOutboundFrames', 'etJournal'] as const) {
+    let cursor = await tx.objectStore(name).index('by-session').openCursor(IDBKeyRange.only(sessionId));
+    while (cursor) {
+      await cursor.delete();
+      cursor = await cursor.continue();
+    }
+  }
+  const next: EtSessionRecord = {
+    ...session,
+    rxSequence: 0,
+    txSequence: 0,
+    txAcknowledged: 0,
+    outboundBytes: 0,
+    journalBytes: 0,
+    journalTruncated: false,
+    updatedAt: Date.now(),
+  };
+  await tx.objectStore('etSessions').put(next);
+  await tx.done;
+  return next;
+}
+
 export async function loadSettings(): Promise<AppSettings> {
   const db = await getDb();
   const stored = await db.get('settings', 'app');

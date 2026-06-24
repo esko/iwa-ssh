@@ -10,7 +10,7 @@ import {
   saveEtSession,
   type EtSessionRecord,
 } from './indexedDb';
-import { checkpointEtOutput, flushEtSessionCheckpoint, resetSessionCheckpointFlushes } from '../et/sessionStore';
+import { checkpointEtOutput, flushEtSessionCheckpoint, prepareEtSessionForConnect, resetSessionCheckpointFlushes } from '../et/sessionStore';
 
 async function deleteDatabase(): Promise<void> {
   await resetIndexedDbConnection();
@@ -99,5 +99,23 @@ describe('IndexedDB v2 Eternal Terminal state', () => {
     await expect(
       saveEtOutboundFrame({ sessionId: 'local-session', sequence: 2, bytes: new Uint8Array([2]), size: 1 }),
     ).resolves.toMatchObject({ txSequence: 2 });
+  });
+
+  it('prepareEtSessionForConnect clears orphaned recovery rows after a failed first connect', async () => {
+    await saveEtSession(record());
+    await saveEtOutboundFrame({ sessionId: 'local-session', sequence: 1, bytes: new Uint8Array([1]), size: 1 });
+    const stale = await getEtSession('local-session');
+    await saveEtSession({
+      ...stale!,
+      txSequence: 0,
+      rxSequence: 0,
+      outboundBytes: 0,
+      journalBytes: 0,
+    });
+    const prepared = await prepareEtSessionForConnect('local-session');
+    expect(prepared).toMatchObject({ txSequence: 0, rxSequence: 0, outboundBytes: 0, journalBytes: 0 });
+    await expect(
+      saveEtOutboundFrame({ sessionId: 'local-session', sequence: 1, bytes: new Uint8Array([2]), size: 1 }),
+    ).resolves.toMatchObject({ txSequence: 1 });
   });
 });

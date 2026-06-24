@@ -2,6 +2,8 @@ import {
   getEtDeviceKey,
   getEtSession,
   listEtJournalChunks,
+  listEtOutboundFrames,
+  clearEtSessionRecovery,
   checkpointEtInbound,
   saveEtSession,
   type EtSessionRecord,
@@ -97,6 +99,36 @@ export async function updateEtSession(
   const next = { ...current, ...patch, updatedAt: Date.now() };
   await saveEtSession(next);
   return next;
+}
+
+/**
+ * Align session sequence counters with recovery stores before connect.
+ * Clears orphaned frames/journal left by a failed first connect (tx/rx still 0).
+ */
+export async function prepareEtSessionForConnect(sessionId: string): Promise<EtSessionRecord> {
+  await flushEtSessionCheckpoint(sessionId);
+  const session = await getEtSession(sessionId);
+  if (!session) throw new Error(`ET session ${sessionId} is missing`);
+
+  const frames = await listEtOutboundFrames(sessionId);
+  const chunks = await listEtJournalChunks(sessionId);
+  const maxTx = frames.reduce((max, frame) => Math.max(max, frame.sequence), session.txSequence);
+  const maxRx = chunks.reduce((max, chunk) => Math.max(max, chunk.sequence), session.rxSequence);
+
+  if (session.txSequence === 0 && session.rxSequence === 0 && (frames.length > 0 || chunks.length > 0)) {
+    const cleared = await clearEtSessionRecovery(sessionId);
+    if (!cleared) throw new Error(`ET session ${sessionId} is missing`);
+    return cleared;
+  }
+
+  if (maxTx === session.txSequence && maxRx === session.rxSequence) return session;
+
+  return updateEtSession(sessionId, {
+    txSequence: maxTx,
+    rxSequence: maxRx,
+    outboundBytes: frames.reduce((sum, frame) => sum + frame.size, 0),
+    journalBytes: chunks.reduce((sum, chunk) => sum + chunk.size, 0),
+  });
 }
 
 export async function checkpointEtOutput(

@@ -77,19 +77,21 @@ function etBootstrapDebugLog(
   data: Record<string, unknown>,
   hypothesisId: string,
 ): void {
-  fetch('http://127.0.0.1:7869/ingest/5b03efa9-2224-4a73-9a56-c6a816107ee6', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a26731' },
-    body: JSON.stringify({
-      sessionId: 'a26731',
-      location,
-      message,
-      data,
-      hypothesisId,
-      timestamp: Date.now(),
-      runId: 'et-bootstrap',
-    }),
-  }).catch(() => {});
+  if (import.meta.env.DEV) {
+    fetch('http://127.0.0.1:7869/ingest/5b03efa9-2224-4a73-9a56-c6a816107ee6', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a26731' },
+      body: JSON.stringify({
+        sessionId: 'a26731',
+        location,
+        message,
+        data,
+        hypothesisId,
+        timestamp: Date.now(),
+        runId: 'et-bootstrap',
+      }),
+    }).catch(() => {});
+  }
   console.info('[iwa-ssh et-debug]', location, message, data);
 }
 // #endregion

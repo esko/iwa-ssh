@@ -15,13 +15,13 @@ import {
   TerminalPacketType,
 } from './proto/ETerminal_pb';
 import {
-  getEtSession,
   listEtOutboundFrames,
   pruneEtOutboundFrames,
   saveEtOutboundFrame,
+  clearEtSessionRecovery,
   type EtSessionRecord,
 } from '../storage/indexedDb';
-import { checkpointEtControl, checkpointEtOutput, flushEtSessionCheckpoint, unwrapEtPasskey, updateEtSession } from './sessionStore';
+import { checkpointEtControl, checkpointEtOutput, flushEtSessionCheckpoint, prepareEtSessionForConnect, unwrapEtPasskey, updateEtSession } from './sessionStore';
 import {
   decryptEtPayload,
   encryptEtPayload,
@@ -94,8 +94,7 @@ export class EtClient {
   }
 
   static async create(sessionId: string, callbacks: EtClientCallbacks): Promise<EtClient> {
-    const session = await getEtSession(sessionId);
-    if (!session) throw new Error('Saved ET session was not found');
+    let session = await prepareEtSessionForConnect(sessionId);
     if (session.protocolVersion !== ET_PROTOCOL_VERSION || session.storageFormatVersion !== 1) {
       throw new Error('Saved ET session uses an unsupported protocol format');
     }
@@ -197,8 +196,14 @@ export class EtClient {
     if (response.status === ConnectStatus.MISMATCHED_PROTOCOL) {
       throw new Error(response.error || `ET protocol mismatch (client ${ET_PROTOCOL_VERSION})`);
     }
-    if (response.status === ConnectStatus.NEW_CLIENT) await this.initializeNewSession();
-    else if (response.status === ConnectStatus.RETURNING_CLIENT) await this.recoverSession();
+    if (response.status === ConnectStatus.NEW_CLIENT) {
+      if (this.session.txSequence !== 0 || this.session.rxSequence !== 0) {
+        const reset = await clearEtSessionRecovery(this.session.id);
+        if (!reset) throw new Error('Saved ET session was not found');
+        this.session = reset;
+      }
+      await this.initializeNewSession();
+    } else if (response.status === ConnectStatus.RETURNING_CLIENT) await this.recoverSession();
     else throw new Error(response.error || `Unexpected ET connect status ${response.status}`);
     this.session = await updateEtSession(this.session.id, { phase: 'active', lastError: undefined });
   }
