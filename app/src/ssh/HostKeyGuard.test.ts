@@ -187,4 +187,22 @@ describe('HostKeyGuard', () => {
     expect(first).toBe('banner\n');
     expect(second).toBe('tail');
   });
+
+  it('does not inject a second tty yes after secureInput already answered the host key', async () => {
+    let decide!: (choice: 'once' | 'always' | 'trusted') => void;
+    ensureHostTrusted.mockReturnValueOnce(new Promise<'once' | 'always' | 'trusted'>((resolve) => { decide = resolve; }));
+    const sendResponse = vi.fn();
+    const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse });
+    const fullPrompt = prompt('target', 'SHA256:double-yes');
+
+    const handling = guard.handleOutput(fullPrompt);
+    const response = guard.consumePendingHostKeyResponse(fullPrompt);
+    decide('once');
+    await expect(response).resolves.toBe('yes');
+    await handling;
+    await guard.handleOutput(fullPrompt);
+
+    expect(sendResponse).not.toHaveBeenCalled();
+    expect(ensureHostTrusted).toHaveBeenCalledTimes(1);
+  });
 });

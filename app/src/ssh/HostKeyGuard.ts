@@ -32,9 +32,12 @@ export class HostKeyGuard {
   private generation = 0;
   private terminalOutputBuffer = '';
   private lastHostKeyOffer: { fingerprint: string; keyType: string } | null = null;
+  /** Fingerprints already answered this connection (prevents secureInput + tty double-yes). */
+  private resolvedFingerprints = new Set<string>();
   private pendingPrompt: {
     response: Promise<'yes' | 'no'>;
     consumedBySecureInput: boolean;
+    fingerprint: string;
   } | null = null;
   private pendingPromptWaiters: Array<() => void> = [];
 
@@ -46,6 +49,7 @@ export class HostKeyGuard {
     this.promptInFlight = false;
     this.terminalOutputBuffer = '';
     this.lastHostKeyOffer = null;
+    this.resolvedFingerprints.clear();
     this.pendingPrompt = null;
     this.pendingPromptWaiters = [];
     this.outputQueue = Promise.resolve();
@@ -70,17 +74,23 @@ export class HostKeyGuard {
    * never guesses from security-sensitive server text.
    */
   async consumePendingHostKeyResponse(prompt?: string): Promise<'yes' | 'no' | null> {
+    if (prompt && !isHostKeyQuestion(prompt)) return null;
+
     // OpenSSH may send the question through readpassphrase without first
     // printing the complete prompt to the tty. Feed that structured syscall
     // payload through the same parser/guard queue so classification remains
     // here rather than leaking into the generic password modal.
     if (prompt) {
+      if (this.pendingPrompt) {
+        this.pendingPrompt.consumedBySecureInput = true;
+        return this.pendingPrompt.response;
+      }
       const handled = this.handleOutput(prompt);
       await Promise.race([this.waitForPendingPromptRegistration(), handled]);
       const pending = this.pendingPrompt;
       if (!pending) {
         const fallback = this.lastHostKeyOffer ?? fallbackHostKeyOffer(prompt);
-        if (!isHostKeyQuestion(prompt) || !fallback) return null;
+        if (!fallback || this.resolvedFingerprints.has(fallback.fingerprint)) return null;
         this.registerHostKeyPrompt(fallback);
         const registered = this.pendingPrompt;
         if (!registered) return null;
@@ -153,7 +163,7 @@ export class HostKeyGuard {
   }
 
   private async registerHostKeyPrompt({ fingerprint, keyType }: { fingerprint: string; keyType: string }): Promise<void> {
-    if (this.promptInFlight) return;
+    if (this.promptInFlight || this.resolvedFingerprints.has(fingerprint)) return;
 
     this.lastHostKeyOffer = { fingerprint, keyType };
     this.promptInFlight = true;
@@ -174,9 +184,10 @@ export class HostKeyGuard {
           { useLiveVerification: true },
         );
     const pending = {
+      fingerprint,
       response: trusted.then((choice): 'yes' | 'no' => {
         if (choice === 'cancel') return 'no';
-        if (choice === 'once') this.options.onSessionTrust?.(fingerprint);
+        if (choice === 'once' || choice === 'always') this.options.onSessionTrust?.(fingerprint);
         return 'yes';
       }),
       consumedBySecureInput: false,
@@ -186,6 +197,10 @@ export class HostKeyGuard {
     try {
       const response = await pending.response;
       await new Promise((resolve) => setTimeout(resolve, 0));
+      if (response === 'yes') {
+        this.resolvedFingerprints.add(fingerprint);
+        this.lastHostKeyOffer = null;
+      }
       if (!pending.consumedBySecureInput) this.options.sendResponse(`${response}\n`);
       if (response === 'no') this.options.onDenied?.();
     } catch (error) {
@@ -203,7 +218,9 @@ function findHostKeyPromptStart(text: string): number {
   const authenticityStart = text.search(/The authenticity of host/i);
   if (authenticityStart >= 0) return authenticityStart;
 
-  const fingerprintStart = text.search(/\b(?:ED25519|RSA|ECDSA|EC|DSA|SK-ED25519|SK-ECDSA) key fingerprint is SHA256:/i);
+  const fingerprintStart = text.search(
+    /\b(?:ED25519|RSA|ECDSA|EC|DSA|SK-ED25519|SK-ECDSA)\s+(?:host\s+)?key fingerprint is:?\s*SHA256:/i,
+  );
   if (fingerprintStart < 0) return -1;
 
   const lineStart = text.lastIndexOf('\n', fingerprintStart);
