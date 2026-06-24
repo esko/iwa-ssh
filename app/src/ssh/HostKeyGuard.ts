@@ -77,9 +77,15 @@ export class HostKeyGuard {
     if (prompt) {
       const handled = this.handleOutput(prompt);
       await Promise.race([this.waitForPendingPromptRegistration(), handled]);
+      // #region agent log
+      fetch('http://127.0.0.1:7869/ingest/5b03efa9-2224-4a73-9a56-c6a816107ee6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a26731'},body:JSON.stringify({sessionId:'a26731',location:'HostKeyGuard.ts:consumePendingHostKeyResponse',message:'after prompt handleOutput race',data:{promptPreview:prompt.slice(0,200),hasPending:Boolean(this.pendingPrompt),lastOffer:this.lastHostKeyOffer,queuePending:this.outputQueue!==Promise.resolve()},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       const pending = this.pendingPrompt;
       if (!pending) {
         const fallback = this.lastHostKeyOffer ?? fallbackHostKeyOffer(prompt);
+        // #region agent log
+        fetch('http://127.0.0.1:7869/ingest/5b03efa9-2224-4a73-9a56-c6a816107ee6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a26731'},body:JSON.stringify({sessionId:'a26731',location:'HostKeyGuard.ts:consumePendingHostKeyResponse:fallback',message:'fallback path',data:{fallback,extractFromPrompt:extractHostKeyOffer(prompt),isHostKeyQ:isHostKeyQuestion(prompt),lastOffer:this.lastHostKeyOffer},timestamp:Date.now(),hypothesisId:'A,B'})}).catch(()=>{});
+        // #endregion
         if (!isHostKeyQuestion(prompt) || !fallback) return null;
         this.registerHostKeyPrompt(fallback);
         const registered = this.pendingPrompt;
@@ -110,6 +116,9 @@ export class HostKeyGuard {
     const promptEnd = hostKeyPromptEnd(candidate);
     if (promptEnd === null) {
       this.terminalOutputBuffer = candidate;
+      // #region agent log
+      fetch('http://127.0.0.1:7869/ingest/5b03efa9-2224-4a73-9a56-c6a816107ee6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a26731'},body:JSON.stringify({sessionId:'a26731',location:'HostKeyGuard.ts:filterTerminalOutput',message:'buffering partial host key prompt',data:{bufferPreview:candidate.slice(0,300),beforeLen:before.length},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
       return before;
     }
 
@@ -131,6 +140,9 @@ export class HostKeyGuard {
     const offer = extractHostKeyOffer(chunk);
     if (offer) this.lastHostKeyOffer = offer;
     const events = this.parser.parse(chunk);
+    // #region agent log
+    fetch('http://127.0.0.1:7869/ingest/5b03efa9-2224-4a73-9a56-c6a816107ee6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a26731'},body:JSON.stringify({sessionId:'a26731',location:'HostKeyGuard.ts:processOutput',message:'terminal chunk processed',data:{chunkPreview:chunk.slice(0,300),offer,lastOffer:this.lastHostKeyOffer,eventTypes:events.map((e)=>e.type),promptDetected:events.some((e)=>e.type==='HostKeyPromptDetected')},timestamp:Date.now(),hypothesisId:'B,C'})}).catch(()=>{});
+    // #endregion
 
     for (const event of events) {
       if (event.type === 'HostKeyPermanentlyAdded') {
