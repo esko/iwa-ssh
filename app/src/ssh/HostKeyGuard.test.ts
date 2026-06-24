@@ -100,6 +100,46 @@ describe('HostKeyGuard', () => {
     expect(sendResponse).not.toHaveBeenCalled();
   });
 
+  it('combines terminal fingerprint output with a secureInput yes/no question', async () => {
+    ensureHostTrusted.mockResolvedValueOnce('once');
+    const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse: vi.fn() });
+
+    void guard.handleOutput(
+      "The authenticity of host 'target' can't be established.\nED25519 key fingerprint is SHA256:splitPrompt.\n",
+    );
+
+    await expect(
+      guard.consumePendingHostKeyResponse('Are you sure you want to continue connecting (yes/no/[fingerprint])? '),
+    ).resolves.toBe('yes');
+
+    expect(ensureHostTrusted).toHaveBeenCalledWith(
+      'target',
+      22,
+      'SHA256:splitPrompt',
+      'ssh-ed25519',
+      { useLiveVerification: true },
+    );
+  });
+
+  it('uses the last terminal fingerprint when secureInput only asks for yes/no', async () => {
+    ensureHostTrusted.mockResolvedValueOnce('once');
+    const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse: vi.fn() });
+
+    await guard.handleOutput("ED25519 key fingerprint is SHA256:questionOnly.\n");
+
+    await expect(
+      guard.consumePendingHostKeyResponse('(yes/no/[fingerprint])? '),
+    ).resolves.toBe('yes');
+
+    expect(ensureHostTrusted).toHaveBeenCalledWith(
+      'target',
+      22,
+      'SHA256:questionOnly',
+      'ssh-ed25519',
+      { useLiveVerification: true },
+    );
+  });
+
   it('filters inline host-key prompts from terminal output while preserving surrounding output', () => {
     const guard = new HostKeyGuard({ host: 'target', port: 22, sendResponse: vi.fn() });
 

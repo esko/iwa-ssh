@@ -83,6 +83,15 @@ export function hostKeyPromptEnd(text: string): number | null {
   return fingerprintEnd + continueMatch.index + continueMatch[0].length;
 }
 
+export function extractHostKeyOffer(text: string): { fingerprint: string; keyType: string } | null {
+  const match = FINGERPRINT_RE.exec(text);
+  if (!match) return null;
+  return {
+    keyType: normalizeKeyType(match[1]!),
+    fingerprint: match[2]!,
+  };
+}
+
 export function normalizeKeyType(raw: string): string {
   const upper = raw.toUpperCase();
   if (upper === 'EC') return 'ecdsa-sha2-nistp256';

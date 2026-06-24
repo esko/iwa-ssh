@@ -5,7 +5,7 @@
 import { log } from '../debug/logger';
 import { ensureHostTrusted, type HostTrustChoice } from './KnownHostPrompt';
 import { syncKnownHostsFromNassh } from './nasshKnownHosts';
-import { HostKeyParser, hostKeyPromptEnd } from './HostKeyParser';
+import { HostKeyParser, extractHostKeyOffer, hostKeyPromptEnd } from './HostKeyParser';
 
 export type HostKeyChange = {
   fingerprint?: string;
@@ -31,6 +31,7 @@ export class HostKeyGuard {
   private outputQueue: Promise<void> = Promise.resolve();
   private generation = 0;
   private terminalOutputBuffer = '';
+  private lastHostKeyOffer: { fingerprint: string; keyType: string } | null = null;
   private pendingPrompt: {
     response: Promise<'yes' | 'no'>;
     consumedBySecureInput: boolean;
@@ -44,6 +45,7 @@ export class HostKeyGuard {
     this.parser.reset();
     this.promptInFlight = false;
     this.terminalOutputBuffer = '';
+    this.lastHostKeyOffer = null;
     this.pendingPrompt = null;
     this.pendingPromptWaiters = [];
     this.outputQueue = Promise.resolve();
@@ -76,7 +78,14 @@ export class HostKeyGuard {
       const handled = this.handleOutput(prompt);
       await Promise.race([this.waitForPendingPromptRegistration(), handled]);
       const pending = this.pendingPrompt;
-      if (!pending) return null;
+      if (!pending) {
+        if (!isHostKeyQuestion(prompt) || !this.lastHostKeyOffer) return null;
+        this.registerHostKeyPrompt(this.lastHostKeyOffer);
+        const registered = this.pendingPrompt;
+        if (!registered) return null;
+        registered.consumedBySecureInput = true;
+        return registered.response;
+      }
       pending.consumedBySecureInput = true;
       return pending.response;
     }
@@ -118,6 +127,8 @@ export class HostKeyGuard {
 
   private async processOutput(data: string | Uint8Array): Promise<void> {
     const chunk = typeof data === 'string' ? data : new TextDecoder().decode(data);
+    const offer = extractHostKeyOffer(chunk);
+    if (offer) this.lastHostKeyOffer = offer;
     const events = this.parser.parse(chunk);
 
     for (const event of events) {
@@ -135,51 +146,54 @@ export class HostKeyGuard {
         });
         this.options.onHostKeyChanged?.(change);
       } else if (event.type === 'HostKeyPromptDetected') {
-        if (this.promptInFlight) continue;
-
-        const { fingerprint, keyType } = event;
-
-        this.promptInFlight = true;
-        log.knownHosts.info('host key prompt detected', {
-          host: this.options.host,
-          port: this.options.port,
-          keyType,
-          fingerprint,
-        });
-
-        const trusted = this.options.isSessionTrusted?.(fingerprint)
-          ? Promise.resolve<'trusted' | HostTrustChoice>('trusted')
-          : ensureHostTrusted(
-              this.options.host,
-              this.options.port,
-              fingerprint,
-              keyType,
-              { useLiveVerification: true },
-            );
-        const pending = {
-          response: trusted.then((choice): 'yes' | 'no' => {
-            if (choice === 'cancel') return 'no';
-            if (choice === 'once') this.options.onSessionTrust?.(fingerprint);
-            return 'yes';
-          }),
-          consumedBySecureInput: false,
-        };
-        this.registerPendingPrompt(pending);
-
-        try {
-          const response = await pending.response;
-          await new Promise((resolve) => setTimeout(resolve, 0));
-          if (!pending.consumedBySecureInput) this.options.sendResponse(`${response}\n`);
-          if (response === 'no') this.options.onDenied?.();
-        } catch (error) {
-          log.knownHosts.error('host key prompt failed', { error });
-          if (!pending.consumedBySecureInput) this.options.sendResponse('no\n');
-          this.options.onDenied?.();
-        } finally {
-          if (this.pendingPrompt === pending) this.pendingPrompt = null;
-          this.promptInFlight = false;
-        }
+        await this.registerHostKeyPrompt(event);
       }
+    }
+  }
+
+  private async registerHostKeyPrompt({ fingerprint, keyType }: { fingerprint: string; keyType: string }): Promise<void> {
+    if (this.promptInFlight) return;
+
+    this.lastHostKeyOffer = { fingerprint, keyType };
+    this.promptInFlight = true;
+    log.knownHosts.info('host key prompt detected', {
+      host: this.options.host,
+      port: this.options.port,
+      keyType,
+      fingerprint,
+    });
+
+    const trusted = this.options.isSessionTrusted?.(fingerprint)
+      ? Promise.resolve<'trusted' | HostTrustChoice>('trusted')
+      : ensureHostTrusted(
+          this.options.host,
+          this.options.port,
+          fingerprint,
+          keyType,
+          { useLiveVerification: true },
+        );
+    const pending = {
+      response: trusted.then((choice): 'yes' | 'no' => {
+        if (choice === 'cancel') return 'no';
+        if (choice === 'once') this.options.onSessionTrust?.(fingerprint);
+        return 'yes';
+      }),
+      consumedBySecureInput: false,
+    };
+    this.registerPendingPrompt(pending);
+
+    try {
+      const response = await pending.response;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (!pending.consumedBySecureInput) this.options.sendResponse(`${response}\n`);
+      if (response === 'no') this.options.onDenied?.();
+    } catch (error) {
+      log.knownHosts.error('host key prompt failed', { error });
+      if (!pending.consumedBySecureInput) this.options.sendResponse('no\n');
+      this.options.onDenied?.();
+    } finally {
+      if (this.pendingPrompt === pending) this.pendingPrompt = null;
+      this.promptInFlight = false;
     }
   }
 }
@@ -193,4 +207,8 @@ function findHostKeyPromptStart(text: string): number {
 
   const lineStart = text.lastIndexOf('\n', fingerprintStart);
   return lineStart >= 0 ? lineStart + 1 : fingerprintStart;
+}
+
+function isHostKeyQuestion(text: string): boolean {
+  return /yes\/no(?:\/\[fingerprint\])?|\bfingerprint\b|continue connecting/i.test(text);
 }
