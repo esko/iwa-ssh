@@ -1059,6 +1059,58 @@ textarea {
   font-size: 13px;
 }
 
+/* ---- Shared host picker (⌘K overlay, new-tab launcher, no-spec connect) ---- */
+
+/* Dissolve the wrapper so search + list become direct children of the host
+   (the .palette modal or the standalone .hostpick-page), reusing palette layout. */
+.hostpick {
+  display: contents;
+}
+
+.hostpick-row {
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.hostpick-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hostpick-sub {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Standalone picker surface: the new-tab launcher tab and the no-spec connect
+   view. Centered search box with the recents/hosts list beneath it. */
+.hostpick-page {
+  display: flex;
+  flex-direction: column;
+  width: min(640px, 92%);
+  max-height: 72vh;
+  margin: 13vh auto 0;
+}
+
+.hostpick-page .palette-search {
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.hostpick-page .palette-list {
+  margin-top: 14px;
+  padding: 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
 /* -------------------------------------------------------------- settings -- */
 
 .settings {
@@ -1891,6 +1943,20 @@ html.app-chrome .term-shell {
 
 .connect-page form {
   width: min(420px, 100%);
+}
+
+/* The no-spec connect view hosts the centered host picker, which self-centers. */
+.connect-page:has(.hostpick-page) {
+  display: block;
+}
+
+/* A launcher tab body scrolls if its recents/hosts list outgrows the viewport. */
+.term-launcher {
+  overflow-y: auto;
+}
+
+.term-tab-launcher .term-tab-title {
+  color: var(--muted);
 }
 
 /* ----------------------------------------------- window chrome (unframed) -- */

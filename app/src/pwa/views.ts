@@ -37,6 +37,7 @@ import {
 import {
   formatConnectionTarget,
   layoutSpecKey,
+  loadRecentConnections,
   profileToSpec,
   recordConnection,
   specToQuery,
@@ -45,9 +46,9 @@ import { shouldPassThroughSystemShortcut } from './shortcuts';
 import { showContextMenu, type ContextMenuItem } from './contextMenu';
 import { CAPTION_TABS_SLOT_ID } from './windowControls';
 import { createTransport, type TerminalTransport } from './transport';
-import type { PwaTerminalSettings, TerminalPalette, TerminalTransportStatus } from './types';
+import type { PwaTerminalSettings, RecentConnection, TerminalPalette, TerminalTransportStatus } from './types';
 import type { SessionStatusMeta } from '../settings/types';
-import { resolveConnectionIntent, type LaunchConnectionIntent } from '../connections/ConnectionIntent';
+import { resolveConnectionIntent, type ConnectionIntent, type LaunchConnectionIntent } from '../connections/ConnectionIntent';
 import { parseTerminalConnectionCommand } from '../connections/sshCommandParser';
 import { readClipboardPaste } from './clipboardMedia';
 import { shellQuotePath } from '../ssh/RemoteImageUploader';
@@ -80,19 +81,25 @@ type PaneConn = {
   reconnecting: boolean;
 };
 
-/** One terminal session per tab (ADR 0008); restty tabs fan out to split panes. */
+/**
+ * One tab (ADR 0008). A `terminal` tab owns a Restty renderer that fans out to
+ * split panes; a `launcher` tab is an unconnected "New Tab" hosting the host
+ * picker — it has no spec/surface/terminal until a host is picked, at which
+ * point it is upgraded in place (see {@link attachTerminalToSession}).
+ */
 type TermSession = {
   id: string;
-  spec: LaunchConnectionIntent;
+  kind: 'launcher' | 'terminal';
+  spec?: LaunchConnectionIntent;
   title: string;
   status: TerminalTransportStatus;
   statusError?: string;
   container: HTMLElement;
-  surface: HTMLElement;
-  terminal: ResttyTerminalAdapter;
+  surface?: HTMLElement;
+  terminal?: ResttyTerminalAdapter;
   panes: Map<number, PaneConn>;
   paneSubs: TerminalSubscription[];
-  appliedFont: string;
+  appliedFont?: string;
   titleSub: TerminalSubscription | null;
   resumeEtSessionId?: string;
 };
@@ -117,9 +124,15 @@ function saveTabLayout(): void {
       sessionStorage.removeItem(TAB_LAYOUT_KEY);
       return;
     }
-    const activeIndex = Math.max(0, sessions.findIndex((s) => s.id === activeSessionId));
+    // Only connected tabs are restorable; launcher tabs carry no spec.
+    const terminals = sessions.filter((s): s is TermSession & { spec: LaunchConnectionIntent } => s.kind === 'terminal' && !!s.spec);
+    if (terminals.length === 0) {
+      sessionStorage.removeItem(TAB_LAYOUT_KEY);
+      return;
+    }
+    const activeIndex = Math.max(0, terminals.findIndex((s) => s.id === activeSessionId));
     const layout: SavedTabLayout = {
-      specs: sessions.map((s) => ({ ...s.spec, etSessionId: s.resumeEtSessionId })),
+      specs: terminals.map((s) => ({ ...s.spec, etSessionId: s.resumeEtSessionId })),
       activeIndex,
     };
     sessionStorage.setItem(TAB_LAYOUT_KEY, JSON.stringify(layout));
@@ -145,6 +158,7 @@ function currentSettings(): PwaTerminalSettings {
 
 /** Behavior: optionally confirm before a user closes a still-connected tab. */
 function confirmCloseSession(session: TermSession): boolean {
+  if (session.kind !== 'terminal' || !session.spec) return true; // launcher tab: nothing to confirm
   if (!resolveSettings(session.spec.settingsProfileId).confirmClose || !sessionHasConnectedPane(session)) return true;
   return window.confirm(`Close ${session.title}? The session is still connected.`);
 }
@@ -355,11 +369,16 @@ export async function renderHome(root: HTMLElement): Promise<void> {
   homeKeydownCleanup = null;
   await purgeStaleEtSessions();
   const [profiles, etSessions, identities] = await Promise.all([listProfiles(), listEtSessionSummaries(), listIdentities()]);
+  // Recent connections (incl. throwaway sessions) that aren't already a saved
+  // host — clicking one relaunches it; saving is a deliberate choice in the form.
+  const savedKeys = new Set(profiles.map((p) => hostTargetKey(profileToSpec(p))));
+  const recents = loadRecentConnections().filter((r) => !savedKeys.has(hostTargetKey(r)));
 
-  const isFirstRun = profiles.length === 0 && etSessions.length === 0;
-  // Show the filter once the list is long enough to be worth scanning; below
-  // that it's just chrome over a glanceable list.
-  const showFilter = profiles.length >= FILTER_MIN;
+  const isFirstRun = profiles.length === 0 && etSessions.length === 0 && recents.length === 0;
+  // Show the filter/address bar once there's anything to scan or quick-connect to.
+  const showFilter = profiles.length + recents.length >= FILTER_MIN;
+  // Document-level launcher listeners, torn down together on the next render.
+  const homeCleanups: Array<() => void> = [];
 
   // Group each resumable ET session under the profile that owns it — by stored
   // profileId, else by matching the connection target (legacy sessions). Any
@@ -390,24 +409,28 @@ export async function renderHome(root: HTMLElement): Promise<void> {
   const connectionsSection = isFirstRun
     ? `<section class="home-empty">
         <h1 class="empty-title">Connect to your first server</h1>
-        <p class="empty-sub">iwa-ssh speaks SSH, Eternal Terminal, and Mosh over Direct Sockets — saved connections land here.</p>
-        <button class="btn btn-lg" type="button" data-new><span class="btn-plus">${PLUS_SVG}</span>New connection</button>
-        <p class="empty-hint">Tip: right-click a saved connection for quick actions.</p>
+        <p class="empty-sub">iwa-ssh speaks SSH, Eternal Terminal, and Mosh over Direct Sockets — saved hosts land here.</p>
+        <button class="btn btn-lg" type="button" data-new><span class="btn-plus">${PLUS_SVG}</span>New host</button>
+        <p class="empty-hint">Tip: right-click a saved host for quick actions.</p>
       </section>`
     : `<section class="home-section">
         ${showFilter
           ? `<div class="home-filter">
               <span class="filter-icon">${SEARCH_SVG}</span>
-              <input type="search" class="filter-input" placeholder="Search connections" autocomplete="off" spellcheck="false" aria-label="Search connections" data-filter>
+              <input type="search" class="filter-input" placeholder="Find a host or ssh user@hostname…" autocomplete="off" spellcheck="false" aria-label="Find a host or connect" data-filter>
               <kbd class="filter-kbd" aria-hidden="true">/</kbd>
             </div>`
           : ''}
         <div class="conn-list" data-conn-list>
           ${profiles.map((p) => profileGroup(p, sessionsByProfile.get(p.id) ?? [])).join('')}
-          <p class="conn-none" data-filter-empty hidden>No connections match.</p>
+          <p class="conn-none" data-filter-empty hidden>No hosts match.</p>
         </div>
+        ${recents.length
+          ? `<div class="home-head"><span class="section-label">Recent connections</span></div>
+             <div class="conn-list">${recents.map(recentRow).join('')}</div>`
+          : ''}
         <button class="conn-row conn-add" type="button" data-new>
-          <span class="conn-target"><span class="plus">+</span>New connection</span>
+          <span class="conn-target"><span class="plus">+</span>New host</span>
         </button>
       </section>`;
 
@@ -459,6 +482,20 @@ export async function renderHome(root: HTMLElement): Promise<void> {
         { type: 'item', label: 'Open in new window', onSelect: () => openWindow(resumeUrl(id)) },
         { type: 'separator' },
         { type: 'item', label: 'Forget local session', onSelect: () => void forgetSession(id, root) },
+      ]);
+    });
+  });
+
+  root.querySelectorAll<HTMLElement>('[data-recent-index]').forEach((rowEl) => {
+    const recent = recents[Number(rowEl.dataset.recentIndex)];
+    if (!recent) return;
+    activate(rowEl, () => navigate(`/terminal.html?${specToQuery(recent)}`));
+    rowEl.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      showContextMenu(event.clientX, event.clientY, [
+        { type: 'item', label: 'Connect', onSelect: () => navigate(`/terminal.html?${specToQuery(recent)}`) },
+        { type: 'item', label: 'Open in new window', onSelect: () => openWindow(`/terminal.html?${specToQuery(recent)}`) },
       ]);
     });
   });
@@ -548,7 +585,13 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     filterInput.addEventListener('input', () => applyFilter(filterInput.value));
     filterInput.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
-        // Enter always launches the top match fresh (never just expands it).
+        // A typed remote `user@host` / `ssh …` quick-connects (throwaway);
+        // otherwise Enter launches the top filtered match fresh.
+        const typed = parseTerminalConnectionCommand(filterInput.value.trim());
+        if (typed?.username && typed.hostname) {
+          navigate(`/terminal.html?${specToQuery(typed)}`);
+          return;
+        }
         const topId = groups.find((g) => !g.hidden)?.querySelector<HTMLElement>('[data-launch-id]')?.dataset.launchId;
         const profile = profiles.find((p) => p.id === topId);
         if (profile) launchProfile(profile);
@@ -566,8 +609,19 @@ export async function renderHome(root: HTMLElement): Promise<void> {
       }
     };
     document.addEventListener('keydown', focusFilter);
-    homeKeydownCleanup = () => document.removeEventListener('keydown', focusFilter);
+    homeCleanups.push(() => document.removeEventListener('keydown', focusFilter));
   }
+
+  // ⌘K / Ctrl+K opens the host picker overlay from anywhere on the launcher.
+  const onPaletteKey = (event: KeyboardEvent): void => {
+    if ((event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'K')) {
+      event.preventDefault();
+      openHostPickerOverlay();
+    }
+  };
+  document.addEventListener('keydown', onPaletteKey);
+  homeCleanups.push(() => document.removeEventListener('keydown', onPaletteKey));
+  homeKeydownCleanup = () => homeCleanups.forEach((fn) => fn());
 
   // Footer SSH-keys disclosure: keep key management out of the way until asked.
   const keysToggle = root.querySelector<HTMLButtonElement>('[data-toggle-keys]');
@@ -584,7 +638,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
 
 async function deleteProfileConfirmed(profile: Profile, root: HTMLElement): Promise<void> {
   const label = profile.name?.trim() || formatConnectionTarget(profileToSpec(profile));
-  if (!window.confirm(`Delete the connection “${label}”?`)) return;
+  if (!window.confirm(`Delete the host “${label}”?`)) return;
   await deleteProfile(profile.id);
   await renderHome(root);
 }
@@ -672,6 +726,20 @@ function etSessionRow(session: EtSessionSummary): string {
   `;
 }
 
+/** A recent (often throwaway) connection — click to relaunch; not a saved host. */
+function recentRow(recent: RecentConnection, index: number): string {
+  const target = formatConnectionTarget(recent);
+  return `
+    <div class="conn-row" data-recent-index="${index}" role="button" tabindex="0" title="Relaunch ${escapeHTML(target)}">
+      ${protocolPill(recent.protocol)}
+      <span class="conn-body">
+        <span class="conn-target">${escapeHTML(target)}</span>
+        <span class="conn-meta">${escapeHTML(formatTime(recent.connectedAt))}</span>
+      </span>
+    </div>
+  `;
+}
+
 function keyRow(identity: Identity): string {
   const label = identity.label?.trim() || 'SSH key';
   const meta = identity.opensshKeyEncrypted ? 'encrypted' : identity.createdAt ? formatTime(identity.createdAt) : '';
@@ -703,16 +771,16 @@ function showProfileMenu(event: MouseEvent, profile: Profile, root: HTMLElement)
     { type: 'item', label: 'Edit', onSelect: () => openConnectionForm({ profile, onSaved: () => renderHome(root) }) },
     { type: 'item', label: 'Delete', onSelect: () => void deleteProfileConfirmed(profile, root) },
     { type: 'separator' },
-    { type: 'item', label: 'New connection', onSelect: () => openConnectionForm() },
+    { type: 'item', label: 'New host', onSelect: () => openConnectionForm() },
     { type: 'item', label: 'Settings', onSelect: () => openSettings() },
   ];
   showContextMenu(event.clientX, event.clientY, items);
 }
 
-/** Right-click on empty launcher space: new connection / settings. */
+/** Right-click on empty launcher space: new host / settings. */
 function showHomeMenu(event: MouseEvent): void {
   showContextMenu(event.clientX, event.clientY, [
-    { type: 'item', label: 'New connection', onSelect: () => openConnectionForm() },
+    { type: 'item', label: 'New host', onSelect: () => openConnectionForm() },
     { type: 'item', label: 'Settings', onSelect: () => openSettings() },
   ]);
 }
@@ -734,7 +802,7 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
     const nameValue = existing && existing.name !== formatConnectionTarget(profileToSpec(existing)) ? existing.name : '';
     const modal = elFromHTML(`
       <div class="modal">
-        <h2>${existing ? 'Edit connection' : 'New connection'}</h2>
+        <h2>${existing ? 'Edit host' : 'New host'}</h2>
         <form id="connForm">
           <label class="field"><span>name — optional</span><input name="name" value="${escapeHTML(nameValue)}" placeholder="defaults to user@host" autocomplete="off" spellcheck="false"></label>
           <label class="field"><span>host</span><input name="host" value="${escapeHTML(existing?.host ?? '')}" placeholder="192.168.1.60" autocomplete="off" spellcheck="false" required></label>
@@ -767,7 +835,8 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
           </div>
           <div class="actions">
             <button type="button" class="btn-ghost" data-cancel>Cancel</button>
-            <button type="submit" class="btn" data-submit>${existing ? 'Save' : 'Connect'}</button>
+            ${existing ? '' : `<button type="button" class="btn-ghost" data-connect>Connect</button>`}
+            <button type="submit" class="btn" data-submit>${existing ? 'Save' : 'Connect & Save'}</button>
           </div>
         </form>
       </div>
@@ -811,8 +880,12 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
     modal.querySelector<HTMLButtonElement>('[data-cancel]')?.addEventListener('click', close);
     // Focus the first thing worth typing once the modal is in the DOM.
     setTimeout(() => form.querySelector<HTMLInputElement>('[name="host"]')?.focus(), 0);
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
+
+    // `save` distinguishes the two new-host actions: "Connect & Save" persists a
+    // host (and is the Enter-key default), while "Connect" launches a throwaway
+    // session that records to history but never becomes a saved host. Editing an
+    // existing host always saves.
+    const submitForm = async (save: boolean): Promise<void> => {
       const data = new FormData(form);
       const host = String(data.get('host') ?? '').trim();
       const user = String(data.get('user') ?? '').trim();
@@ -835,8 +908,11 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
 
       errEl.hidden = true;
       submitBtn.disabled = true;
+      if (connectBtn) connectBtn.disabled = true;
       submitBtn.textContent = existing ? 'Saving…' : 'Connecting…';
       try {
+        // A pasted key is always persisted as an identity (a separate store), so
+        // key auth works even for a throwaway connection that saves no host.
         let identityId = existing?.identityId;
         if (keyText || file) {
           const pemBytes = file ? await file.arrayBuffer() : (new TextEncoder().encode(keyText).buffer as ArrayBuffer);
@@ -854,19 +930,34 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
           cacheIdentityPassphrase(identityId, passphrase);
         }
 
-        const profile: Profile = { ...existing, id: existing?.id ?? crypto.randomUUID(), name, protocol, host, port, etPort, username: user, identityId, settingsProfileId };
-        await saveProfile(profile);
-        if (existing) {
-          close();
-          await opts.onSaved?.();
+        if (save) {
+          const profile: Profile = { ...existing, id: existing?.id ?? crypto.randomUUID(), name, protocol, host, port, etPort, username: user, identityId, settingsProfileId };
+          await saveProfile(profile);
+          if (existing) {
+            close();
+            await opts.onSaved?.();
+          } else {
+            navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
+          }
         } else {
-          navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
+          // Throwaway: launch with an intent that carries no profileId, so it is
+          // recorded in recents but never written to the saved-hosts store.
+          const intent: ConnectionIntent = { protocol, username: user, hostname: host, port, etPort, identityId, settingsProfileId, args: [] };
+          navigate(`/terminal.html?${specToQuery(intent)}`);
         }
       } catch (error) {
         submitBtn.disabled = false;
-        submitBtn.textContent = existing ? 'Save' : 'Connect';
-        showError(`Could not save the connection.${error instanceof Error ? ` ${error.message}` : ''}`);
+        if (connectBtn) connectBtn.disabled = false;
+        submitBtn.textContent = existing ? 'Save' : 'Connect & Save';
+        showError(`Could not ${save ? 'save the host' : 'connect'}.${error instanceof Error ? ` ${error.message}` : ''}`);
       }
+    };
+
+    const connectBtn = modal.querySelector<HTMLButtonElement>('[data-connect]');
+    connectBtn?.addEventListener('click', () => void submitForm(false));
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      void submitForm(true);
     });
     return modal;
   });
@@ -1498,37 +1589,54 @@ export async function renderTerminal(root: HTMLElement): Promise<void> {
 
 /** Build a fully-connected session (its own renderer + transport) in a new tab. */
 async function createSession(spec: LaunchConnectionIntent): Promise<TermSession> {
+  const container = document.createElement('div');
+  container.className = 'term-session';
+  sessionsHost!.append(container);
+  const session: TermSession = {
+    id: `tab${++sessionSeq}`,
+    kind: 'terminal',
+    title: formatConnectionTarget(spec),
+    status: 'connecting',
+    statusError: undefined,
+    container,
+    panes: new Map(),
+    paneSubs: [],
+    titleSub: null,
+  };
+  sessions.push(session);
+  await attachTerminalToSession(session, spec);
+  return session;
+}
+
+/**
+ * Build (or rebuild) a tab's Restty renderer + transport bindings for `spec`.
+ * Used both by a fresh {@link createSession} and to upgrade a launcher tab in
+ * place once a host is picked, so the tab keeps its id and strip position.
+ */
+async function attachTerminalToSession(session: TermSession, spec: LaunchConnectionIntent): Promise<void> {
   const resumeEtSessionId = spec.etSessionId;
   spec = { ...spec, etSessionId: undefined };
   const settings = resolveSettings(spec.settingsProfileId);
   await ensureTerminalFontLoaded(settings);
 
-  const container = document.createElement('div');
-  container.className = 'term-session';
   const surface = document.createElement('main');
   surface.className = 'term-surface';
   surface.setAttribute('aria-label', 'Terminal');
-  container.append(surface);
-  sessionsHost!.append(container);
+  session.container.replaceChildren(surface);
 
   const terminal = await ResttyTerminalAdapter.create(surface, settings);
   surface.dataset.renderer = 'restty';
 
-  const session: TermSession = {
-    id: `tab${++sessionSeq}`,
-    spec,
-    title: formatConnectionTarget(spec),
-    status: 'connecting',
-    statusError: undefined,
-    container,
-    surface,
-    terminal,
-    panes: new Map(),
-    paneSubs: [],
-    appliedFont: settings.fontFamily,
-    titleSub: null,
-    resumeEtSessionId,
-  };
+  session.kind = 'terminal';
+  session.spec = spec;
+  session.surface = surface;
+  session.terminal = terminal;
+  session.appliedFont = settings.fontFamily;
+  session.resumeEtSessionId = resumeEtSessionId;
+  session.title = formatConnectionTarget(spec);
+  session.status = 'connecting';
+  session.container.classList.remove('term-launcher');
+
   session.titleSub = terminal.onTitle((value) => {
     session.title = value.trim() || formatConnectionTarget(spec);
     if (session.id === activeSessionId) document.title = session.title;
@@ -1536,7 +1644,6 @@ async function createSession(spec: LaunchConnectionIntent): Promise<TermSession>
   });
 
   terminal.setAppearance?.(settings);
-  sessions.push(session);
   renderTabs();
   await recordConnection(spec);
 
@@ -1545,7 +1652,43 @@ async function createSession(spec: LaunchConnectionIntent): Promise<TermSession>
   session.paneSubs.push(terminal.onPaneClose((id) => closePaneConn(session, id)));
   session.paneSubs.push(terminal.onPaneOpen((sink) => void openPaneConn(session, sink)));
   terminal.fit?.();
+}
+
+/**
+ * Open an unconnected "New Tab" hosting the host picker. Picking a host upgrades
+ * this same tab in place into a connected terminal (preserving strip position).
+ */
+function createLauncherTab(): TermSession {
+  const container = document.createElement('div');
+  container.className = 'term-session term-launcher';
+  const pickerHost = document.createElement('div');
+  pickerHost.className = 'hostpick-page';
+  container.append(pickerHost);
+  sessionsHost!.append(container);
+  const session: TermSession = {
+    id: `tab${++sessionSeq}`,
+    kind: 'launcher',
+    title: 'New Tab',
+    status: 'idle',
+    statusError: undefined,
+    container,
+    panes: new Map(),
+    paneSubs: [],
+    titleSub: null,
+  };
+  sessions.push(session);
+  void renderHostPicker(pickerHost, { onPick: (spec) => void connectLauncherTab(session, spec) });
+  renderTabs();
   return session;
+}
+
+/** Upgrade a launcher tab to a live terminal once its host is chosen. */
+async function connectLauncherTab(session: TermSession, spec: LaunchConnectionIntent): Promise<void> {
+  if (session.kind === 'terminal') return; // already connected (double pick)
+  await attachTerminalToSession(session, spec);
+  if (session.id === activeSessionId) setActiveSession(session.id);
+  else renderTabs();
+  saveTabLayout();
 }
 
 /** Bind a fresh transport to a newly opened restty pane (split or first pane). */
@@ -1558,7 +1701,7 @@ async function openPaneConn(session: TermSession, sink: ResttyPaneSink): Promise
     error: undefined,
     reconnecting: false,
     transport: createTransport(
-      { ...session.spec, etSessionId: session.panes.size === 0 ? session.resumeEtSessionId : undefined },
+      { ...session.spec!, etSessionId: session.panes.size === 0 ? session.resumeEtSessionId : undefined },
       (state, error, meta) => onPaneStatus(session, sink.paneId, state, error, meta),
     ),
   };
@@ -1599,11 +1742,11 @@ function onPaneStatus(session: TermSession, paneId: number, state: TerminalTrans
   // A clean disconnect closes that pane (the tab ends with its last pane);
   // errors stay readable, a reconnect's own cycle is ignored, and "keep open"
   // (closeOnExit off) leaves the ended pane in place for reading.
-  if (state === 'disconnected' && meta?.disconnectReason === 'normal-exit' && !conn.reconnecting && resolveSettings(session.spec.settingsProfileId).closeOnExit) {
+  if (state === 'disconnected' && meta?.disconnectReason === 'normal-exit' && !conn.reconnecting && resolveSettings(session.spec?.settingsProfileId).closeOnExit) {
     window.setTimeout(() => {
       if (conn.reconnecting || !session.panes.has(paneId)) return;
       if (session.panes.size <= 1) closeSession(session);
-      else session.terminal.closePaneById(paneId);
+      else session.terminal?.closePaneById(paneId);
     }, 700);
   }
 }
@@ -1623,10 +1766,24 @@ function setActiveSession(id: string): void {
   if (!session) return;
   activeSessionId = id;
   sessions.forEach((s) => (s.container.hidden = s.id !== id));
-  activeTerminal = session.terminal;
-  activeSpec = session.spec;
-  appliedFontSelection = session.appliedFont;
+  activeTerminal = session.terminal ?? null;
+  activeSpec = session.spec ?? null;
+  appliedFontSelection = session.appliedFont ?? null;
   (window as unknown as { __resttyAdapter?: unknown }).__resttyAdapter = session.terminal;
+
+  if (session.kind !== 'terminal' || !session.spec || !session.terminal) {
+    // Launcher tab: neutral chrome, hide the connection status, focus the search.
+    setThemeColor('#000000');
+    clearTerminalChromeColors();
+    document.title = session.title;
+    if (sharedStatus) sharedStatus.dataset.show = 'false';
+    renderTabs();
+    saveTabLayout();
+    requestAnimationFrame(() => {
+      if (activeSessionId === id) session.container.querySelector<HTMLInputElement>('.palette-input')?.focus();
+    });
+    return;
+  }
 
   const settings = resolveSettings(session.spec.settingsProfileId);
   applyPwaAppearance(settings);
@@ -1644,7 +1801,7 @@ function setActiveSession(id: string): void {
   // isn't laid out yet, so a synchronous focus() no-ops and focus falls back to
   // <body>. Guard against rapid re-activation focusing a stale session.
   requestAnimationFrame(() => {
-    if (activeSessionId === id) session.terminal.focus();
+    if (activeSessionId === id) session.terminal?.focus();
   });
 }
 
@@ -1659,7 +1816,7 @@ function closeSession(session: TermSession): void {
     conn.transport.dispose();
   }
   session.panes.clear();
-  session.terminal.dispose();
+  session.terminal?.dispose();
   session.container.remove();
   sessions.splice(index, 1);
   if (sessions.length === 0) {
@@ -1733,12 +1890,15 @@ function renderTabs(): void {
   tabStrip.dataset.count = String(sessions.length);
   const tabs = sessions
     .map((s) => {
+      const launcher = s.kind !== 'terminal';
       const paneCount = s.panes.size;
       const splits = paneCount > 1 ? `<span class="term-tab-panes" title="${paneCount} panes">⊞${paneCount}</span>` : '';
-      return `<div class="term-tab" role="tab" draggable="true" data-id="${s.id}" aria-selected="${s.id === activeSessionId}" title="${escapeHTML(s.title)}">
-        <span class="term-tab-status" data-state="${escapeHTML(tabStatus(s))}" aria-hidden="true"></span>
+      // A launcher tab shows no status dot or panes badge — it isn't connected yet.
+      const status = launcher ? '' : `<span class="term-tab-status" data-state="${escapeHTML(tabStatus(s))}" aria-hidden="true"></span>`;
+      return `<div class="term-tab${launcher ? ' term-tab-launcher' : ''}" role="tab" draggable="true" data-id="${s.id}" aria-selected="${s.id === activeSessionId}" title="${escapeHTML(s.title)}">
+        ${status}
         <span class="term-tab-title">${escapeHTML(s.title)}</span>
-        ${splits}
+        ${launcher ? '' : splits}
         <span class="term-tab-close" data-close="${s.id}" role="button" aria-label="Close tab">×</span>
       </div>`;
     })
@@ -1803,7 +1963,9 @@ function onTabStripClick(event: MouseEvent): void {
     return;
   }
   if (target.closest('[data-newtab]')) {
-    if (activeSpec) void openTab(activeSpec);
+    // "+" opens an unconnected launcher tab (host picker); the dropdown still
+    // offers duplicate / open-from-host shortcuts.
+    setActiveSession(createLauncherTab().id);
     return;
   }
   const close = target.closest<HTMLElement>('[data-close]');
@@ -1827,7 +1989,7 @@ async function openNewTabMenu(anchor: HTMLElement): Promise<void> {
         label: profileDisplayName(profile),
         onSelect: () => void openTab(profileToSpec(profile)),
       }))
-    : [{ type: 'item' as const, label: 'No saved connections', disabled: true, onSelect: () => undefined }];
+    : [{ type: 'item' as const, label: 'No saved hosts', disabled: true, onSelect: () => undefined }];
   if (activeSpec) {
     items.unshift({ type: 'separator' });
     items.unshift({ type: 'item', label: 'Duplicate current tab', onSelect: () => activeSpec && void openTab(activeSpec) });
@@ -1845,7 +2007,7 @@ function cycleTab(direction: number): void {
 /** Split the focused Restty pane. */
 function splitActivePane(direction: 'vertical' | 'horizontal'): boolean {
   const session = activeSession();
-  if (session) {
+  if (session?.terminal) {
     session.terminal.split(direction);
     return true;
   }
@@ -1855,7 +2017,7 @@ function splitActivePane(direction: 'vertical' | 'horizontal'): boolean {
 /** Close the focused Restty pane; returns false when there's nothing to close. */
 function closeActivePane(): boolean {
   const session = activeSession();
-  return session?.terminal.closeActivePane() ?? false;
+  return session?.terminal?.closeActivePane() ?? false;
 }
 
 /** In-window tab + split keys for the unframed app window (ADR 0008). */
@@ -1906,7 +2068,7 @@ function installTabShortcuts(): void {
       if (event.code === 'KeyT') {
         event.preventDefault();
         event.stopImmediatePropagation();
-        if (activeSpec) void openTab(activeSpec);
+        setActiveSession(createLauncherTab().id);
       } else if (event.code === 'KeyW') {
         const session = activeSession();
         if (session) {
@@ -2122,7 +2284,7 @@ function buildPaletteCommands(): PaletteCommand[] {
   const paneCount = activeTerminal?.paneCount() ?? 1;
   const canCopy = (activeTerminal?.hasSelection() ?? false) || canCopyViaRenderer();
   const commands: PaletteCommand[] = [
-    { label: 'New tab', group: 'Tabs', key: '⌃T', disabled: !activeSpec, run: () => activeSpec && void openTab(activeSpec) },
+    { label: 'New tab', group: 'Tabs', key: '⌃T', run: () => setActiveSession(createLauncherTab().id) },
     { label: 'Duplicate session', group: 'Tabs', disabled: !activeSpec, run: duplicateSession },
     { label: 'Close tab', group: 'Tabs', key: '⌃W', disabled: !session, run: () => session && confirmCloseSession(session) && closeSession(session) },
     { label: 'Next tab', group: 'Tabs', key: '⌃Tab', disabled: sessions.length < 2, run: () => cycleTab(1) },
@@ -2257,6 +2419,153 @@ function openCommandPalette(): void {
   });
 }
 
+/** ⌘K launcher overlay: the shared host picker in a modal; picking navigates the window. */
+function openHostPickerOverlay(): void {
+  openOverlay((close) => {
+    const modal = elFromHTML(`<div class="modal palette" role="dialog" aria-label="Connect to a host"></div>`);
+    void renderHostPicker(modal, {
+      onPick: (spec) => { close(); navigate(`/terminal.html?${specToQuery(spec)}`); },
+    });
+    return modal;
+  });
+}
+
+/** One row in the host picker — a recent connection, a saved host, or a typed target. */
+type HostPickEntry = {
+  spec: LaunchConnectionIntent;
+  title: string;
+  sub: string;
+  protocol: Profile['protocol'];
+  group: 'Recent connections' | 'Saved hosts';
+  search: string;
+};
+
+/** Identity of a connection target, for de-duping recents against saved hosts. */
+function hostTargetKey(intent: { protocol?: string; username?: string; hostname: string; port?: number; etPort?: number }): string {
+  return `${intent.protocol ?? 'ssh'}:${intent.username ?? ''}@${intent.hostname.toLowerCase()}:${intent.port ?? ''}:${intent.etPort ?? ''}`;
+}
+
+/**
+ * The shared host picker: a search field over recent connections + saved hosts,
+ * reused by the home ⌘K overlay, the new-tab launcher tab, and the no-spec
+ * connect fallback. Typing a remote `ssh user@host` that matches nothing offers
+ * an inline "Connect to …" (throwaway) row. There is no Local Terminal entry.
+ * `onPick` decides what opening a host means at each mount point.
+ */
+async function renderHostPicker(
+  container: HTMLElement,
+  opts: { onPick: (spec: LaunchConnectionIntent) => void; autofocus?: boolean },
+): Promise<void> {
+  const profiles = await listProfiles();
+  const recents = loadRecentConnections();
+  const savedKeys = new Set(profiles.map((p) => hostTargetKey(profileToSpec(p))));
+
+  const savedEntries: HostPickEntry[] = profiles.map((p) => {
+    const spec = profileToSpec(p);
+    const title = profileDisplayName(p);
+    const sub = formatConnectionTarget(spec);
+    return { spec, title, sub: title === sub ? '' : sub, protocol: p.protocol, group: 'Saved hosts', search: `${title} ${sub}`.toLowerCase() };
+  });
+  const recentEntries: HostPickEntry[] = recents
+    .filter((r) => !savedKeys.has(hostTargetKey(r)))
+    .map((r) => ({ spec: r, title: formatConnectionTarget(r), sub: '', protocol: r.protocol, group: 'Recent connections', search: formatConnectionTarget(r).toLowerCase() }));
+  const baseEntries = [...recentEntries, ...savedEntries];
+
+  container.innerHTML = `
+    <div class="hostpick">
+      <div class="palette-search">
+        <span class="filter-icon">${SEARCH_SVG}</span>
+        <input type="search" class="palette-input" data-hp-input placeholder="Search hosts or type ssh user@host…" autocomplete="off" spellcheck="false" aria-label="Search hosts">
+      </div>
+      <div class="palette-list" role="listbox" data-hp-list></div>
+    </div>
+  `;
+  const input = container.querySelector<HTMLInputElement>('[data-hp-input]')!;
+  const list = container.querySelector<HTMLElement>('[data-hp-list]')!;
+  let matches: HostPickEntry[] = [];
+  let selected = 0;
+
+  const rowHTML = (entry: HostPickEntry, i: number): string => `
+    <button class="palette-row hostpick-row" type="button" role="option" data-index="${i}" aria-selected="${i === 0}">
+      ${protocolPill(entry.protocol)}
+      <span class="hostpick-body">
+        <span class="palette-label">${escapeHTML(entry.title)}</span>
+        ${entry.sub ? `<span class="hostpick-sub">${escapeHTML(entry.sub)}</span>` : ''}
+      </span>
+    </button>`;
+
+  const syncSelection = (): void => {
+    const rows = [...list.querySelectorAll<HTMLElement>('.palette-row')];
+    rows.forEach((row, i) => row.setAttribute('aria-selected', String(i === selected)));
+    rows[selected]?.scrollIntoView({ block: 'nearest' });
+  };
+  const move = (delta: number): void => {
+    if (!matches.length) return;
+    selected = (selected + delta + matches.length) % matches.length;
+    syncSelection();
+  };
+  const run = (entry?: HostPickEntry): void => { if (entry) opts.onPick(entry.spec); };
+
+  /** A typed remote `user@host` not already listed becomes a throwaway connect row. */
+  const connectEntry = (query: string, present: HostPickEntry[]): HostPickEntry | null => {
+    const parsed = query.trim() ? parseTerminalConnectionCommand(query.trim()) : null;
+    if (!parsed?.username || !parsed.hostname) return null;
+    const key = hostTargetKey(parsed);
+    if (present.some((e) => hostTargetKey(e.spec) === key)) return null;
+    return { spec: parsed, title: `Connect to ${formatConnectionTarget(parsed)}`, sub: '', protocol: parsed.protocol, group: 'Saved hosts', search: '' };
+  };
+
+  const renderList = (query: string): void => {
+    const needle = query.trim().toLowerCase();
+    selected = 0;
+    if (!needle) {
+      // Unfiltered: bucket under group headers, recents first.
+      matches = baseEntries;
+      let html = '';
+      let lastGroup = '';
+      baseEntries.forEach((entry, i) => {
+        if (entry.group !== lastGroup) { html += `<div class="palette-group">${entry.group}</div>`; lastGroup = entry.group; }
+        html += rowHTML(entry, i);
+      });
+      list.innerHTML = html || '<p class="palette-empty">No saved hosts yet. Type ssh user@host to connect.</p>';
+      syncSelection();
+      return;
+    }
+    // Filtered: a typed connect target first, then fuzzy-ranked entries.
+    const ranked = baseEntries
+      .map((entry) => ({ entry, score: fuzzyScore(entry.search, needle) }))
+      .filter((m) => m.score >= 0)
+      .sort((a, b) => b.score - a.score)
+      .map((m) => m.entry);
+    const connect = connectEntry(query, ranked);
+    matches = connect ? [connect, ...ranked] : ranked;
+    list.innerHTML = matches.length
+      ? matches.map((entry, i) => rowHTML(entry, i)).join('')
+      : '<p class="palette-empty">No matching hosts.</p>';
+    syncSelection();
+  };
+
+  input.addEventListener('input', () => renderList(input.value));
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown') { event.preventDefault(); move(1); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); move(-1); }
+    else if (event.key === 'Enter') { event.preventDefault(); run(matches[selected]); }
+  });
+  list.addEventListener('click', (event) => {
+    const row = (event.target as HTMLElement).closest<HTMLElement>('.palette-row');
+    if (row?.dataset.index !== undefined) run(matches[Number(row.dataset.index)]);
+  });
+  list.addEventListener('pointermove', (event) => {
+    const row = (event.target as HTMLElement).closest<HTMLElement>('.palette-row');
+    if (row?.dataset.index === undefined) return;
+    selected = Number(row.dataset.index);
+    syncSelection();
+  });
+
+  renderList('');
+  if (opts.autofocus !== false) setTimeout(() => input.focus(), 0);
+}
+
 /** Overlay picker to jump to a resumable ET session or a saved connection. */
 async function openSessionPicker(): Promise<void> {
   await purgeStaleEtSessions();
@@ -2313,7 +2622,7 @@ function copySelection(): void {
 
 async function pasteClipboard(): Promise<void> {
   const session = activeSession();
-  if (!session) return;
+  if (!session?.terminal) return;
   const paneId = session.terminal.getActivePaneId();
   try {
     const paste = await readClipboardPaste();
@@ -2326,7 +2635,7 @@ async function pasteClipboard(): Promise<void> {
 
 async function uploadClipboardImageAndPastePath(): Promise<void> {
   const session = activeSession();
-  if (!session) return;
+  if (!session?.terminal) return;
   const pane = session.panes.get(session.terminal.getActivePaneId());
   if (!pane?.transport.uploadFile) {
     updateSharedStatus(session, 'error', 'Image upload is unavailable for this connection.');
@@ -2360,7 +2669,7 @@ function duplicateSession(): void {
 
 async function reconnect(): Promise<void> {
   const session = activeSession();
-  if (!session) return;
+  if (!session?.terminal) return;
   const conn = session.panes.get(session.terminal.getActivePaneId());
   if (!conn) return;
   conn.reconnecting = true;
@@ -2377,22 +2686,9 @@ function renderTerminalConnect(root: HTMLElement): void {
   setThemeColor('#000000');
   clearTerminalChromeColors();
   document.title = 'iwa-ssh';
-  root.innerHTML = `
-    <div class="connect-page">
-      <form id="terminalConnect">
-        <div class="home-head"><span class="section-label">Connect</span></div>
-        <label class="field"><span>address</span><input id="terminalCommand" name="host" placeholder="user@192.168.1.60 or mosh user@host" autocomplete="off" spellcheck="false" autofocus></label>
-        <div class="actions"><button class="btn" type="submit">Connect</button></div>
-      </form>
-    </div>
-  `;
-  requiredElement<HTMLFormElement>('#terminalConnect', root).addEventListener('submit', (event) => {
-    event.preventDefault();
-    const raw = requiredElement<HTMLInputElement>('#terminalCommand', root).value.trim();
-    if (!raw) return;
-    const intent = parseTerminalConnectionCommand(raw);
-    if (intent) navigate(`/terminal.html?${specToQuery(intent)}`);
-  });
+  root.innerHTML = `<div class="connect-page"><div class="hostpick-page" data-host-picker></div></div>`;
+  const host = requiredElement<HTMLElement>('[data-host-picker]', root);
+  void renderHostPicker(host, { onPick: (spec) => navigate(`/terminal.html?${specToQuery(spec)}`) });
 }
 
 // ------------------------------------------------------------------- misc --
@@ -2416,7 +2712,7 @@ export function disposeTerminal(): void {
       conn.transport.dispose();
     }
     session.panes.clear();
-    session.terminal.dispose();
+    session.terminal?.dispose();
   }
   sessions.length = 0;
   fontSyncCleanup?.();

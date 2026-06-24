@@ -110,4 +110,22 @@ describe('recents', () => {
     expect(setItem).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
+
+  it('records a throwaway connection (no profileId) and de-dupes by target', async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+    });
+
+    // A "Connect" (throwaway) intent carries no profileId but must still land in recents.
+    await recordConnection({ protocol: 'ssh', username: 'ada', hostname: 'box', port: 22, args: [] });
+    await recordConnection({ protocol: 'ssh', username: 'ada', hostname: 'box', port: 22, args: [] });
+
+    const recents = JSON.parse([...store.values()][0]) as Array<{ hostname: string; profileId?: string }>;
+    expect(recents).toHaveLength(1); // the second connect dedupes, not appends
+    expect(recents[0].hostname).toBe('box');
+    expect(recents[0].profileId).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
 });

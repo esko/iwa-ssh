@@ -37,10 +37,17 @@ for (const relative of bundles) {
   }
 }
 
+// The icon scale is now user-adjustable (Rendering settings), so the adapter
+// binds it from settings rather than a literal. Verify the adapter sources it
+// from settings and that the shipped default keeps icons subordinate (<= 0.85).
 const adapter = readFileSync(join(root, 'app/src/pwa/resttyAdapter.ts'), 'utf8');
-const iconScale = adapter.match(/nerdIconScale:\s*([0-9.]+)/)?.[1];
-if (!iconScale || Number(iconScale) > 0.85) {
-  console.error(`FAIL resttyAdapter.ts: Nerd icon scale must be explicit and <= 0.85 (found ${iconScale ?? 'none'})`);
+const literalScale = adapter.match(/nerdIconScale:\s*([0-9.]+)/)?.[1];
+const bindsSetting = /nerdIconScale:\s*settings\.nerdFontScale/.test(adapter);
+const defaultScale = readFileSync(join(root, 'app/src/pwa/settings.ts'), 'utf8')
+  .match(/nerdFontScale:\s*([0-9.]+)/)?.[1];
+const effectiveDefault = literalScale ?? (bindsSetting ? defaultScale : undefined);
+if (!effectiveDefault || Number(effectiveDefault) > 0.85) {
+  console.error(`FAIL resttyAdapter.ts: Nerd icon scale must be explicit and its default <= 0.85 (found ${effectiveDefault ?? 'none'})`);
   failed = true;
 }
 
