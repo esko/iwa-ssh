@@ -50,9 +50,9 @@ export async function flushEtSessionCheckpoint(sessionId: string): Promise<EtSes
   const merged = stored
     ? {
         ...stored,
-        rxSequence: entry.session.rxSequence,
-        journalBytes: entry.session.journalBytes,
-        journalTruncated: entry.session.journalTruncated,
+        rxSequence: Math.max(stored.rxSequence, entry.session.rxSequence),
+        journalBytes: Math.max(stored.journalBytes, entry.session.journalBytes),
+        journalTruncated: stored.journalTruncated || entry.session.journalTruncated,
         updatedAt: Date.now(),
       }
     : entry.session;
@@ -60,9 +60,19 @@ export async function flushEtSessionCheckpoint(sessionId: string): Promise<EtSes
   return merged;
 }
 
+function mergePendingSessionRecord(previous: EtSessionRecord | undefined, next: EtSessionRecord): EtSessionRecord {
+  if (!previous) return next;
+  return {
+    ...next,
+    rxSequence: Math.max(previous.rxSequence, next.rxSequence),
+    journalBytes: Math.max(previous.journalBytes, next.journalBytes),
+    journalTruncated: previous.journalTruncated || next.journalTruncated,
+  };
+}
+
 function scheduleSessionRecordFlush(sessionId: string, session: EtSessionRecord): EtSessionRecord {
   const entry = pendingSessionFlush.get(sessionId) ?? { session, timer: null };
-  entry.session = session;
+  entry.session = mergePendingSessionRecord(entry.session, session);
   if (!entry.timer) {
     entry.timer = setTimeout(() => {
       entry.timer = null;

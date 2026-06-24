@@ -93,6 +93,7 @@ export class EtClient {
   private keepaliveTimer: ReturnType<typeof setInterval> | undefined;
   private lastKeepalive = 0;
   private sendQueue: Promise<void> = Promise.resolve();
+  private inboundQueue: Promise<void> = Promise.resolve();
   private readonly queryScanner = new TerminalQueryScanner();
 
   private constructor(session: EtSessionRecord, passkey: string, callbacks: EtClientCallbacks) {
@@ -251,6 +252,8 @@ export class EtClient {
 
   private async recoverSession(): Promise<void> {
     if (!this.reader) throw new Error('ET reader is unavailable');
+    await this.drainInboundQueue();
+    this.session = await prepareEtSessionForConnect(this.session.id);
     const localSequence = toBinary(SequenceHeaderSchema, create(SequenceHeaderSchema, { sequenceNumber: this.session.rxSequence }));
     await this.write(frameHandshake(localSequence));
     const remote = fromBinary(SequenceHeaderSchema, await this.reader.handshake());
@@ -273,17 +276,25 @@ export class EtClient {
   }
 
   private applySession(next: EtSessionRecord): EtSessionRecord {
-    if (next.txSequence < this.session.txSequence) {
-      this.session = {
-        ...next,
-        txSequence: this.session.txSequence,
-        outboundBytes: this.session.outboundBytes,
-        txAcknowledged: this.session.txAcknowledged,
-      };
-    } else {
-      this.session = next;
-    }
+    this.session = {
+      ...next,
+      rxSequence: Math.max(next.rxSequence, this.session.rxSequence),
+      txSequence: Math.max(next.txSequence, this.session.txSequence),
+      outboundBytes: Math.max(next.outboundBytes, this.session.outboundBytes),
+      journalBytes: Math.max(next.journalBytes, this.session.journalBytes),
+      txAcknowledged: Math.max(next.txAcknowledged, this.session.txAcknowledged),
+    };
     return this.session;
+  }
+
+  private enqueueInbound(task: () => Promise<void>): Promise<void> {
+    const run = this.inboundQueue.then(task);
+    this.inboundQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async drainInboundQueue(): Promise<void> {
+    await this.inboundQueue.catch(() => undefined);
   }
 
   private async sendPacketNow(type: number, plaintext: Uint8Array): Promise<void> {
@@ -312,7 +323,10 @@ export class EtClient {
 
   private async readLoop(): Promise<void> {
     try {
-      while (!this.stopped && this.reader) await this.acceptEncryptedPacket(await this.reader.packet());
+      while (!this.stopped && this.reader) {
+        const packet = await this.reader.packet();
+        await this.enqueueInbound(() => this.acceptEncryptedPacket(packet));
+      }
     } catch (error) {
       await this.handleConnectionLoss(error);
     }
@@ -389,11 +403,16 @@ export class EtClient {
     this.reconnecting = true;
     this.stopKeepalive();
     await this.closeSocket();
-    const flushed = await flushEtSessionCheckpoint(this.session.id).catch(() => undefined);
-    if (flushed) this.session = flushed;
-    else {
-      const stored = await getEtSession(this.session.id).catch(() => undefined);
-      if (stored) this.session = stored;
+    await this.drainInboundQueue();
+    try {
+      this.session = await prepareEtSessionForConnect(this.session.id);
+    } catch {
+      const flushed = await flushEtSessionCheckpoint(this.session.id).catch(() => undefined);
+      if (flushed) this.session = flushed;
+      else {
+        const stored = await getEtSession(this.session.id).catch(() => undefined);
+        if (stored) this.session = stored;
+      }
     }
     etConnectDebugLog('client.ts:handleConnectionLoss', 'reconnect after checkpoint flush', {
       rxSequence: this.session.rxSequence,
