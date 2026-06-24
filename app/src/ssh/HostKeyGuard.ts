@@ -3,7 +3,6 @@
  */
 
 import { log } from '../debug/logger';
-import { agentDebugLog } from '../debug/agentLog';
 import { ensureHostTrusted, type HostTrustChoice } from './KnownHostPrompt';
 import { syncKnownHostsFromNassh } from './nasshKnownHosts';
 import { HostKeyParser, extractHostKeyOffer, hostKeyPromptEnd } from './HostKeyParser';
@@ -78,24 +77,9 @@ export class HostKeyGuard {
     if (prompt) {
       const handled = this.handleOutput(prompt);
       await Promise.race([this.waitForPendingPromptRegistration(), handled]);
-      // #region agent log
-      agentDebugLog('HostKeyGuard.ts:consumePendingHostKeyResponse', 'after prompt handleOutput race', {
-        promptPreview: prompt.slice(0, 200),
-        hasPending: Boolean(this.pendingPrompt),
-        lastOffer: this.lastHostKeyOffer,
-      }, 'A');
-      // #endregion
       const pending = this.pendingPrompt;
       if (!pending) {
         const fallback = this.lastHostKeyOffer ?? fallbackHostKeyOffer(prompt);
-        // #region agent log
-        agentDebugLog('HostKeyGuard.ts:consumePendingHostKeyResponse:fallback', 'fallback path', {
-          fallback,
-          extractFromPrompt: extractHostKeyOffer(prompt),
-          isHostKeyQ: isHostKeyQuestion(prompt),
-          lastOffer: this.lastHostKeyOffer,
-        }, 'A,B');
-        // #endregion
         if (!isHostKeyQuestion(prompt) || !fallback) return null;
         this.registerHostKeyPrompt(fallback);
         const registered = this.pendingPrompt;
@@ -126,12 +110,6 @@ export class HostKeyGuard {
     const promptEnd = hostKeyPromptEnd(candidate);
     if (promptEnd === null) {
       this.terminalOutputBuffer = candidate;
-      // #region agent log
-      agentDebugLog('HostKeyGuard.ts:filterTerminalOutput', 'buffering partial host key prompt', {
-        bufferPreview: candidate.slice(0, 300),
-        beforeLen: before.length,
-      }, 'C');
-      // #endregion
       return before;
     }
 
@@ -153,15 +131,6 @@ export class HostKeyGuard {
     const offer = extractHostKeyOffer(chunk);
     if (offer) this.lastHostKeyOffer = offer;
     const events = this.parser.parse(chunk);
-    // #region agent log
-    agentDebugLog('HostKeyGuard.ts:processOutput', 'terminal chunk processed', {
-      chunkPreview: chunk.slice(0, 300),
-      offer,
-      lastOffer: this.lastHostKeyOffer,
-      eventTypes: events.map((e) => e.type),
-      promptDetected: events.some((e) => e.type === 'HostKeyPromptDetected'),
-    }, 'B,C');
-    // #endregion
 
     for (const event of events) {
       if (event.type === 'HostKeyPermanentlyAdded') {

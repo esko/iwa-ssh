@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  checkpointEtInbound,
   getEtDeviceKey,
   getEtSession,
   listProfiles,
@@ -9,6 +10,7 @@ import {
   saveEtSession,
   type EtSessionRecord,
 } from './indexedDb';
+import { checkpointEtOutput, flushEtSessionCheckpoint, resetSessionCheckpointFlushes } from '../et/sessionStore';
 
 async function deleteDatabase(): Promise<void> {
   await resetIndexedDbConnection();
@@ -31,7 +33,10 @@ function record(): EtSessionRecord {
 }
 
 beforeEach(deleteDatabase);
-afterEach(deleteDatabase);
+afterEach(async () => {
+  resetSessionCheckpointFlushes();
+  await deleteDatabase();
+});
 
 describe('IndexedDB v2 Eternal Terminal state', () => {
   it('migrates a v1 profile without recreating existing stores', async () => {
@@ -68,5 +73,31 @@ describe('IndexedDB v2 Eternal Terminal state', () => {
     await saveEtSession(record());
     await expect(saveEtOutboundFrame({ sessionId: 'local-session', sequence: 2, bytes: new Uint8Array([1]), size: 1 })).rejects.toThrow('Non-contiguous');
     expect((await getEtSession('local-session'))?.txSequence).toBe(0);
+  });
+
+  it('checkpointEtInbound keeps the latest outbound sequence when the session hint is stale', async () => {
+    await saveEtSession(record());
+    await saveEtOutboundFrame({ sessionId: 'local-session', sequence: 1, bytes: new Uint8Array([1]), size: 1 });
+    const staleHint = { ...(await getEtSession('local-session'))!, txSequence: 0 };
+    const next = await checkpointEtInbound(
+      { sessionId: 'local-session', sequence: 1, iv: new Uint8Array(12), ciphertext: new ArrayBuffer(4), size: 4 },
+      'local-session',
+      1,
+      { sessionHint: staleHint, deferSessionPut: true },
+    );
+    expect(next).toMatchObject({ rxSequence: 1, txSequence: 1 });
+  });
+
+  it('deferred journal flush preserves outbound progress made during encryption', async () => {
+    await saveEtSession(record());
+    const hint = await getEtSession('local-session');
+    const pending = checkpointEtOutput('local-session', 1, new Uint8Array([1, 2, 3]), hint!);
+    await saveEtOutboundFrame({ sessionId: 'local-session', sequence: 1, bytes: new Uint8Array([9]), size: 1 });
+    await pending;
+    await flushEtSessionCheckpoint('local-session');
+    expect(await getEtSession('local-session')).toMatchObject({ rxSequence: 1, txSequence: 1 });
+    await expect(
+      saveEtOutboundFrame({ sessionId: 'local-session', sequence: 2, bytes: new Uint8Array([2]), size: 1 }),
+    ).resolves.toMatchObject({ txSequence: 2 });
   });
 });

@@ -305,19 +305,19 @@ export async function checkpointEtInbound(
 ): Promise<EtSessionRecord> {
   const db = await getDb();
   const tx = db.transaction(['etJournal', 'etSessions'], 'readwrite');
-  const session = options?.sessionHint ?? await tx.objectStore('etSessions').get(sessionId);
-  if (!session) {
+  const stored = await tx.objectStore('etSessions').get(sessionId);
+  if (!stored) {
     tx.abort();
     await tx.done.catch(() => undefined);
     throw new Error(`ET session ${sessionId} is missing`);
   }
-  if (sequence !== session.rxSequence + 1) {
+  if (sequence !== stored.rxSequence + 1) {
     tx.abort();
     await tx.done.catch(() => undefined);
-    throw new Error(`Non-contiguous ET inbound sequence ${sequence}; expected ${session.rxSequence + 1}`);
+    throw new Error(`Non-contiguous ET inbound sequence ${sequence}; expected ${stored.rxSequence + 1}`);
   }
-  let journalBytes = session.journalBytes + (chunk?.size ?? 0);
-  let journalTruncated = session.journalTruncated;
+  let journalBytes = stored.journalBytes + (chunk?.size ?? 0);
+  let journalTruncated = stored.journalTruncated;
   const journalStore = tx.objectStore('etJournal');
   if (chunk) await journalStore.add(chunk);
   let cursor = await journalStore.index('by-session').openCursor(IDBKeyRange.only(sessionId));
@@ -328,7 +328,7 @@ export async function checkpointEtInbound(
     cursor = await cursor.continue();
   }
   const next = {
-    ...session,
+    ...stored,
     rxSequence: sequence,
     journalBytes,
     journalTruncated,

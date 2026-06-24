@@ -44,8 +44,18 @@ export async function flushEtSessionCheckpoint(sessionId: string): Promise<EtSes
     entry.timer = null;
   }
   pendingSessionFlush.delete(sessionId);
-  await saveEtSession(entry.session);
-  return entry.session;
+  const stored = await getEtSession(sessionId);
+  const merged = stored
+    ? {
+        ...stored,
+        rxSequence: entry.session.rxSequence,
+        journalBytes: entry.session.journalBytes,
+        journalTruncated: entry.session.journalTruncated,
+        updatedAt: Date.now(),
+      }
+    : entry.session;
+  await saveEtSession(merged);
+  return merged;
 }
 
 function scheduleSessionRecordFlush(sessionId: string, session: EtSessionRecord): EtSessionRecord {

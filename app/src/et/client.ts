@@ -239,6 +239,20 @@ export class EtClient {
     return task;
   }
 
+  private applySession(next: EtSessionRecord): EtSessionRecord {
+    if (next.txSequence < this.session.txSequence) {
+      this.session = {
+        ...next,
+        txSequence: this.session.txSequence,
+        outboundBytes: this.session.outboundBytes,
+        txAcknowledged: this.session.txAcknowledged,
+      };
+    } else {
+      this.session = next;
+    }
+    return this.session;
+  }
+
   private async sendPacketNow(type: number, plaintext: Uint8Array): Promise<void> {
     const sequence = this.session.txSequence + 1;
     const encrypted = await encryptEtPayload(this.passkey, sequence, plaintext);
@@ -277,7 +291,7 @@ export class EtClient {
     const sequence = this.session.rxSequence + 1;
     if (!packet.encrypted) throw new Error('ET peer sent an unencrypted packet');
     const payload = await decryptEtPayload(this.passkey, sequence, packet.payload);
-    this.session = await checkpointEtControl(this.session.id, sequence, this.session);
+    this.applySession(await checkpointEtControl(this.session.id, sequence, this.session));
     return { ...packet, encrypted: false, payload };
   }
 
@@ -305,9 +319,9 @@ export class EtClient {
         await checkpoint.catch(() => undefined);
         throw error;
       }
-      this.session = await checkpoint;
+      this.applySession(await checkpoint);
     } else {
-      this.session = await checkpointEtControl(this.session.id, sequence, this.session);
+      this.applySession(await checkpointEtControl(this.session.id, sequence, this.session));
       if (packet.type === TerminalPacketType.KEEP_ALIVE) this.lastKeepalive = Date.now();
     }
   }
