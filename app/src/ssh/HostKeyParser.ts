@@ -1,7 +1,8 @@
 const KEY_TYPE = '[A-Za-z0-9@._+-]+';
 
 export const SSH_FINGERPRINT_PATTERN = '(?:SHA256:[A-Za-z0-9+/_=-]+|MD5:[0-9a-f:]+|[A-Za-z0-9+/_=-]{16,})';
-const FINGERPRINT_RE = new RegExp(`(${KEY_TYPE})\\s+(?:host\\s+)?key fingerprint is\\s+(${SSH_FINGERPRINT_PATTERN})`, 'i');
+const FINGERPRINT_IS = 'key fingerprint is:?\\s+';
+const FINGERPRINT_RE = new RegExp(`(${KEY_TYPE})\\s+(?:host\\s+)?${FINGERPRINT_IS}(${SSH_FINGERPRINT_PATTERN})`, 'i');
 const CONTINUE_PROMPT_RE =
   /(?:continue connecting \(yes\/no(?:\/\[fingerprint\])?\)|are you sure you want to continue connecting \(yes\/no(?:\/\[fingerprint\])?\)|can't be established|are you sure you want to continue)\??\s*/i;
 const PERMANENTLY_ADDED_RE = /Permanently added (.+?) to the list of known hosts/i;
@@ -9,7 +10,7 @@ const PERMANENTLY_ADDED_RE = /Permanently added (.+?) to the list of known hosts
 const HOST_KEY_CHANGED_RE = /REMOTE HOST IDENTIFICATION HAS CHANGED/i;
 const VERIFICATION_FAILED_RE = /Host key verification failed/i;
 const CHANGED_FINGERPRINT_RE = new RegExp(
-  `fingerprint for the (${KEY_TYPE}) key sent by the remote host is\\s+(${SSH_FINGERPRINT_PATTERN})`,
+  `fingerprint for the (${KEY_TYPE}) key sent by the remote host is:?\\s+(${SSH_FINGERPRINT_PATTERN})`,
   'i',
 );
 

@@ -43,4 +43,21 @@ describe('HostKeyParser', () => {
       { type: 'HostKeyPromptDetected', fingerprint: 'SHA256:abc_DEF-123', keyType: normalized },
     ]);
   });
+
+  it('recognizes OpenSSH prompts with a colon after "fingerprint is" and extra lines', () => {
+    const parser = new HostKeyParser();
+    const text =
+      "The authenticity of host 'mini.local (::)' can't be established.\r\n" +
+      'ED25519 key fingerprint is: SHA256:CF9+YLsBfp9Gyr9iwb9kmqvyovEyoRFwWMqccm176wU\r\n' +
+      'This key is not known by any other names.\r\n' +
+      'Are you sure you want to continue connecting (yes/no/[fingerprint])? ';
+
+    expect(parser.parse(text)).toEqual([
+      {
+        type: 'HostKeyPromptDetected',
+        fingerprint: 'SHA256:CF9+YLsBfp9Gyr9iwb9kmqvyovEyoRFwWMqccm176wU',
+        keyType: 'ssh-ed25519',
+      },
+    ]);
+  });
 });
