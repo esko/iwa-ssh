@@ -1,28 +1,8 @@
 import './security/trustedTypes';
 import { installBootErrorHandler, showBootError } from './security/bootError';
-import { getRecentLogs, setVerboseLogging } from './debug/logger';
-import { wipeTrustedHostKeys } from './ssh/nasshKnownHosts';
 import { startRouter } from './pwa/views';
 import { installWindowControls } from './pwa/windowControls';
 import './pwa/styles.css';
-
-declare global {
-  interface Window {
-    /** DevTools: copy(JSON.stringify(__IWA_SSH_DEBUG__.getRecentLogs(), null, 2)) */
-    __IWA_SSH_DEBUG__?: {
-      getRecentLogs: typeof getRecentLogs;
-      enableVerbose: () => void;
-      /** Clear trusted host keys from IndexedDB and nassh known_hosts. */
-      wipeTrustedHostKeys: typeof wipeTrustedHostKeys;
-    };
-  }
-}
-
-window.__IWA_SSH_DEBUG__ = {
-  getRecentLogs,
-  enableVerbose: () => setVerboseLogging(true),
-  wipeTrustedHostKeys,
-};
 
 installBootErrorHandler();
 
