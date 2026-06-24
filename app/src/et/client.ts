@@ -89,6 +89,7 @@ export class EtClient {
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private stopped = false;
   private reconnecting = false;
+  private sessionEstablished = false;
   private keepaliveTimer: ReturnType<typeof setInterval> | undefined;
   private lastKeepalive = 0;
   private sendQueue: Promise<void> = Promise.resolve();
@@ -113,6 +114,7 @@ export class EtClient {
     this.callbacks.onStatus('connecting');
     try {
       await this.openWithTimeout();
+      this.sessionEstablished = true;
       this.callbacks.onStatus('connected');
       this.startKeepalive();
       void this.readLoop();
@@ -154,6 +156,7 @@ export class EtClient {
 
   async detach(): Promise<void> {
     this.stopped = true;
+    this.sessionEstablished = false;
     this.stopKeepalive();
     await this.closeSocket();
     await flushEtSessionCheckpoint(this.session.id);
@@ -325,7 +328,12 @@ export class EtClient {
     return { ...packet, encrypted: false, payload };
   }
 
+  private touchKeepalive(): void {
+    this.lastKeepalive = Date.now();
+  }
+
   private async acceptEncryptedPacket(packet: EtWirePacket): Promise<void> {
+    this.touchKeepalive();
     const sequence = this.session.rxSequence + 1;
     if (!packet.encrypted) throw new Error('ET peer sent an unencrypted packet');
     const payload = await decryptEtPayload(this.passkey, sequence, packet.payload);
@@ -352,19 +360,22 @@ export class EtClient {
       this.applySession(await checkpoint);
     } else {
       this.applySession(await checkpointEtControl(this.session.id, sequence, this.session));
-      if (packet.type === TerminalPacketType.KEEP_ALIVE) this.lastKeepalive = Date.now();
     }
   }
 
   private startKeepalive(): void {
     this.stopKeepalive();
-    this.lastKeepalive = Date.now();
+    this.touchKeepalive();
     this.keepaliveTimer = globalThis.setInterval(() => {
-      if (Date.now() - this.lastKeepalive > 11_000) {
+      const idleMs = Date.now() - this.lastKeepalive;
+      if (idleMs > 11_000) {
+        etConnectDebugLog('client.ts:keepalive', 'idle timeout', { idleMs });
         void this.handleConnectionLoss(new Error('ET keepalive timed out'));
         return;
       }
-      void this.sendPacket(TerminalPacketType.KEEP_ALIVE, new Uint8Array()).catch((error) => this.handleConnectionLoss(error));
+      void this.sendPacket(TerminalPacketType.KEEP_ALIVE, new Uint8Array())
+        .then(() => this.touchKeepalive())
+        .catch((error) => this.handleConnectionLoss(error));
     }, 5_000);
   }
 
@@ -395,7 +406,11 @@ export class EtClient {
       this.reconnecting = false;
       return;
     }
-    this.callbacks.onStatus('connecting', message);
+    if (!this.sessionEstablished) {
+      this.callbacks.onStatus('connecting', message);
+    } else {
+      etConnectDebugLog('client.ts:handleConnectionLoss', 'silent reconnect', { message });
+    }
     const delays = [0, 1_000, 2_000, 4_000, 8_000, 10_000];
     let attempt = 0;
     while (!this.stopped) {
@@ -405,6 +420,7 @@ export class EtClient {
       try {
         await this.openWithTimeout();
         this.reconnecting = false;
+        this.sessionEstablished = true;
         this.callbacks.onStatus('connected');
         this.startKeepalive();
         void this.readLoop();
