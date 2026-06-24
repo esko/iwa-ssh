@@ -456,6 +456,15 @@ export async function deleteKnownHost(host: string, port: number): Promise<void>
   await db.delete('knownHosts', knownHostKey(host, port));
 }
 
+/** Remove every trusted host key from IndexedDB. Returns the number cleared. */
+export async function clearKnownHosts(): Promise<number> {
+  const db = await getDb();
+  const all = await db.getAll('knownHosts');
+  if (all.length === 0) return 0;
+  await db.clear('knownHosts');
+  return all.length;
+}
+
 export async function putSavedPassword(record: SavedPasswordRecord): Promise<void> {
   await (await getDb()).put('savedPasswords', record);
 }

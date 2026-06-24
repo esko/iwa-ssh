@@ -1,8 +1,9 @@
 import type { Identity, Profile } from '../settings/types';
-import { deleteIdentity, deleteProfile, forgetEtSession, getEtSession, getProfile, listEtSessionSummaries, listIdentities, listProfiles, purgeStaleEtSessions, saveIdentity, saveProfile, type EtSessionSummary } from '../storage/indexedDb';
+import { deleteIdentity, deleteProfile, forgetEtSession, getEtSession, getProfile, listEtSessionSummaries, listIdentities, listKnownHosts, listProfiles, purgeStaleEtSessions, saveIdentity, saveProfile, type EtSessionSummary } from '../storage/indexedDb';
 import { encryptPrivateKey } from '../security/KeyCrypto';
 import { credentialVault } from '../security/credentialVault';
 import { cacheIdentityPassphrase } from '../ssh/IdentityPassphrase';
+import { wipeTrustedHostKeys } from '../ssh/nasshKnownHosts';
 import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
 import { ResttyTerminalAdapter, type ResttyPaneSink } from './resttyAdapter';
@@ -1546,8 +1547,16 @@ README  <span style="color:${p.magenta}">.env</span></span>`;
 }
 
 async function renderAboutTab(body: HTMLElement): Promise<void> {
-  body.innerHTML = '<div class="group-title">Readiness</div><div data-diag></div>';
-  const diag = await readDiagnostics();
+  const gen = body.dataset.gen;
+  const [diag, knownHosts] = await Promise.all([readDiagnostics(), listKnownHosts()]);
+  if (body.dataset.gen !== gen) return;
+
+  body.innerHTML =
+    '<div class="group-title">Readiness</div><div data-diag></div>' +
+    '<div class="group-title" style="margin-top:24px">Trusted host keys</div>' +
+    `<p class="set-hint" style="margin:0 0 12px">${knownHosts.length === 0 ? 'No trusted host keys stored locally.' : `${knownHosts.length} trusted host ${knownHosts.length === 1 ? 'key' : 'keys'} in IndexedDB.`} Clearing forces the fingerprint prompt on the next connect.</p>` +
+    `<div class="actions" style="justify-content:flex-start"><button class="btn-ghost btn-danger" type="button" data-wipe-known-hosts>Clear trusted host keys…</button></div>`;
+
   // Unavailable items get a one-line "why" so the panel isn't a dead end.
   const iwaOnly = 'Available in the installed IWA on ChromeOS.';
   const rows: [string, boolean, string?][] = [
@@ -1565,6 +1574,16 @@ async function renderAboutTab(body: HTMLElement): Promise<void> {
         `<div class="diag-row"><span class="diag-label">${escapeHTML(label)}${!ok && hint ? `<span class="diag-hint">${escapeHTML(hint)}</span>` : ''}</span><span class="${ok ? 'ok' : 'bad'}">${ok ? 'Ready' : 'Unavailable'}</span></div>`,
     )
     .join('');
+
+  body.querySelector<HTMLButtonElement>('[data-wipe-known-hosts]')?.addEventListener('click', () =>
+    openConfirmModal({
+      title: 'Clear trusted host keys',
+      body: 'Remove all trusted host keys from IndexedDB and nassh known_hosts. The next connect to each host will show the fingerprint prompt again.',
+      confirmLabel: 'Clear',
+      danger: true,
+      onConfirm: () => void wipeTrustedHostKeys().then(() => renderAboutTab(body)),
+    }),
+  );
 }
 
 export async function renderTerminal(root: HTMLElement): Promise<void> {

@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   getKnownHost,
+  clearKnownHosts,
   resetIndexedDbConnection,
   saveKnownHost,
 } from '../storage/indexedDb';
@@ -34,5 +35,27 @@ describe('known-host fingerprint storage', () => {
       trustedAt: 123,
     });
     await expect(getKnownHost('server.example', 22)).resolves.toBeUndefined();
+  });
+
+  it('clears every trusted host key', async () => {
+    await saveKnownHost({
+      host: 'a.example',
+      port: 22,
+      keyType: 'ssh-ed25519',
+      fingerprint: 'SHA256:aaa',
+      trustedAt: 1,
+    });
+    await saveKnownHost({
+      host: 'b.example',
+      port: 22,
+      keyType: 'ssh-rsa',
+      fingerprint: 'SHA256:bbb',
+      trustedAt: 2,
+    });
+
+    await expect(clearKnownHosts()).resolves.toBe(2);
+    await expect(getKnownHost('a.example', 22)).resolves.toBeUndefined();
+    await expect(getKnownHost('b.example', 22)).resolves.toBeUndefined();
+    await expect(clearKnownHosts()).resolves.toBe(0);
   });
 });

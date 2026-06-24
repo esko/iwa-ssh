@@ -3,7 +3,7 @@
  */
 
 import { log } from '../debug/logger';
-import { listKnownHosts, saveKnownHost } from '../storage/indexedDb';
+import { clearKnownHosts, listKnownHosts, saveKnownHost } from '../storage/indexedDb';
 import type { KnownHost } from '../settings/types';
 import {
   fingerprintFromOpensshLine,
@@ -51,6 +51,21 @@ export async function stageKnownHostsForNassh(): Promise<void> {
   }
 
   log.knownHosts.info('staged known_hosts for nassh', { lines: lines.length });
+}
+
+/** Empty nassh's ~/.ssh/known_hosts file (including entries not mirrored in app IndexedDB). */
+export async function clearNasshKnownHostsFile(): Promise<void> {
+  const fs = await loadNasshFs();
+  await fs.createDirectory('/.ssh');
+  await fs.writeFile(KNOWN_HOSTS_PATH, new TextEncoder().encode('').buffer);
+  log.knownHosts.info('cleared nassh known_hosts file');
+}
+
+/** Wipe trusted host keys from app IndexedDB and nassh FS. */
+export async function wipeTrustedHostKeys(): Promise<{ indexedDb: number }> {
+  const indexedDb = await clearKnownHosts();
+  await clearNasshKnownHostsFile();
+  return { indexedDb };
 }
 
 async function readKnownHostsFile(): Promise<string> {
