@@ -3,12 +3,13 @@
  */
 
 import { log } from '../debug/logger';
-import { clearKnownHosts, listKnownHosts, saveKnownHost } from '../storage/indexedDb';
+import { clearKnownHosts, getKnownHost, listKnownHosts, saveKnownHost } from '../storage/indexedDb';
 import type { KnownHost } from '../settings/types';
 import {
   fingerprintFromOpensshLine,
   formatKnownHostTarget,
   knownHostLineMatchesTarget,
+  knownHostLinesForSync,
   knownHostLinesForTarget,
   parseKnownHostsLine,
 } from './knownHostFormat';
@@ -47,14 +48,16 @@ export async function stageKnownHostsForNassh(): Promise<void> {
   const fs = await loadNasshFs();
   await fs.createDirectory('/.ssh');
 
-  const content = lines.length === 0 ? '' : `${lines.join('\n')}\n`;
-  await fs.writeFile(KNOWN_HOSTS_PATH, new TextEncoder().encode(content).buffer);
   await stageEmptyKnownHosts2(fs);
 
   if (lines.length === 0) {
-    log.knownHosts.info('cleared nassh known_hosts (no trusted hosts)');
+    // Preserve keys OpenSSH wrote during an earlier hop in this session (ET preflight).
+    log.knownHosts.info('no IndexedDB known_hosts lines to stage; preserving nassh known_hosts file');
     return;
   }
+
+  const content = `${lines.join('\n')}\n`;
+  await fs.writeFile(KNOWN_HOSTS_PATH, new TextEncoder().encode(content).buffer);
 
   log.knownHosts.info('staged known_hosts for nassh', { lines: lines.length });
 }
@@ -92,7 +95,7 @@ export async function syncKnownHostsFromNassh(host: string, port: number): Promi
   const fileText = await readKnownHostsFile();
   if (!fileText.trim()) return;
 
-  const matches = knownHostLinesForTarget(fileText, host, port);
+  const matches = knownHostLinesForSync(fileText, host, port);
   if (matches.length === 0) return;
 
   const latest = matches[matches.length - 1]!;
@@ -151,6 +154,14 @@ export async function removeKnownHostLinesFromNassh(host: string, port: number):
     removed,
   });
   return removed;
+}
+
+/** True when IndexedDB or nassh FS already has a key for this target. */
+export async function isKnownHostReadyForConnect(host: string, port: number): Promise<boolean> {
+  const stored = await getKnownHost(host, port);
+  if (stored?.opensshLine?.trim()) return true;
+  const fileText = await readKnownHostsFile();
+  return knownHostLinesForSync(fileText, host, port).length > 0;
 }
 
 /** Merge a newly trusted line into nassh FS (append if missing). */

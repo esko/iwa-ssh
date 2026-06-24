@@ -97,3 +97,21 @@ export function knownHostLinesForTarget(
 
   return results;
 }
+
+/**
+ * Resolve known_hosts lines to sync for a profile target. OpenSSH may record a
+ * resolved IP (192.168.1.60) while the profile uses a hostname (mini.local).
+ */
+export function knownHostLinesForSync(
+  fileText: string,
+  host: string,
+  port: number,
+): ParsedKnownHostLine[] {
+  const exact = knownHostLinesForTarget(fileText, host, port);
+  if (exact.length > 0) return exact;
+  const all = fileText
+    .split(/\r?\n/)
+    .map((line) => parseKnownHostsLine(line))
+    .filter((line): line is ParsedKnownHostLine => line !== null);
+  return all.length === 1 ? all : [];
+}

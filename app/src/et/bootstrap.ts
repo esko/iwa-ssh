@@ -2,6 +2,7 @@ import type { TerminalSink, TerminalSubscription, TerminalViewport } from '../te
 import { NasshCommandBridge } from '../ssh/NasshCommandBridge';
 import { saveEtSession, type EtSessionRecord } from '../storage/indexedDb';
 import type { ConnectionIntent } from '../connections/ConnectionIntent';
+import { isKnownHostReadyForConnect } from '../ssh/nasshKnownHosts';
 import { wrapEtPasskey } from './sessionStore';
 import { buildEtBootstrapCommand } from './bootstrapCommand';
 
@@ -93,6 +94,34 @@ function etBootstrapDebugLog(
 }
 // #endregion
 
+async function runEtBootstrapPreflight(spec: ConnectionIntent): Promise<void> {
+  const host = spec.hostname;
+  const port = spec.port ?? 22;
+  if (await isKnownHostReadyForConnect(host, port)) {
+    etBootstrapDebugLog('bootstrap.ts:preflight', 'skipped; host key already staged', { host, port }, 'B');
+    return;
+  }
+  etBootstrapDebugLog('bootstrap.ts:preflight', 'shell SSH hop for host-key trust', { host, port }, 'B');
+  const terminal = new CaptureTerminal();
+  const bridge = new NasshCommandBridge({
+    protocol: 'ssh',
+    host,
+    port,
+    username: spec.username ?? '',
+    identityId: spec.identityId,
+    connectionArgs: spec.argstr,
+    allowHostKeyTtyResponse: false,
+  });
+  bridge.attachTerminal(terminal);
+  try {
+    await bridge.connect();
+  } finally {
+    await bridge.disconnect().catch(() => undefined);
+    bridge.dispose();
+    terminal.dispose();
+  }
+}
+
 export async function createEtSession(spec: ConnectionIntent): Promise<string> {
   const clientId = randomText(16);
   const passkey = randomText(32);
@@ -129,6 +158,8 @@ export async function createEtSession(spec: ConnectionIntent): Promise<string> {
   };
   await saveEtSession(record);
   void navigator.storage?.persist?.().catch(() => false);
+
+  await runEtBootstrapPreflight(spec);
 
   const terminal = new CaptureTerminal();
   const expected = `IDPASSKEY:${clientId}/${passkey}`;
