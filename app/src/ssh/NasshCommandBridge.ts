@@ -40,6 +40,8 @@ export type NasshCommandBridgeOptions = {
   identityId?: string;
   connectionArgs?: string;
   startupCommand?: string;
+  /** Host-key trust via secureInput only (avoids TTY yes corrupting remote commands). */
+  allowHostKeyTtyResponse?: boolean;
   onStatus?: (status: ConnectionStatus, error?: string, meta?: SessionStatusMeta) => void;
 };
 
@@ -174,6 +176,7 @@ export class NasshCommandBridge {
       onSessionTrust: (fingerprint) => {
         this.sessionTrustedFingerprints.add(fingerprint);
       },
+      allowTtyResponse: this.options.allowHostKeyTtyResponse,
     });
 
     this.ioShim = new NasshIoShim(this.adapter, {

@@ -44,7 +44,9 @@ class CaptureTerminal implements TerminalSink {
 const BENIGN_SSH_NOISE =
   /^(?:hostfile_replace_entries|hostkeys_foreach|update_known_hosts|Warning: Permanently added)\b.*$/gim;
 
-const ET_BOOTSTRAP_FAILURE = /command not found|No such file|Error connecting to router|\bFATAL\b/i;
+/** Match etterminal/etserver failures, not generic OpenSSH "No such file" housekeeping. */
+const ET_BOOTSTRAP_FAILURE =
+  /(?:^|\n)(?:Error:\s*)?(?:Connection error communicating with et daemon|Error connecting to router)|(?:^|\n)(?:env:|sh:)\s*[^\n]*etterminal[^\n]*(?:not found|No such file)|command not found|\bFATAL\b/i;
 
 /** True when the captured SSH output indicates the etterminal bootstrap failed. */
 export function isEtBootstrapFailure(output: string): boolean {
@@ -57,8 +59,39 @@ function bootstrapError(output: string, clientId: string, passkey: string): Erro
     .replaceAll(passkey, '[passkey]')
     .trim()
     .slice(-2000);
-  return new Error(redacted ? `etterminal registration failed:\n${redacted}` : 'Timed out waiting for etterminal registration');
+  const hint = /Connection error communicating with et daemon/i.test(redacted)
+    ? '\n\nEnsure etserver is running on the remote host (e.g. brew services start et).'
+    : '';
+  return new Error(
+    redacted
+      ? `etterminal registration failed:\n${redacted}${hint}`
+      : 'Timed out waiting for etterminal registration',
+  );
 }
+
+// #region agent log
+function etBootstrapDebugLog(
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+  hypothesisId: string,
+): void {
+  fetch('http://127.0.0.1:7869/ingest/5b03efa9-2224-4a73-9a56-c6a816107ee6', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a26731' },
+    body: JSON.stringify({
+      sessionId: 'a26731',
+      location,
+      message,
+      data,
+      hypothesisId,
+      timestamp: Date.now(),
+      runId: 'et-bootstrap',
+    }),
+  }).catch(() => {});
+  console.info('[iwa-ssh et-debug]', location, message, data);
+}
+// #endregion
 
 export async function createEtSession(spec: ConnectionIntent): Promise<string> {
   const clientId = randomText(16);
@@ -108,11 +141,24 @@ export async function createEtSession(spec: ConnectionIntent): Promise<string> {
   });
   const timeout = window.setTimeout(() => rejectOutput(bootstrapError(terminal.getOutput(), clientId, passkey)), 30_000);
   const subscription = terminal.onOutput((output) => {
-    if (output.includes(expected)) resolveOutput();
-    else if (isEtBootstrapFailure(output)) {
+    if (output.includes(expected)) {
+      etBootstrapDebugLog('bootstrap.ts:onOutput', 'IDPASSKEY seen', { outputLen: output.length }, 'D');
+      resolveOutput();
+    } else if (isEtBootstrapFailure(output)) {
+      etBootstrapDebugLog('bootstrap.ts:onOutput', 'bootstrap failure pattern', {
+        outputLen: output.length,
+        hasLeadingYes: /^\s*yes\s*$/m.test(output),
+        hasEtDaemonError: /Connection error communicating with et daemon/i.test(output),
+        tail: output.slice(-500),
+      }, 'A');
       rejectOutput(bootstrapError(output, clientId, passkey));
     }
   });
+  etBootstrapDebugLog('bootstrap.ts:createEtSession', 'starting ET bootstrap SSH', {
+    host: spec.hostname,
+    port: spec.port ?? 22,
+    allowHostKeyTtyResponse: false,
+  }, 'D');
   const bridge = new NasshCommandBridge({
     protocol: 'ssh',
     host: spec.hostname,
@@ -121,6 +167,9 @@ export async function createEtSession(spec: ConnectionIntent): Promise<string> {
     identityId: spec.identityId,
     connectionArgs: spec.argstr,
     startupCommand: command,
+    // ET bootstrap pipes registration into etterminal stdin; a TTY "yes" from
+    // HostKeyGuard corrupts that pipe (regression from host-key TTY injection).
+    allowHostKeyTtyResponse: false,
   });
   bridge.attachTerminal(terminal);
   try {

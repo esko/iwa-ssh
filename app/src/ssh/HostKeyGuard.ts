@@ -23,6 +23,8 @@ export type HostKeyGuardOptions = {
   isSessionTrusted?: (fingerprint: string) => boolean;
   /** Trust for this session only (no IndexedDB write). */
   onSessionTrust?: (fingerprint: string) => void;
+  /** When false, host-key decisions only go through secureInput (never TTY injection). */
+  allowTtyResponse?: boolean;
 };
 
 export class HostKeyGuard {
@@ -201,11 +203,15 @@ export class HostKeyGuard {
         this.resolvedFingerprints.add(fingerprint);
         this.lastHostKeyOffer = null;
       }
-      if (!pending.consumedBySecureInput) this.options.sendResponse(`${response}\n`);
+      if (!pending.consumedBySecureInput && this.options.allowTtyResponse !== false) {
+        this.options.sendResponse(`${response}\n`);
+      }
       if (response === 'no') this.options.onDenied?.();
     } catch (error) {
       log.knownHosts.error('host key prompt failed', { error });
-      if (!pending.consumedBySecureInput) this.options.sendResponse('no\n');
+      if (!pending.consumedBySecureInput && this.options.allowTtyResponse !== false) {
+        this.options.sendResponse('no\n');
+      }
       this.options.onDenied?.();
     } finally {
       if (this.pendingPrompt === pending) this.pendingPrompt = null;

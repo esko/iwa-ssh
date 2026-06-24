@@ -205,4 +205,20 @@ describe('HostKeyGuard', () => {
     expect(sendResponse).not.toHaveBeenCalled();
     expect(ensureHostTrusted).toHaveBeenCalledTimes(1);
   });
+
+  it('does not inject tty yes when allowTtyResponse is false', async () => {
+    let decide!: (choice: 'once' | 'always' | 'trusted') => void;
+    ensureHostTrusted.mockReturnValueOnce(new Promise<'once' | 'always' | 'trusted'>((resolve) => { decide = resolve; }));
+    const sendResponse = vi.fn();
+    const guard = new HostKeyGuard({
+      host: 'target',
+      port: 22,
+      sendResponse,
+      allowTtyResponse: false,
+    });
+    const handling = guard.handleOutput(prompt('target', 'SHA256:no-tty'));
+    decide('once');
+    await handling;
+    expect(sendResponse).not.toHaveBeenCalled();
+  });
 });

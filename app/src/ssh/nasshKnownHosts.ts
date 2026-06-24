@@ -33,6 +33,11 @@ async function loadNasshFs() {
 }
 
 const KNOWN_HOSTS_PATH = '/.ssh/known_hosts';
+const KNOWN_HOSTS2_PATH = '/.ssh/known_hosts2';
+
+async function stageEmptyKnownHosts2(fs: Awaited<ReturnType<typeof loadNasshFs>>): Promise<void> {
+  await fs.writeFile(KNOWN_HOSTS2_PATH, new TextEncoder().encode('').buffer);
+}
 
 /** Write trusted hosts (with opensshLine) into nassh FS before connect. */
 export async function stageKnownHostsForNassh(): Promise<void> {
@@ -44,6 +49,7 @@ export async function stageKnownHostsForNassh(): Promise<void> {
 
   const content = lines.length === 0 ? '' : `${lines.join('\n')}\n`;
   await fs.writeFile(KNOWN_HOSTS_PATH, new TextEncoder().encode(content).buffer);
+  await stageEmptyKnownHosts2(fs);
 
   if (lines.length === 0) {
     log.knownHosts.info('cleared nassh known_hosts (no trusted hosts)');
@@ -58,6 +64,7 @@ export async function clearNasshKnownHostsFile(): Promise<void> {
   const fs = await loadNasshFs();
   await fs.createDirectory('/.ssh');
   await fs.writeFile(KNOWN_HOSTS_PATH, new TextEncoder().encode('').buffer);
+  await stageEmptyKnownHosts2(fs);
   log.knownHosts.info('cleared nassh known_hosts file');
 }
 
