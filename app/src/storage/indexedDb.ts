@@ -403,6 +403,55 @@ export async function forgetEtSession(id: string): Promise<void> {
   await tx.done;
 }
 
+export type EtLocalDataSummary = {
+  sessions: number;
+  outboundFrames: number;
+  journalChunks: number;
+  hasDeviceKey: boolean;
+};
+
+export async function summarizeEtLocalData(): Promise<EtLocalDataSummary> {
+  const db = await getDb();
+  const [sessions, outboundFrames, journalChunks, deviceKey] = await Promise.all([
+    db.getAll('etSessions'),
+    db.getAll('etOutboundFrames'),
+    db.getAll('etJournal'),
+    db.get('etMeta', 'device-key'),
+  ]);
+  return {
+    sessions: sessions.length,
+    outboundFrames: outboundFrames.length,
+    journalChunks: journalChunks.length,
+    hasDeviceKey: Boolean(deviceKey),
+  };
+}
+
+/**
+ * Remove every ET session, recovery journal, wrapped passkey, and the local
+ * device encryption key. Also clears saved SSH passwords and the master-password
+ * vault because they are sealed with the same device key.
+ */
+export async function purgeAllEtLocalData(): Promise<{ sessions: number; savedPasswords: number }> {
+  const db = await getDb();
+  const [sessions, savedPasswords] = await Promise.all([
+    db.getAll('etSessions'),
+    db.getAll('savedPasswords'),
+  ]);
+  const tx = db.transaction(
+    ['etSessions', 'etOutboundFrames', 'etJournal', 'etMeta', 'savedPasswords', 'vaultMeta'],
+    'readwrite',
+  );
+  await tx.objectStore('etSessions').clear();
+  await tx.objectStore('etOutboundFrames').clear();
+  await tx.objectStore('etJournal').clear();
+  await tx.objectStore('etMeta').delete('device-key');
+  await tx.objectStore('savedPasswords').clear();
+  await tx.objectStore('vaultMeta').clear();
+  await tx.done;
+  deviceKeyPromise = null;
+  return { sessions: sessions.length, savedPasswords: savedPasswords.length };
+}
+
 /** Drop recovery rows for a session without deleting the session record itself. */
 export async function clearEtSessionRecovery(sessionId: string): Promise<EtSessionRecord | undefined> {
   const db = await getDb();

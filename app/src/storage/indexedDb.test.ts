@@ -5,9 +5,12 @@ import {
   getEtDeviceKey,
   getEtSession,
   listProfiles,
+  purgeAllEtLocalData,
+  putSavedPassword,
   resetIndexedDbConnection,
   saveEtOutboundFrame,
   saveEtSession,
+  summarizeEtLocalData,
   type EtSessionRecord,
 } from './indexedDb';
 import { checkpointEtOutput, flushEtSessionCheckpoint, prepareEtSessionForConnect, resetSessionCheckpointFlushes } from '../et/sessionStore';
@@ -158,5 +161,30 @@ describe('IndexedDB v2 Eternal Terminal state', () => {
     await expect(
       saveEtOutboundFrame({ sessionId: 'local-session', sequence: 1, bytes: new Uint8Array([2]), size: 1 }),
     ).resolves.toMatchObject({ txSequence: 1 });
+  });
+
+  it('purgeAllEtLocalData clears ET stores, device key, and saved passwords', async () => {
+    await saveEtSession(record());
+    await saveEtOutboundFrame({ sessionId: 'local-session', sequence: 1, bytes: new Uint8Array([1]), size: 1 });
+    await getEtDeviceKey();
+    await putSavedPassword({
+      credentialKey: 'user@host:22',
+      username: 'user',
+      host: 'host',
+      port: 22,
+      iv: new Uint8Array(12),
+      ciphertext: new ArrayBuffer(4),
+      savedAt: Date.now(),
+    });
+    const removed = await purgeAllEtLocalData();
+    expect(removed).toEqual({ sessions: 1, savedPasswords: 1 });
+    expect(await summarizeEtLocalData()).toEqual({
+      sessions: 0,
+      outboundFrames: 0,
+      journalChunks: 0,
+      hasDeviceKey: false,
+    });
+    const nextKey = await getEtDeviceKey();
+    expect(nextKey).toBeTruthy();
   });
 });

@@ -51,7 +51,7 @@ import type { PwaTerminalSettings, RecentConnection, TerminalPalette, TerminalTr
 import type { SessionStatusMeta } from '../settings/types';
 import { resolveConnectionIntent, type ConnectionIntent, type LaunchConnectionIntent } from '../connections/ConnectionIntent';
 import { parseTerminalConnectionCommand } from '../connections/sshCommandParser';
-import { readClipboardPaste } from './clipboardMedia';
+import { purgeAllEtLocalData, readEtLocalDataSummary } from '../et/purgeLocalData';
 import { shellQuotePath } from '../ssh/RemoteImageUploader';
 
 // `active*` always point at the focused tab's session, so the existing helpers
@@ -1199,7 +1199,11 @@ function renderSettingsTab(body: HTMLElement, tab: SettingsTab, profileId: strin
  */
 async function renderSecurityTab(body: HTMLElement): Promise<void> {
   const gen = body.dataset.gen;
-  const [hasMaster, locked] = await Promise.all([credentialVault.hasMasterPassword(), credentialVault.isLocked()]);
+  const [hasMaster, locked, etLocal] = await Promise.all([
+    credentialVault.hasMasterPassword(),
+    credentialVault.isLocked(),
+    readEtLocalDataSummary(),
+  ]);
   if (body.dataset.gen !== gen) return;
   const rerender = (): void => void renderSecurityTab(body);
 
@@ -1217,12 +1221,23 @@ async function renderSecurityTab(body: HTMLElement): Promise<void> {
         <button class="btn-ghost btn-danger" type="button" data-remove>Remove master password…</button>
       `;
 
+  const etSummary = etLocal.sessions === 0 && !etLocal.hasDeviceKey
+    ? 'No Eternal Terminal sessions or local ET keys stored.'
+    : `${etLocal.sessions} ET ${etLocal.sessions === 1 ? 'session' : 'sessions'}`
+      + (etLocal.outboundFrames || etLocal.journalChunks
+        ? `, ${etLocal.outboundFrames} recovery ${etLocal.outboundFrames === 1 ? 'frame' : 'frames'}, ${etLocal.journalChunks} journal ${etLocal.journalChunks === 1 ? 'chunk' : 'chunks'}`
+        : '')
+      + (etLocal.hasDeviceKey ? ', local device key present' : '');
+
   body.innerHTML =
     `<div class="group-title">Saved passwords</div>` +
     setRow('Master password', `<span class="set-state${locked ? ' is-warn' : ''}">${hasMaster ? (locked ? 'Locked' : 'Set') : 'Not set'}</span>`,
       'An extra password that encrypts every saved SSH password on this device.') +
     `<p class="set-hint" style="margin:0 0 16px">${escapeHTML(status)}</p>` +
-    `<div class="actions" style="justify-content:flex-start;gap:10px">${buttons}</div>`;
+    `<div class="actions" style="justify-content:flex-start;gap:10px;margin-bottom:28px">${buttons}</div>` +
+    `<div class="group-title">Eternal Terminal</div>` +
+    `<p class="set-hint" style="margin:0 0 12px">${escapeHTML(etSummary)}. Clearing removes resumable ET sessions, recovery journals, wrapped passkeys, and the local device encryption key. Saved SSH passwords and the master-password vault are cleared too because they use the same key. ET connection profiles stay; remote shells may keep running on the server.</p>` +
+    `<div class="actions" style="justify-content:flex-start"><button class="btn-ghost btn-danger" type="button" data-purge-et${etLocal.sessions === 0 && !etLocal.hasDeviceKey ? ' disabled' : ''}>Delete all ET sessions and keys…</button></div>`;
 
   body.querySelector<HTMLButtonElement>('[data-set]')?.addEventListener('click', () =>
     openMasterPasswordModal({ mode: 'set', onDone: rerender }));
@@ -1234,6 +1249,15 @@ async function renderSecurityTab(body: HTMLElement): Promise<void> {
   });
   body.querySelector<HTMLButtonElement>('[data-remove]')?.addEventListener('click', () =>
     openMasterPasswordModal({ mode: 'remove', onDone: rerender }));
+  body.querySelector<HTMLButtonElement>('[data-purge-et]')?.addEventListener('click', () =>
+    openConfirmModal({
+      title: 'Delete all ET sessions and keys',
+      body: 'Remove every Eternal Terminal session, recovery journal, wrapped passkey, and the local device encryption key from this device. Saved SSH passwords and the master-password vault are cleared too. Close open ET sessions first. Remote shells may keep running on the server.',
+      confirmLabel: 'Delete all',
+      danger: true,
+      onConfirm: () => void purgeAllEtLocalData().then(() => rerender()),
+    }),
+  );
 }
 
 /**
