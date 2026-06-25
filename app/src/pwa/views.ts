@@ -52,6 +52,7 @@ import type { SessionStatusMeta } from '../settings/types';
 import { resolveConnectionIntent, type ConnectionIntent, type LaunchConnectionIntent } from '../connections/ConnectionIntent';
 import { parseTerminalConnectionCommand } from '../connections/sshCommandParser';
 import { purgeAllEtLocalData, readEtLocalDataSummary } from '../et/purgeLocalData';
+import { readClipboardPaste } from './clipboardMedia';
 import { shellQuotePath } from '../ssh/RemoteImageUploader';
 
 // `active*` always point at the focused tab's session, so the existing helpers
