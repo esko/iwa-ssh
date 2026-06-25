@@ -95,6 +95,68 @@ describe('EtClient live terminal latency', () => {
     }
   });
 
+  it('monotonic-merges stale outbound persistence records into live session state', async () => {
+    await sodium.ready;
+    const current = {
+      ...session(),
+      rxSequence: 2,
+      txSequence: 1,
+      txAcknowledged: 1,
+      outboundBytes: 10,
+      journalBytes: 20,
+    };
+    mocks.save
+      .mockResolvedValueOnce({
+        ...current,
+        rxSequence: 0,
+        txSequence: 2,
+        txAcknowledged: 0,
+        outboundBytes: 1,
+        journalBytes: 0,
+      })
+      .mockResolvedValueOnce({
+        ...current,
+        rxSequence: 0,
+        txSequence: 3,
+        txAcknowledged: 0,
+        outboundBytes: 2,
+        journalBytes: 0,
+      });
+    const client = new (EtClient as unknown as new (
+      session: EtSessionRecord,
+      passkey: string,
+      callbacks: { onOutput(): void; onStatus(): void; onStale(): void },
+    ) => EtClient)(current, '12345678901234567890123456789012', {
+      onOutput() {}, onStatus() {}, onStale() {},
+    });
+    const write = vi.fn(async () => undefined);
+    const internals = client as unknown as {
+      session: EtSessionRecord;
+      inboundDecryptSequence: number;
+      outboundSendSequence: number;
+      writer: { write: typeof write };
+    };
+    internals.inboundDecryptSequence = current.rxSequence;
+    internals.outboundSendSequence = current.txSequence;
+    internals.writer = { write };
+
+    await client.sendInput('a');
+
+    expect(mocks.save.mock.calls[0]?.[0]).toMatchObject({ sequence: 2 });
+    expect(internals.session).toMatchObject({
+      rxSequence: 2,
+      txSequence: 2,
+      txAcknowledged: 1,
+      outboundBytes: 10,
+      journalBytes: 20,
+    });
+
+    await client.sendInput('b');
+
+    expect(mocks.save.mock.calls[1]?.[0]).toMatchObject({ sequence: 3 });
+    expect(internals.session).toMatchObject({ rxSequence: 2, txSequence: 3 });
+  });
+
   it('answers Kitty probes in the worker before forwarding output to Restty', async () => {
     await sodium.ready;
     let releaseCheckpoint!: (value: EtSessionRecord) => void;

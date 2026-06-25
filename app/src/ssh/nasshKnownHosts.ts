@@ -10,7 +10,6 @@ import {
   formatKnownHostTarget,
   knownHostLineMatchesTarget,
   knownHostLinesForSync,
-  knownHostLinesForTarget,
   parseKnownHostsLine,
 } from './knownHostFormat';
 import { upstreamImport } from './upstreamUrls';

@@ -381,10 +381,9 @@ export class EtClient {
       throw error;
     }
     try {
-      this.session = await persistence;
+      this.applySession(await persistence);
     } catch (error) {
       this.outboundSendSequence = sequence - 1;
-      // #region agent log
       const message = error instanceof Error ? error.message : String(error);
       etConnectDebugLog('client.ts:sendPacketNow', 'outbound persistence failed; rolled back sequence', {
         sequence,
@@ -393,8 +392,6 @@ export class EtClient {
         sessionHintTx: sessionHint.txSequence,
         error: message,
       });
-      fetch('http://127.0.0.1:7869/ingest/5b03efa9-2224-4a73-9a56-c6a816107ee6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a26731'},body:JSON.stringify({sessionId:'a26731',location:'client.ts:sendPacketNow',message:'outbound persistence failed',data:{sequence,outboundSendSequence:this.outboundSendSequence,txSequence:this.session.txSequence,sessionHintTx:sessionHint.txSequence,error:message},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
       throw error;
     }
   }

@@ -27,6 +27,12 @@ export type HostKeyGuardOptions = {
   allowTtyResponse?: boolean;
 };
 
+type PendingHostKeyPrompt = {
+  response: Promise<'yes' | 'no'>;
+  consumedBySecureInput: boolean;
+  fingerprint: string;
+};
+
 export class HostKeyGuard {
   private parser = new HostKeyParser();
   private promptInFlight = false;
@@ -36,11 +42,7 @@ export class HostKeyGuard {
   private lastHostKeyOffer: { fingerprint: string; keyType: string } | null = null;
   /** Fingerprints already answered this connection (prevents secureInput + tty double-yes). */
   private resolvedFingerprints = new Set<string>();
-  private pendingPrompt: {
-    response: Promise<'yes' | 'no'>;
-    consumedBySecureInput: boolean;
-    fingerprint: string;
-  } | null = null;
+  private pendingPrompt: PendingHostKeyPrompt | null = null;
   private pendingPromptWaiters: Array<() => void> = [];
 
   constructor(private readonly options: HostKeyGuardOptions) {}
@@ -57,10 +59,14 @@ export class HostKeyGuard {
     this.outputQueue = Promise.resolve();
   }
 
-  private registerPendingPrompt(pending: NonNullable<HostKeyGuard['pendingPrompt']>): void {
+  private registerPendingPrompt(pending: PendingHostKeyPrompt): void {
     this.pendingPrompt = pending;
     for (const wake of this.pendingPromptWaiters) wake();
     this.pendingPromptWaiters = [];
+  }
+
+  private getPendingPrompt(): PendingHostKeyPrompt | null {
+    return this.pendingPrompt;
   }
 
   private waitForPendingPromptRegistration(): Promise<void> {
@@ -89,12 +95,12 @@ export class HostKeyGuard {
       }
       const handled = this.handleOutput(prompt);
       await Promise.race([this.waitForPendingPromptRegistration(), handled]);
-      const pending = this.pendingPrompt;
+      const pending = this.getPendingPrompt();
       if (!pending) {
         const fallback = this.lastHostKeyOffer ?? fallbackHostKeyOffer(prompt);
         if (!fallback || this.resolvedFingerprints.has(fallback.fingerprint)) return null;
-        this.registerHostKeyPrompt(fallback);
-        const registered = this.pendingPrompt;
+        void this.registerHostKeyPrompt(fallback);
+        const registered = this.getPendingPrompt();
         if (!registered) return null;
         registered.consumedBySecureInput = true;
         return registered.response;

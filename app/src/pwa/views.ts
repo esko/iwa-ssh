@@ -920,7 +920,9 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
     // host (and is the Enter-key default), while "Connect" launches a throwaway
     // session that records to history but never becomes a saved host. Editing an
     // existing host always saves.
+    let submitting = false;
     const submitForm = async (save: boolean): Promise<void> => {
+      if (submitting) return;
       const data = new FormData(form);
       const host = String(data.get('host') ?? '').trim();
       const user = String(data.get('user') ?? '').trim();
@@ -942,6 +944,7 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
       }
 
       errEl.hidden = true;
+      submitting = true;
       submitBtn.disabled = true;
       if (caretBtn) caretBtn.disabled = true;
       submitBtn.textContent = existing ? 'Saving…' : 'Connecting…';
@@ -972,15 +975,18 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
             close();
             await opts.onSaved?.();
           } else {
+            close();
             navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
           }
         } else {
           // Throwaway: launch with an intent that carries no profileId, so it is
           // recorded in recents but never written to the saved-hosts store.
           const intent: ConnectionIntent = { protocol, username: user, hostname: host, port, etPort, identityId, settingsProfileId, args: [] };
+          close();
           navigate(`/terminal.html?${specToQuery(intent)}`);
         }
       } catch (error) {
+        submitting = false;
         submitBtn.disabled = false;
         if (caretBtn) caretBtn.disabled = false;
         submitBtn.textContent = existing ? 'Save' : 'Connect & Save';
