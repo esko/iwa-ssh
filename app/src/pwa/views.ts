@@ -1797,7 +1797,15 @@ async function openPaneConn(session: TermSession, sink: ResttyPaneSink): Promise
     ),
   };
   session.panes.set(sink.paneId, conn);
-  await conn.transport.connect(sink);
+  try {
+    await conn.transport.connect(sink);
+  } catch {
+    // The transport already surfaced the failure through onStatus()/the
+    // terminal. A dispose() while this pane is still connecting (e.g. the tab
+    // was closed mid-resume) also rejects here; swallow it so it does not
+    // become an unhandled rejection ("ET worker controller was disposed.").
+    return;
+  }
   if (session.panes.size === 1) session.resumeEtSessionId = conn.transport.getPersistentSessionId?.();
   saveTabLayout();
 }
@@ -2781,6 +2789,9 @@ async function reconnect(): Promise<void> {
     session.terminal.write('\x1b[2J\x1b[H');
     await conn.transport.disconnect();
     await conn.transport.connect(conn.sink);
+  } catch {
+    // Failure is already surfaced through onStatus(); callers invoke reconnect()
+    // as a fire-and-forget (void), so don't let a rejection go unhandled.
   } finally {
     conn.reconnecting = false;
   }

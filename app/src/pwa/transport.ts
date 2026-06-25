@@ -192,6 +192,10 @@ export class EtDirectSocketsTransport implements TerminalTransport {
       this.resize?.dispose();
       this.input = null;
       this.resize = null;
+      // A dispose() during connect rejects here as teardown, not a real connect
+      // failure: the terminal is being torn down, so don't write to it or raise
+      // an error status. Still reject so the caller's await unwinds.
+      if (this.disposed) throw error;
       const message = error instanceof Error ? error.message : String(error);
       adapter.write(`\r\n\x1b[33m${message}\x1b[0m\r\n`);
       this.onStatus('error', message);

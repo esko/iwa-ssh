@@ -2,6 +2,7 @@
 
 import { EtClient } from './client';
 import { EtWorkerInputGate } from './workerInput';
+import { startEtClientSession } from './workerSession';
 import type { EtWorkerEvent, EtWorkerRequest } from './workerMessages';
 
 const scope = self as DedicatedWorkerGlobalScope;
@@ -24,10 +25,9 @@ scope.onmessage = (event: MessageEvent<EtWorkerRequest>) => {
       onOutput: (data) => post({ type: 'output', data }),
       onStatus: (status, error) => post({ type: 'status', status, error }),
       onStale: () => post({ type: 'stale' }),
-    }).then(async (created) => {
+    }).then((created) => {
       client = created;
-      await inputGate.attach(created, reportInputError);
-      await created.connect();
+      return startEtClientSession(created, inputGate, reportInputError);
     }).catch((error) => post({ type: 'error', error: error instanceof Error ? error.message : String(error) }));
     return;
   }
