@@ -94,6 +94,7 @@ export class EtClient {
   private lastKeepalive = 0;
   private sendQueue: Promise<void> = Promise.resolve();
   private inboundQueue: Promise<void> = Promise.resolve();
+  private inboundCheckpoint: Promise<void> = Promise.resolve();
   private readonly queryScanner = new TerminalQueryScanner();
 
   private constructor(session: EtSessionRecord, passkey: string, callbacks: EtClientCallbacks) {
@@ -267,6 +268,7 @@ export class EtClient {
     await this.write(frameHandshake(catchup));
     const incoming = fromBinary(CatchupBufferSchema, await this.reader.handshake());
     for (const bytes of incoming.buffer) await this.acceptEncryptedPacket(parseCatchupPacket(bytes));
+    await this.drainInboundCheckpoint();
   }
 
   private async sendPacket(type: number, plaintext: Uint8Array): Promise<void> {
@@ -295,6 +297,18 @@ export class EtClient {
 
   private async drainInboundQueue(): Promise<void> {
     await this.inboundQueue.catch(() => undefined);
+  }
+
+  private queueInboundCheckpoint(checkpoint: Promise<EtSessionRecord>): void {
+    const run = this.inboundCheckpoint.then(async () => {
+      this.applySession(await checkpoint);
+    });
+    this.inboundCheckpoint = run.catch(() => undefined);
+    void run.catch((error) => this.handleConnectionLoss(error));
+  }
+
+  private async drainInboundCheckpoint(): Promise<void> {
+    await this.inboundCheckpoint.catch(() => undefined);
   }
 
   private async sendPacketNow(type: number, plaintext: Uint8Array): Promise<void> {
@@ -373,9 +387,7 @@ export class EtClient {
         await checkpoint.catch(() => undefined);
         throw error;
       }
-      void checkpoint
-        .then((next) => this.applySession(next))
-        .catch((error) => this.handleConnectionLoss(error));
+      this.queueInboundCheckpoint(checkpoint);
     } else {
       this.applySession(await checkpointEtControl(this.session.id, sequence, this.session));
     }
@@ -408,6 +420,7 @@ export class EtClient {
     this.stopKeepalive();
     await this.closeSocket();
     await this.drainInboundQueue();
+    await this.drainInboundCheckpoint();
     const needsResync = /sequence|secret key|authentication/i.test(
       error instanceof Error ? error.message : String(error),
     );

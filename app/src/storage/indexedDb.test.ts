@@ -75,6 +75,14 @@ describe('IndexedDB v2 Eternal Terminal state', () => {
     expect((await getEtSession('local-session'))?.txSequence).toBe(0);
   });
 
+  it('treats duplicate outbound frame keys as idempotent', async () => {
+    await saveEtSession(record());
+    const frame = { sessionId: 'local-session', sequence: 1, bytes: new Uint8Array([1]), size: 1 };
+    await saveEtOutboundFrame(frame);
+    await expect(saveEtOutboundFrame(frame)).resolves.toMatchObject({ txSequence: 1 });
+    await expect(saveEtOutboundFrame({ ...frame, bytes: new Uint8Array([2]) })).resolves.toMatchObject({ txSequence: 1 });
+  });
+
   it('checkpointEtInbound keeps the latest outbound sequence when the session hint is stale', async () => {
     await saveEtSession(record());
     await saveEtOutboundFrame({ sessionId: 'local-session', sequence: 1, bytes: new Uint8Array([1]), size: 1 });

@@ -242,6 +242,21 @@ export async function saveEtOutboundFrame(frame: EtOutboundFrame, rotateOldest =
     await tx.done.catch(() => undefined);
     throw new Error(`ET session ${frame.sessionId} is missing`);
   }
+  const frameStore = tx.objectStore('etOutboundFrames');
+  const frameKey: [string, number] = [frame.sessionId, frame.sequence];
+  const existingFrame = await frameStore.get(frameKey);
+  if (existingFrame) {
+    const next = {
+      ...session,
+      txSequence: Math.max(session.txSequence, frame.sequence),
+      updatedAt: Date.now(),
+    };
+    if (next.txSequence !== session.txSequence) {
+      await tx.objectStore('etSessions').put(next);
+    }
+    await tx.done;
+    return next;
+  }
   if (frame.sequence !== session.txSequence + 1) {
     tx.abort();
     await tx.done.catch(() => undefined);
@@ -253,7 +268,7 @@ export async function saveEtOutboundFrame(frame: EtOutboundFrame, rotateOldest =
     await tx.done.catch(() => undefined);
     throw new Error('ET disconnected input buffer reached 64 MiB');
   }
-  await tx.objectStore('etOutboundFrames').add(frame);
+  await frameStore.add(frame);
   if (rotateOldest) {
     let cursor = await tx.objectStore('etOutboundFrames').index('by-session').openCursor(IDBKeyRange.only(frame.sessionId));
     while (cursor && outboundBytes > 64 * 1024 * 1024) {
@@ -310,6 +325,20 @@ export async function checkpointEtInbound(
     tx.abort();
     await tx.done.catch(() => undefined);
     throw new Error(`ET session ${sessionId} is missing`);
+  }
+  if (chunk) {
+    const key: [string, number] = [chunk.sessionId, chunk.sequence];
+    const existing = await tx.objectStore('etJournal').get(key);
+    if (existing) {
+      const next = {
+        ...stored,
+        rxSequence: Math.max(stored.rxSequence, sequence),
+        updatedAt: Date.now(),
+      };
+      if (!options?.deferSessionPut) await tx.objectStore('etSessions').put(next);
+      await tx.done;
+      return next;
+    }
   }
   const baselineRx = Math.max(stored.rxSequence, options?.sessionHint?.rxSequence ?? -1);
   if (sequence !== baselineRx + 1) {
