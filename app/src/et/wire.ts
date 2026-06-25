@@ -72,7 +72,15 @@ export async function decryptEtPayload(passkey: string, sequence: number, cipher
 
 export class EtStreamReader {
   private readonly reader: ReadableStreamDefaultReader<Uint8Array>;
-  private buffered = new Uint8Array();
+  /**
+   * Unconsumed inbound bytes held as a queue of socket chunks. Earlier this
+   * concatenated everything into one growing `Uint8Array`, which recopied the
+   * whole buffer on every TCP segment and again after every packet — O(n²) on
+   * large output bursts (e.g. `cat` of a big file). Keeping chunks separate and
+   * only copying the exact bytes a read needs makes the hot inbound path O(n).
+   */
+  private chunks: Uint8Array[] = [];
+  private available = 0;
 
   constructor(stream: ReadableStream<Uint8Array>) {
     this.reader = stream.getReader();
@@ -80,17 +88,30 @@ export class EtStreamReader {
 
   async exact(length: number): Promise<Uint8Array> {
     if (length < 0 || length > ET_MAX_MESSAGE) throw new Error(`Invalid ET read length: ${length}`);
-    while (this.buffered.byteLength < length) {
+    while (this.available < length) {
       const { value, done } = await this.reader.read();
       if (done) throw new Error('ET socket closed');
       if (!value?.byteLength) continue;
-      const joined = new Uint8Array(this.buffered.byteLength + value.byteLength);
-      joined.set(this.buffered);
-      joined.set(value, this.buffered.byteLength);
-      this.buffered = joined;
+      this.chunks.push(value);
+      this.available += value.byteLength;
     }
-    const result = this.buffered.slice(0, length);
-    this.buffered = this.buffered.slice(length);
+    const result = new Uint8Array(length);
+    let written = 0;
+    while (written < length) {
+      const chunk = this.chunks[0];
+      const remaining = length - written;
+      if (chunk.byteLength <= remaining) {
+        result.set(chunk, written);
+        written += chunk.byteLength;
+        this.chunks.shift();
+      } else {
+        result.set(chunk.subarray(0, remaining), written);
+        // subarray keeps the leftover as a zero-copy view of the same buffer.
+        this.chunks[0] = chunk.subarray(remaining);
+        written += remaining;
+      }
+    }
+    this.available -= length;
     return result;
   }
 

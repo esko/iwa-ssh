@@ -58,4 +58,29 @@ describe('Eternal Terminal wire protocol', () => {
     expect(packet.type).toBe(2);
     expect([...packet.payload]).toEqual([8, 9]);
   });
+
+  it('reads sequential packets when a single chunk spans a packet boundary', async () => {
+    const first = framePacket({ encrypted: false, type: 1, payload: new Uint8Array([10, 11]) });
+    const second = framePacket({ encrypted: true, type: 2, payload: new Uint8Array([20, 21, 22]) });
+    const both = new Uint8Array(first.byteLength + second.byteLength);
+    both.set(first);
+    both.set(second, first.byteLength);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        // Deliver one TCP chunk that holds the first packet plus part of the
+        // second, then the rest — exercising the zero-copy leftover view.
+        controller.enqueue(both.slice(0, first.byteLength + 3));
+        controller.enqueue(both.slice(first.byteLength + 3));
+        controller.close();
+      },
+    });
+    const reader = new EtStreamReader(stream);
+    const a = await reader.packet();
+    const b = await reader.packet();
+    expect(a.type).toBe(1);
+    expect([...a.payload]).toEqual([10, 11]);
+    expect(b.type).toBe(2);
+    expect(b.encrypted).toBe(true);
+    expect([...b.payload]).toEqual([20, 21, 22]);
+  });
 });
