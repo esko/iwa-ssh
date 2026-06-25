@@ -44,6 +44,11 @@ type SocketConnection = {
   close(): Promise<void>;
 };
 
+type TrafficReadyWaiter = {
+  resolve(): void;
+  reject(error: Error): void;
+};
+
 export type EtClientCallbacks = {
   onOutput(data: Uint8Array): void;
   onStatus(status: 'connecting' | 'connected' | 'disconnected' | 'error', error?: string): void;
@@ -95,6 +100,8 @@ export class EtClient {
   private outboundSendSequence = 0;
   private replayingCatchup = false;
   private reconnectFailures = 0;
+  private userTrafficReady = false;
+  private userTrafficWaiters: TrafficReadyWaiter[] = [];
   private readonly queryScanner = new TerminalQueryScanner();
 
   private constructor(session: EtSessionRecord, passkey: string, callbacks: EtClientCallbacks) {
@@ -113,23 +120,34 @@ export class EtClient {
 
   async connect(): Promise<void> {
     this.stopped = false;
+    this.resetUserTrafficReady();
     this.syncInboundDecryptSequence();
     this.syncOutboundSendSequence();
     this.callbacks.onStatus('connecting');
     try {
       await this.openWithTimeout();
       this.sessionEstablished = true;
+      this.markUserTrafficReady();
       this.callbacks.onStatus('connected');
       this.startKeepalive();
       void this.readLoop();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (this.session.phase === 'stale') {
+        this.rejectUserTrafficWaiters(error instanceof Error ? error : new Error(message));
+        return;
+      }
+      this.rejectUserTrafficWaiters(error instanceof Error ? error : new Error(message));
       this.callbacks.onStatus('error', message);
       throw error instanceof Error ? error : new Error(message);
     }
   }
 
   sendInput(data: string): Promise<void> {
+    return this.waitForUserTrafficReady().then(() => this.sendInputNow(data));
+  }
+
+  private sendInputNow(data: string): Promise<void> {
     if (!data) return Promise.resolve();
     const encoded = encoder.encode(data);
     const chunks: Uint8Array[] = [];
@@ -147,6 +165,7 @@ export class EtClient {
 
   async resize({ cols, rows, widthPx, heightPx }: TerminalViewport): Promise<void> {
     if (cols < 1 || rows < 1) return;
+    await this.waitForUserTrafficReady();
     this.session = await updateEtSession(this.session.id, { cols, rows });
     const payload = serializeEtTerminalInfo(this.session.clientId, { cols, rows, widthPx, heightPx });
     await this.sendPacket(TerminalPacketType.TERMINAL_INFO, payload);
@@ -155,6 +174,7 @@ export class EtClient {
   async detach(): Promise<void> {
     this.stopped = true;
     this.sessionEstablished = false;
+    this.rejectUserTrafficWaiters(new Error('ET session is disconnected'));
     this.stopKeepalive();
     await this.closeSocket();
     await flushEtSessionCheckpoint(this.session.id);
@@ -238,7 +258,7 @@ export class EtClient {
     if (packet.type !== EtPacketType.INITIAL_RESPONSE) throw new Error('ET server omitted InitialResponse');
     const response = fromBinary(InitialResponseSchema, packet.payload);
     if (response.error) throw new Error(response.error);
-    if (this.session.startupCommand) await this.sendInput(`${this.session.startupCommand}\r`);
+    if (this.session.startupCommand) await this.sendInputNow(`${this.session.startupCommand}\r`);
   }
 
   private async recoverSession(): Promise<void> {
@@ -292,6 +312,32 @@ export class EtClient {
 
   private nextOutboundSendSequence(): number {
     return ++this.outboundSendSequence;
+  }
+
+  private resetUserTrafficReady(): void {
+    this.userTrafficReady = false;
+  }
+
+  private markUserTrafficReady(): void {
+    this.userTrafficReady = true;
+    const waiters = this.userTrafficWaiters;
+    this.userTrafficWaiters = [];
+    for (const waiter of waiters) waiter.resolve();
+  }
+
+  private rejectUserTrafficWaiters(error: Error): void {
+    this.userTrafficReady = false;
+    const waiters = this.userTrafficWaiters;
+    this.userTrafficWaiters = [];
+    for (const waiter of waiters) waiter.reject(error);
+  }
+
+  private waitForUserTrafficReady(): Promise<void> {
+    if (this.userTrafficReady) return Promise.resolve();
+    if (this.stopped) return Promise.reject(new Error('ET session is disconnected'));
+    return new Promise((resolve, reject) => {
+      this.userTrafficWaiters.push({ resolve, reject });
+    });
   }
 
   private async resyncSessionState(): Promise<void> {
@@ -403,10 +449,10 @@ export class EtClient {
       if (!this.replayingCatchup) {
         const { kittyReplies, sendDa1 } = this.queryScanner.ingest(terminal);
         if (kittyReplies.length) {
-          await this.sendInput(kittyReplies.join(''));
+          await this.sendInputNow(kittyReplies.join(''));
         }
         if (sendDa1) {
-          await this.sendInput(DA1_REPLY);
+          await this.sendInputNow(DA1_REPLY);
         }
       }
       const checkpoint = checkpointEtOutput(this.session.id, sequence, terminal, sessionHint);
@@ -449,6 +495,7 @@ export class EtClient {
   private async handleConnectionLoss(error: unknown): Promise<void> {
     if (this.stopped || this.reconnecting) return;
     this.reconnecting = true;
+    this.resetUserTrafficReady();
     this.stopKeepalive();
     await this.closeSocket();
     await this.drainInboundQueue();
@@ -470,6 +517,7 @@ export class EtClient {
     if (this.session.phase === 'stale') {
       // onStale() already signaled the clean end; don't also raise an error.
       this.reconnecting = false;
+      this.rejectUserTrafficWaiters(new Error(message));
       return;
     }
     if (!this.sessionEstablished) {
@@ -479,6 +527,7 @@ export class EtClient {
       this.reconnectFailures += 1;
       if (this.reconnectFailures >= 5) {
         this.reconnecting = false;
+        this.rejectUserTrafficWaiters(new Error(`ET session recovery failed after repeated errors: ${message}`));
         this.callbacks.onStatus('error', `ET session recovery failed after repeated errors: ${message}`);
         return;
       }
@@ -494,14 +543,17 @@ export class EtClient {
         this.reconnectFailures = 0;
         this.reconnecting = false;
         this.sessionEstablished = true;
+        this.markUserTrafficReady();
         this.callbacks.onStatus('connected');
         this.startKeepalive();
         void this.readLoop();
         return;
-      } catch {
+      } catch (reconnectError) {
         if ((this.session.phase as string) === 'stale') {
           // INVALID_KEY during reconnect → the session ended (onStale fired).
           this.reconnecting = false;
+          const reconnectMessage = reconnectError instanceof Error ? reconnectError.message : String(reconnectError);
+          this.rejectUserTrafficWaiters(new Error(reconnectMessage));
           return;
         }
         await this.closeSocket();

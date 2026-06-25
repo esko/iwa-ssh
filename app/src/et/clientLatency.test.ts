@@ -28,6 +28,14 @@ const session = (): EtSessionRecord => ({
   journalTruncated: false, cols: 80, rows: 24, createdAt: 1, updatedAt: 1,
 });
 
+function markConnected(client: EtClient): void {
+  (client as unknown as { userTrafficReady: boolean }).userTrafficReady = true;
+}
+
+function stubImmediateInput(client: EtClient, sendInput: (data: string) => Promise<void>): void {
+  (client as unknown as { sendInputNow: typeof sendInput }).sendInputNow = sendInput;
+}
+
 describe('EtClient live terminal latency', () => {
   beforeEach(() => {
     mocks.save.mockReset();
@@ -47,7 +55,7 @@ describe('EtClient live terminal latency', () => {
     ) => EtClient)(current, '12345678901234567890123456789012', {
       onOutput, onStatus() {}, onStale() {},
     });
-    (client as unknown as { sendInput: () => Promise<void> }).sendInput = vi.fn(async () => undefined);
+    stubImmediateInput(client, vi.fn(async () => undefined));
     const query = new TextEncoder().encode('\x1b_Gi=1,a=q,t=d,f=24,s=1,v=1;AAAA\x1b\\');
     const plaintext = toBinary(TerminalBufferSchema, create(TerminalBufferSchema, { buffer: query }));
     const nonce = new Uint8Array(24);
@@ -82,6 +90,7 @@ describe('EtClient live terminal latency', () => {
     ) => EtClient)(session(), '12345678901234567890123456789012', {
       onOutput() {}, onStatus() {}, onStale() {},
     });
+    markConnected(client);
     const write = vi.fn(async () => undefined);
     (client as unknown as { writer: { write: typeof write } }).writer = { write };
 
@@ -129,6 +138,7 @@ describe('EtClient live terminal latency', () => {
     ) => EtClient)(current, '12345678901234567890123456789012', {
       onOutput() {}, onStatus() {}, onStale() {},
     });
+    markConnected(client);
     const write = vi.fn(async () => undefined);
     const internals = client as unknown as {
       session: EtSessionRecord;
@@ -171,7 +181,7 @@ describe('EtClient live terminal latency', () => {
     ) => EtClient)(current, '12345678901234567890123456789012', {
       onOutput, onStatus() {}, onStale() {},
     });
-    (client as unknown as { sendInput: typeof sendInput }).sendInput = sendInput;
+    stubImmediateInput(client, sendInput);
 
     const probes = new TextEncoder().encode(`${ICAT_PROBE}\x1b[c`);
     const plaintext = toBinary(TerminalBufferSchema, create(TerminalBufferSchema, { buffer: probes }));

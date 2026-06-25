@@ -1,8 +1,8 @@
 import 'fake-indexeddb/auto';
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf';
 import sodium from 'libsodium-wrappers';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ConnectResponseSchema, ConnectStatus, EtPacketType } from './proto/ET_pb';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CatchupBufferSchema, ConnectResponseSchema, ConnectStatus, EtPacketType, SequenceHeaderSchema } from './proto/ET_pb';
 import { InitialResponseSchema, TerminalInfoSchema } from './proto/ETerminal_pb';
 import { EtClient, ET_SESSION_ENVIRONMENT, serializeEtTerminalInfo } from './client';
 import { frameHandshake, framePacket } from './wire';
@@ -136,6 +136,44 @@ describe('EtClient over Direct Sockets', () => {
     expect((await getEtSession('local'))?.phase).toBe('stale');
   });
 
+  it('treats INVALID_KEY resume responses as stale instead of connection errors', async () => {
+    await sodium.ready;
+    const passkey = '12345678901234567890123456789012';
+    const wrapped = await wrapEtPasskey(passkey);
+    const now = Date.now();
+    await saveEtSession({
+      id: 'local', clientId: '1234567890123456', host: 'host', sshPort: 22, etPort: 2022,
+      username: 'user', wrappedPasskey: wrapped.ciphertext, passkeyIv: wrapped.iv,
+      phase: 'detached', protocolVersion: 6, storageFormatVersion: 1, rxSequence: 0,
+      txSequence: 0, txAcknowledged: 0, outboundBytes: 0, journalBytes: 0,
+      journalTruncated: false, cols: 80, rows: 24, createdAt: now, updatedAt: now,
+    });
+    const response = frameHandshake(toBinary(ConnectResponseSchema, create(ConnectResponseSchema, {
+      status: ConnectStatus.INVALID_KEY,
+      error: 'incorrect key',
+    })));
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const readable = new ReadableStream<Uint8Array>({ start(value) { controller = value; value.enqueue(response); } });
+    const writable = new WritableStream<Uint8Array>({ write() {} });
+    const opened = { readable, writable, close: async () => controller.close() };
+    class FakeSocket { opened = Promise.resolve(opened); async close(): Promise<void> {} }
+    (globalThis as unknown as { window: Window }).window = globalThis as unknown as Window;
+    window.TCPSocket = FakeSocket as unknown as typeof window.TCPSocket;
+
+    const statuses: string[] = [];
+    let stale = 0;
+    const client = await EtClient.create('local', {
+      onOutput() {},
+      onStatus(status, error) { statuses.push(`${status}:${error ?? ''}`); },
+      onStale() { stale += 1; },
+    });
+
+    await expect(client.connect()).resolves.toBeUndefined();
+    expect(stale).toBe(1);
+    expect(statuses).toEqual(['connecting:']);
+    expect(await getEtSession('local')).toMatchObject({ phase: 'stale', lastError: 'incorrect key' });
+  });
+
   it('reconnects after the live connection drops instead of stranding', async () => {
     await sodium.ready;
     const passkey = '12345678901234567890123456789012';
@@ -188,6 +226,50 @@ describe('EtClient over Direct Sockets', () => {
     await new Promise((resolve) => setTimeout(resolve, 600));
     expect(socketCount).toBeGreaterThanOrEqual(2);
 
+    await client.detach();
+  });
+
+  it('holds user input until returning-client recovery finishes', async () => {
+    await sodium.ready;
+    const passkey = '12345678901234567890123456789012';
+    const wrapped = await wrapEtPasskey(passkey);
+    const now = Date.now();
+    await saveEtSession({
+      id: 'local', clientId: '1234567890123456', host: 'host', sshPort: 22, etPort: 2022,
+      username: 'user', wrappedPasskey: wrapped.ciphertext, passkeyIv: wrapped.iv,
+      phase: 'detached', protocolVersion: 6, storageFormatVersion: 1, rxSequence: 0,
+      txSequence: 0, txAcknowledged: 0, outboundBytes: 0, journalBytes: 0,
+      journalTruncated: false, cols: 80, rows: 24, createdAt: now, updatedAt: now,
+    });
+
+    const response = frameHandshake(toBinary(ConnectResponseSchema, create(ConnectResponseSchema, { status: ConnectStatus.RETURNING_CLIENT })));
+    const remoteSequence = frameHandshake(toBinary(SequenceHeaderSchema, create(SequenceHeaderSchema, { sequenceNumber: 0 })));
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const readable = new ReadableStream<Uint8Array>({
+      start(value) {
+        controller = value;
+        value.enqueue(concat(response, remoteSequence));
+      },
+    });
+    const writes: Uint8Array[] = [];
+    const writable = new WritableStream<Uint8Array>({ write(value) { writes.push(value.slice()); } });
+    const opened = { readable, writable, close: async () => controller.close() };
+    class FakeSocket { opened = Promise.resolve(opened); async close(): Promise<void> {} }
+    (globalThis as unknown as { window: Window }).window = globalThis as unknown as Window;
+    window.TCPSocket = FakeSocket as unknown as typeof window.TCPSocket;
+
+    const client = await EtClient.create('local', { onOutput() {}, onStatus() {}, onStale() {} });
+    const connecting = client.connect();
+    await vi.waitFor(() => expect(writes).toHaveLength(3));
+
+    const input = client.sendInput('x');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(writes).toHaveLength(3);
+
+    controller.enqueue(frameHandshake(toBinary(CatchupBufferSchema, create(CatchupBufferSchema, { buffer: [] }))));
+    await connecting;
+    await input;
+    expect(writes).toHaveLength(4);
     await client.detach();
   });
 });

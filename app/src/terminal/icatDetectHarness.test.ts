@@ -78,7 +78,7 @@ describe('kitten icat detect over ET worker path', () => {
     ) => EtClient)(session(), PASSKEY, {
       onOutput() {}, onStatus() {}, onStale() {},
     });
-    (client as unknown as { sendInput(data: string): Promise<void> }).sendInput = async (data) => {
+    (client as unknown as { sendInputNow(data: string): Promise<void> }).sendInputNow = async (data) => {
       writes.push(data);
     };
 
@@ -102,7 +102,7 @@ describe('kitten icat detect over ET worker path', () => {
     ) => EtClient)(session(), PASSKEY, {
       onOutput() {}, onStatus() {}, onStale() {},
     });
-    (client as unknown as { sendInput(data: string): Promise<void> }).sendInput = async (data) => {
+    (client as unknown as { sendInputNow(data: string): Promise<void> }).sendInputNow = async (data) => {
       writes.push(data);
     };
 
