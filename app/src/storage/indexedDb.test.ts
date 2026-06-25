@@ -83,6 +83,20 @@ describe('IndexedDB v2 Eternal Terminal state', () => {
     await expect(saveEtOutboundFrame({ ...frame, bytes: new Uint8Array([2]) })).resolves.toMatchObject({ txSequence: 1 });
   });
 
+  it('saveEtOutboundFrame accepts the next sequence when the session hint is ahead of stored tx', async () => {
+    await saveEtSession(record());
+    await saveEtOutboundFrame({ sessionId: 'local-session', sequence: 1, bytes: new Uint8Array([1]), size: 1 });
+    const staleHint = { ...(await getEtSession('local-session'))!, txSequence: 1 };
+    await saveEtSession({ ...staleHint, txSequence: 0 });
+    await expect(
+      saveEtOutboundFrame(
+        { sessionId: 'local-session', sequence: 2, bytes: new Uint8Array([2]), size: 1 },
+        false,
+        { sessionHint: staleHint },
+      ),
+    ).resolves.toMatchObject({ txSequence: 2 });
+  });
+
   it('checkpointEtInbound keeps the latest outbound sequence when the session hint is stale', async () => {
     await saveEtSession(record());
     await saveEtOutboundFrame({ sessionId: 'local-session', sequence: 1, bytes: new Uint8Array([1]), size: 1 });

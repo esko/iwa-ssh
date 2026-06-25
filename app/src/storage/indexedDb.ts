@@ -233,7 +233,11 @@ export async function purgeStaleEtSessions(): Promise<void> {
   for (const row of stale) await forgetEtSession(row.id);
 }
 
-export async function saveEtOutboundFrame(frame: EtOutboundFrame, rotateOldest = false): Promise<EtSessionRecord> {
+export async function saveEtOutboundFrame(
+  frame: EtOutboundFrame,
+  rotateOldest = false,
+  options?: { sessionHint?: EtSessionRecord },
+): Promise<EtSessionRecord> {
   const db = await getDb();
   const tx = db.transaction(['etOutboundFrames', 'etSessions'], 'readwrite');
   const session = await tx.objectStore('etSessions').get(frame.sessionId);
@@ -258,9 +262,12 @@ export async function saveEtOutboundFrame(frame: EtOutboundFrame, rotateOldest =
     return next;
   }
   if (frame.sequence !== session.txSequence + 1) {
-    tx.abort();
-    await tx.done.catch(() => undefined);
-    throw new Error(`Non-contiguous ET outbound sequence ${frame.sequence}; expected ${session.txSequence + 1}`);
+    const baselineTx = Math.max(session.txSequence, options?.sessionHint?.txSequence ?? -1);
+    if (frame.sequence !== baselineTx + 1) {
+      tx.abort();
+      await tx.done.catch(() => undefined);
+      throw new Error(`Non-contiguous ET outbound sequence ${frame.sequence}; expected ${baselineTx + 1}`);
+    }
   }
   let outboundBytes = session.outboundBytes + frame.size;
   if (!rotateOldest && outboundBytes > 64 * 1024 * 1024) {

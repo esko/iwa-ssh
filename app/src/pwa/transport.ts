@@ -164,7 +164,13 @@ export class EtDirectSocketsTransport implements TerminalTransport {
   async connect(adapter: TerminalSink): Promise<void> {
     this.disposed = false;
     this.onStatus('connecting');
-    if (!this.sessionId) this.sessionId = await createEtSession(this.spec);
+    const creatingSession = !this.sessionId;
+    if (creatingSession) this.sessionId = await createEtSession(this.spec);
+    // #region agent log
+    if (creatingSession) {
+      fetch('http://127.0.0.1:7869/ingest/5b03efa9-2224-4a73-9a56-c6a816107ee6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a26731'},body:JSON.stringify({sessionId:'a26731',location:'transport.ts:connect',message:'created new ET session',data:{sessionId:this.sessionId,host:this.spec.hostname},timestamp:Date.now(),hypothesisId:'H3'})}).catch(()=>{});
+    }
+    // #endregion
     const sessionId = this.sessionId;
     let ended = false;
     const controller = createEtWorkerController(sessionId, (event) => {

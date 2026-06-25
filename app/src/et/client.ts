@@ -97,6 +97,9 @@ export class EtClient {
   private inboundCheckpoint: Promise<void> = Promise.resolve();
   /** Inbound decrypt/counter sequence; kept in sync with persisted rx on reconnect. */
   private inboundDecryptSequence = 0;
+  /** Outbound send sequence; kept in sync with persisted tx on reconnect. */
+  private outboundSendSequence = 0;
+  private replayingCatchup = false;
   private reconnectFailures = 0;
   private readonly queryScanner = new TerminalQueryScanner();
 
@@ -117,6 +120,7 @@ export class EtClient {
   async connect(): Promise<void> {
     this.stopped = false;
     this.syncInboundDecryptSequence();
+    this.syncOutboundSendSequence();
     this.callbacks.onStatus('connecting');
     try {
       await this.openWithTimeout();
@@ -236,11 +240,13 @@ export class EtClient {
         if (!reset) throw new Error('Saved ET session was not found');
         this.session = reset;
         this.syncInboundDecryptSequence();
+        this.syncOutboundSendSequence();
       }
       await this.initializeNewSession();
     } else if (response.status === ConnectStatus.RETURNING_CLIENT) await this.recoverSession();
     else throw new Error(response.error || `Unexpected ET connect status ${response.status}`);
     this.syncInboundDecryptSequence();
+    this.syncOutboundSendSequence();
     this.session = await updateEtSession(this.session.id, { phase: 'active', lastError: undefined });
   }
 
@@ -274,12 +280,18 @@ export class EtClient {
     const catchup = toBinary(CatchupBufferSchema, create(CatchupBufferSchema, { buffer: frames.map((frame) => frame.bytes) }));
     await this.write(frameHandshake(catchup));
     const incoming = fromBinary(CatchupBufferSchema, await this.reader.handshake());
-    for (const bytes of incoming.buffer) {
-      await this.enqueueInbound(() => this.acceptEncryptedPacket(parseCatchupPacket(bytes)));
+    this.replayingCatchup = true;
+    try {
+      for (const bytes of incoming.buffer) {
+        await this.enqueueInbound(() => this.acceptEncryptedPacket(parseCatchupPacket(bytes)));
+      }
+      await this.drainInboundQueue();
+      await this.drainInboundCheckpoint();
+    } finally {
+      this.replayingCatchup = false;
     }
-    await this.drainInboundQueue();
-    await this.drainInboundCheckpoint();
     this.syncInboundDecryptSequence();
+    this.syncOutboundSendSequence();
   }
 
   private async sendPacket(type: number, plaintext: Uint8Array): Promise<void> {
@@ -292,17 +304,27 @@ export class EtClient {
     this.inboundDecryptSequence = this.session.rxSequence;
   }
 
+  private syncOutboundSendSequence(): void {
+    this.outboundSendSequence = this.session.txSequence;
+  }
+
   private nextInboundDecryptSequence(): number {
     return ++this.inboundDecryptSequence;
+  }
+
+  private nextOutboundSendSequence(): number {
+    return ++this.outboundSendSequence;
   }
 
   private async resyncSessionState(): Promise<void> {
     this.session = await prepareEtSessionForConnect(this.session.id);
     this.syncInboundDecryptSequence();
+    this.syncOutboundSendSequence();
   }
 
   private applySession(next: EtSessionRecord): EtSessionRecord {
     this.inboundDecryptSequence = Math.max(this.inboundDecryptSequence, next.rxSequence);
+    this.outboundSendSequence = Math.max(this.outboundSendSequence, next.txSequence);
     this.session = {
       ...next,
       rxSequence: Math.max(next.rxSequence, this.session.rxSequence),
@@ -337,7 +359,8 @@ export class EtClient {
   }
 
   private async sendPacketNow(type: number, plaintext: Uint8Array): Promise<void> {
-    const sequence = this.session.txSequence + 1;
+    const sessionHint = { ...this.session, txSequence: this.outboundSendSequence };
+    const sequence = this.nextOutboundSendSequence();
     const encrypted = await encryptEtPayload(this.passkey, sequence, plaintext);
     const packet = { encrypted: true, type, payload: encrypted };
     const serialized = serializeCatchupPacket(packet);
@@ -346,7 +369,7 @@ export class EtClient {
       sequence,
       bytes: serialized,
       size: serialized.byteLength,
-    }, Boolean(this.writer));
+    }, Boolean(this.writer), { sessionHint });
     try {
       // Interactive terminal replies (DA/DSR/Kitty queries) are latency
       // sensitive. Start the recovery checkpoint first, but do not hold the
@@ -357,7 +380,23 @@ export class EtClient {
       await persistence.catch(() => undefined);
       throw error;
     }
-    this.session = await persistence;
+    try {
+      this.session = await persistence;
+    } catch (error) {
+      this.outboundSendSequence = sequence - 1;
+      // #region agent log
+      const message = error instanceof Error ? error.message : String(error);
+      etConnectDebugLog('client.ts:sendPacketNow', 'outbound persistence failed; rolled back sequence', {
+        sequence,
+        outboundSendSequence: this.outboundSendSequence,
+        txSequence: this.session.txSequence,
+        sessionHintTx: sessionHint.txSequence,
+        error: message,
+      });
+      fetch('http://127.0.0.1:7869/ingest/5b03efa9-2224-4a73-9a56-c6a816107ee6',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a26731'},body:JSON.stringify({sessionId:'a26731',location:'client.ts:sendPacketNow',message:'outbound persistence failed',data:{sequence,outboundSendSequence:this.outboundSendSequence,txSequence:this.session.txSequence,sessionHintTx:sessionHint.txSequence,error:message},timestamp:Date.now(),hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
+      throw error;
+    }
   }
 
   private async readLoop(): Promise<void> {
@@ -394,12 +433,14 @@ export class EtClient {
     const payload = await decryptEtPayload(this.passkey, sequence, packet.payload);
     if (packet.type === TerminalPacketType.TERMINAL_BUFFER) {
       const terminal = fromBinary(TerminalBufferSchema, payload).buffer;
-      const { kittyReplies, sendDa1 } = this.queryScanner.ingest(terminal);
-      if (kittyReplies.length) {
-        await this.sendInput(kittyReplies.join(''));
-      }
-      if (sendDa1) {
-        await this.sendInput(DA1_REPLY);
+      if (!this.replayingCatchup) {
+        const { kittyReplies, sendDa1 } = this.queryScanner.ingest(terminal);
+        if (kittyReplies.length) {
+          await this.sendInput(kittyReplies.join(''));
+        }
+        if (sendDa1) {
+          await this.sendInput(DA1_REPLY);
+        }
       }
       const checkpoint = checkpointEtOutput(this.session.id, sequence, terminal, sessionHint);
       try {
@@ -456,12 +497,14 @@ export class EtClient {
         if (stored) this.session = stored;
       }
       this.syncInboundDecryptSequence();
+      this.syncOutboundSendSequence();
     }
     const message = error instanceof Error ? error.message : String(error);
     const cryptoOrSequence = /sequence|secret key|authentication/i.test(message);
     etConnectDebugLog('client.ts:handleConnectionLoss', 'reconnect after checkpoint flush', {
       rxSequence: this.session.rxSequence,
       inboundDecryptSequence: this.inboundDecryptSequence,
+      outboundSendSequence: this.outboundSendSequence,
       txSequence: this.session.txSequence,
       error: message,
     });
