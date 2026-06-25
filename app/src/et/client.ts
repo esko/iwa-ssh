@@ -95,6 +95,9 @@ export class EtClient {
   private sendQueue: Promise<void> = Promise.resolve();
   private inboundQueue: Promise<void> = Promise.resolve();
   private inboundCheckpoint: Promise<void> = Promise.resolve();
+  /** Inbound decrypt/counter sequence; kept in sync with persisted rx on reconnect. */
+  private inboundDecryptSequence = 0;
+  private reconnectFailures = 0;
   private readonly queryScanner = new TerminalQueryScanner();
 
   private constructor(session: EtSessionRecord, passkey: string, callbacks: EtClientCallbacks) {
@@ -113,6 +116,7 @@ export class EtClient {
 
   async connect(): Promise<void> {
     this.stopped = false;
+    this.syncInboundDecryptSequence();
     this.callbacks.onStatus('connecting');
     try {
       await this.openWithTimeout();
@@ -231,10 +235,12 @@ export class EtClient {
         const reset = await clearEtSessionRecovery(this.session.id);
         if (!reset) throw new Error('Saved ET session was not found');
         this.session = reset;
+        this.syncInboundDecryptSequence();
       }
       await this.initializeNewSession();
     } else if (response.status === ConnectStatus.RETURNING_CLIENT) await this.recoverSession();
     else throw new Error(response.error || `Unexpected ET connect status ${response.status}`);
+    this.syncInboundDecryptSequence();
     this.session = await updateEtSession(this.session.id, { phase: 'active', lastError: undefined });
   }
 
@@ -254,7 +260,8 @@ export class EtClient {
   private async recoverSession(): Promise<void> {
     if (!this.reader) throw new Error('ET reader is unavailable');
     await this.drainInboundQueue();
-    this.session = await prepareEtSessionForConnect(this.session.id);
+    await this.drainInboundCheckpoint();
+    await this.resyncSessionState();
     const localSequence = toBinary(SequenceHeaderSchema, create(SequenceHeaderSchema, { sequenceNumber: this.session.rxSequence }));
     await this.write(frameHandshake(localSequence));
     const remote = fromBinary(SequenceHeaderSchema, await this.reader.handshake());
@@ -267,8 +274,12 @@ export class EtClient {
     const catchup = toBinary(CatchupBufferSchema, create(CatchupBufferSchema, { buffer: frames.map((frame) => frame.bytes) }));
     await this.write(frameHandshake(catchup));
     const incoming = fromBinary(CatchupBufferSchema, await this.reader.handshake());
-    for (const bytes of incoming.buffer) await this.acceptEncryptedPacket(parseCatchupPacket(bytes));
+    for (const bytes of incoming.buffer) {
+      await this.enqueueInbound(() => this.acceptEncryptedPacket(parseCatchupPacket(bytes)));
+    }
+    await this.drainInboundQueue();
     await this.drainInboundCheckpoint();
+    this.syncInboundDecryptSequence();
   }
 
   private async sendPacket(type: number, plaintext: Uint8Array): Promise<void> {
@@ -277,7 +288,21 @@ export class EtClient {
     return task;
   }
 
+  private syncInboundDecryptSequence(): void {
+    this.inboundDecryptSequence = this.session.rxSequence;
+  }
+
+  private nextInboundDecryptSequence(): number {
+    return ++this.inboundDecryptSequence;
+  }
+
+  private async resyncSessionState(): Promise<void> {
+    this.session = await prepareEtSessionForConnect(this.session.id);
+    this.syncInboundDecryptSequence();
+  }
+
   private applySession(next: EtSessionRecord): EtSessionRecord {
+    this.inboundDecryptSequence = Math.max(this.inboundDecryptSequence, next.rxSequence);
     this.session = {
       ...next,
       rxSequence: Math.max(next.rxSequence, this.session.rxSequence),
@@ -342,17 +367,18 @@ export class EtClient {
         await this.enqueueInbound(() => this.acceptEncryptedPacket(packet));
       }
     } catch (error) {
-      await this.handleConnectionLoss(error);
+      if (!this.reconnecting) await this.handleConnectionLoss(error);
     }
   }
 
   private async readEncryptedPacket(): Promise<EtWirePacket> {
     if (!this.reader) throw new Error('ET reader is unavailable');
     const packet = await this.reader.packet();
-    const sequence = this.session.rxSequence + 1;
+    const sessionHint = { ...this.session, rxSequence: this.inboundDecryptSequence };
+    const sequence = this.nextInboundDecryptSequence();
     if (!packet.encrypted) throw new Error('ET peer sent an unencrypted packet');
     const payload = await decryptEtPayload(this.passkey, sequence, packet.payload);
-    this.applySession(await checkpointEtControl(this.session.id, sequence, this.session));
+    this.applySession(await checkpointEtControl(this.session.id, sequence, sessionHint));
     return { ...packet, encrypted: false, payload };
   }
 
@@ -362,7 +388,8 @@ export class EtClient {
 
   private async acceptEncryptedPacket(packet: EtWirePacket): Promise<void> {
     this.touchKeepalive();
-    const sequence = this.session.rxSequence + 1;
+    const sessionHint = { ...this.session, rxSequence: this.inboundDecryptSequence };
+    const sequence = this.nextInboundDecryptSequence();
     if (!packet.encrypted) throw new Error('ET peer sent an unencrypted packet');
     const payload = await decryptEtPayload(this.passkey, sequence, packet.payload);
     if (packet.type === TerminalPacketType.TERMINAL_BUFFER) {
@@ -374,8 +401,6 @@ export class EtClient {
       if (sendDa1) {
         await this.sendInput(DA1_REPLY);
       }
-      const sessionHint = this.session;
-      this.applySession({ ...this.session, rxSequence: sequence });
       const checkpoint = checkpointEtOutput(this.session.id, sequence, terminal, sessionHint);
       try {
         // Restty must see terminal queries immediately so its automatic
@@ -389,7 +414,7 @@ export class EtClient {
       }
       this.queueInboundCheckpoint(checkpoint);
     } else {
-      this.applySession(await checkpointEtControl(this.session.id, sequence, this.session));
+      this.applySession(await checkpointEtControl(this.session.id, sequence, sessionHint));
     }
   }
 
@@ -398,7 +423,7 @@ export class EtClient {
     this.touchKeepalive();
     this.keepaliveTimer = globalThis.setInterval(() => {
       const idleMs = Date.now() - this.lastKeepalive;
-      if (idleMs > 11_000) {
+      if (idleMs > 30_000) {
         etConnectDebugLog('client.ts:keepalive', 'idle timeout', { idleMs });
         void this.handleConnectionLoss(new Error('ET keepalive timed out'));
         return;
@@ -406,7 +431,7 @@ export class EtClient {
       void this.sendPacket(TerminalPacketType.KEEP_ALIVE, new Uint8Array())
         .then(() => this.touchKeepalive())
         .catch((error) => this.handleConnectionLoss(error));
-    }, 5_000);
+    }, 10_000);
   }
 
   private stopKeepalive(): void {
@@ -421,13 +446,8 @@ export class EtClient {
     await this.closeSocket();
     await this.drainInboundQueue();
     await this.drainInboundCheckpoint();
-    const needsResync = /sequence|secret key|authentication/i.test(
-      error instanceof Error ? error.message : String(error),
-    );
     try {
-      this.session = needsResync
-        ? await prepareEtSessionForConnect(this.session.id)
-        : (await flushEtSessionCheckpoint(this.session.id)) ?? this.session;
+      await this.resyncSessionState();
     } catch {
       const flushed = await flushEtSessionCheckpoint(this.session.id).catch(() => undefined);
       if (flushed) this.session = flushed;
@@ -435,13 +455,16 @@ export class EtClient {
         const stored = await getEtSession(this.session.id).catch(() => undefined);
         if (stored) this.session = stored;
       }
+      this.syncInboundDecryptSequence();
     }
+    const message = error instanceof Error ? error.message : String(error);
+    const cryptoOrSequence = /sequence|secret key|authentication/i.test(message);
     etConnectDebugLog('client.ts:handleConnectionLoss', 'reconnect after checkpoint flush', {
       rxSequence: this.session.rxSequence,
+      inboundDecryptSequence: this.inboundDecryptSequence,
       txSequence: this.session.txSequence,
-      error: error instanceof Error ? error.message : String(error),
+      error: message,
     });
-    const message = error instanceof Error ? error.message : String(error);
     if (this.session.phase === 'stale') {
       // onStale() already signaled the clean end; don't also raise an error.
       this.reconnecting = false;
@@ -452,6 +475,14 @@ export class EtClient {
     } else {
       etConnectDebugLog('client.ts:handleConnectionLoss', 'silent reconnect', { message });
     }
+    if (cryptoOrSequence) {
+      this.reconnectFailures += 1;
+      if (this.reconnectFailures >= 5) {
+        this.reconnecting = false;
+        this.callbacks.onStatus('error', `ET session recovery failed after repeated errors: ${message}`);
+        return;
+      }
+    }
     const delays = [0, 1_000, 2_000, 4_000, 8_000, 10_000];
     let attempt = 0;
     while (!this.stopped) {
@@ -460,6 +491,7 @@ export class EtClient {
       if (this.stopped) break;
       try {
         await this.openWithTimeout();
+        this.reconnectFailures = 0;
         this.reconnecting = false;
         this.sessionEstablished = true;
         this.callbacks.onStatus('connected');
