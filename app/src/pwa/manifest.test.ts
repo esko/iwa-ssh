@@ -23,7 +23,11 @@ describe('IWA window manifest', () => {
     expect(manifest.display_override).not.toContain('tabbed');
   });
 
-  it('requests an unframed/borderless window and allows window-management', () => {
+  it('keeps the public and well-known permissions policies in sync', () => {
+    expect(read(PUBLIC).permissions_policy).toEqual(read(WELL_KNOWN).permissions_policy);
+  });
+
+  it('allows clipboard and window-management APIs', () => {
     const manifest = read(WELL_KNOWN);
     // The app-drawn caption needs a frameless display mode...
     expect(manifest.display_override).toEqual(expect.arrayContaining(['unframed', 'borderless']));
@@ -31,13 +35,14 @@ describe('IWA window manifest', () => {
     // which must be allowed by the manifest's permissions policy or Chrome falls
     // back to standalone (native title bar). This guards that regression.
     expect(manifest.permissions_policy?.['window-management']).toEqual(['self']);
+    // Image paste (Ctrl+Shift+V) reads ClipboardItem via navigator.clipboard.read.
+    expect(manifest.permissions_policy?.['clipboard-read']).toEqual(['self']);
+    expect(manifest.permissions_policy?.['clipboard-write']).toEqual(['self']);
   });
 
-  it('keeps the public and well-known permissions policies in sync', () => {
-    expect(read(PUBLIC).permissions_policy).toEqual(read(WELL_KNOWN).permissions_policy);
-  });
-
-  it('allows window-management in dev server Permissions-Policy headers', () => {
+  it('keeps dev Permissions-Policy headers aligned with manifest clipboard keys', () => {
+    expect(IWA_PERMISSIONS_POLICY).toContain('clipboard-read=(self)');
+    expect(IWA_PERMISSIONS_POLICY).toContain('clipboard-write=(self)');
     expect(IWA_PERMISSIONS_POLICY).toContain('window-management=(self)');
   });
 });

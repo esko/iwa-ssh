@@ -3,7 +3,7 @@
   "name": "iwa-ssh",
   "short_name": "iwa-ssh",
   "description": "ChromeOS IWA SSH client",
-  "version": "0.1.96",
+  "version": "0.1.97",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -20,7 +20,9 @@
     "direct-sockets-private": ["self"],
     "local-network": ["self"],
     "loopback-network": ["self"],
-    "window-management": ["self"]
+    "window-management": ["self"],
+    "clipboard-read": ["self"],
+    "clipboard-write": ["self"]
   },
   "icons": [
     {
