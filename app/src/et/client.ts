@@ -55,12 +55,6 @@ const encoder = new TextEncoder();
 /** Abort a connect/handshake attempt that hangs (e.g. offline) so it can retry. */
 const ET_CONNECT_TIMEOUT_MS = 12_000;
 
-// #region agent log
-function etConnectDebugLog(location: string, message: string, data: Record<string, unknown>): void {
-  console.info('[iwa-ssh et-debug]', location, message, data);
-}
-// #endregion
-
 export function serializeEtTerminalInfo(clientId: string, viewport: TerminalViewport): Uint8Array {
   return toBinary(TerminalInfoSchema, create(TerminalInfoSchema, {
     id: clientId,
@@ -130,12 +124,6 @@ export class EtClient {
       void this.readLoop();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      etConnectDebugLog('client.ts:connect', 'initial ET connect failed', {
-        host: this.session.host,
-        etPort: this.session.etPort,
-        phase: this.session.phase,
-        message,
-      });
       this.callbacks.onStatus('error', message);
       throw error instanceof Error ? error : new Error(message);
     }
@@ -204,11 +192,6 @@ export class EtClient {
   private async openAndHandshake(): Promise<void> {
     const Socket = (globalThis as typeof globalThis & { TCPSocket?: typeof window.TCPSocket }).TCPSocket;
     if (!Socket) throw new Error('Direct Sockets (TCPSocket) is unavailable');
-    etConnectDebugLog('client.ts:openAndHandshake', 'opening ET TCP socket', {
-      host: this.session.host,
-      etPort: this.session.etPort,
-      clientId: this.session.clientId,
-    });
     const socket = new Socket(this.session.host, this.session.etPort);
     this.rawSocket = socket;
     this.socket = await socket.opened;
@@ -221,11 +204,6 @@ export class EtClient {
     }));
     await this.write(frameHandshake(request));
     const response = fromBinary(ConnectResponseSchema, await this.reader.handshake());
-    etConnectDebugLog('client.ts:openAndHandshake', 'connect response', {
-      status: ConnectStatus[response.status] ?? response.status,
-      error: response.error ?? null,
-      clientId: this.session.clientId,
-    });
     if (response.status === ConnectStatus.INVALID_KEY) {
       this.session = await updateEtSession(this.session.id, { phase: 'stale', lastError: response.error || 'ET server forgot this session' });
       this.callbacks.onStale();
@@ -384,14 +362,6 @@ export class EtClient {
       this.applySession(await persistence);
     } catch (error) {
       this.outboundSendSequence = sequence - 1;
-      const message = error instanceof Error ? error.message : String(error);
-      etConnectDebugLog('client.ts:sendPacketNow', 'outbound persistence failed; rolled back sequence', {
-        sequence,
-        outboundSendSequence: this.outboundSendSequence,
-        txSequence: this.session.txSequence,
-        sessionHintTx: sessionHint.txSequence,
-        error: message,
-      });
       throw error;
     }
   }
@@ -462,7 +432,6 @@ export class EtClient {
     this.keepaliveTimer = globalThis.setInterval(() => {
       const idleMs = Date.now() - this.lastKeepalive;
       if (idleMs > 30_000) {
-        etConnectDebugLog('client.ts:keepalive', 'idle timeout', { idleMs });
         void this.handleConnectionLoss(new Error('ET keepalive timed out'));
         return;
       }
@@ -498,13 +467,6 @@ export class EtClient {
     }
     const message = error instanceof Error ? error.message : String(error);
     const cryptoOrSequence = /sequence|secret key|authentication/i.test(message);
-    etConnectDebugLog('client.ts:handleConnectionLoss', 'reconnect after checkpoint flush', {
-      rxSequence: this.session.rxSequence,
-      inboundDecryptSequence: this.inboundDecryptSequence,
-      outboundSendSequence: this.outboundSendSequence,
-      txSequence: this.session.txSequence,
-      error: message,
-    });
     if (this.session.phase === 'stale') {
       // onStale() already signaled the clean end; don't also raise an error.
       this.reconnecting = false;
@@ -512,8 +474,6 @@ export class EtClient {
     }
     if (!this.sessionEstablished) {
       this.callbacks.onStatus('connecting', message);
-    } else {
-      etConnectDebugLog('client.ts:handleConnectionLoss', 'silent reconnect', { message });
     }
     if (cryptoOrSequence) {
       this.reconnectFailures += 1;

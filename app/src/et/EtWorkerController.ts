@@ -145,9 +145,6 @@ export class EtWorkerController {
       return;
     }
     if (this.disposed) return;
-    if (event.type === 'error') {
-      console.error('[iwa-ssh et-debug] worker error', event.error);
-    }
     if (event.type !== 'error') this.dependencies.onEvent(event);
     if (event.type === 'status' && event.status === 'connected') {
       this.connectResolve?.();

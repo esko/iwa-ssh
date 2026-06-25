@@ -77,25 +77,12 @@ function bootstrapError(output: string, clientId: string, passkey: string): Erro
   );
 }
 
-// #region agent log
-function etBootstrapDebugLog(
-  location: string,
-  message: string,
-  data: Record<string, unknown>,
-  _hypothesisId: string,
-): void {
-  console.info('[iwa-ssh et-debug]', location, message, data);
-}
-// #endregion
-
 async function runEtBootstrapPreflight(spec: ConnectionIntent): Promise<void> {
   const host = spec.hostname;
   const port = spec.port ?? 22;
   if (await isKnownHostReadyForConnect(host, port)) {
-    etBootstrapDebugLog('bootstrap.ts:preflight', 'skipped; host key already staged', { host, port }, 'B');
     return;
   }
-  etBootstrapDebugLog('bootstrap.ts:preflight', 'shell SSH hop for host-key trust', { host, port }, 'B');
   const terminal = new CaptureTerminal();
   const bridge = new NasshCommandBridge({
     protocol: 'ssh',
@@ -167,27 +154,11 @@ export async function createEtSession(spec: ConnectionIntent): Promise<string> {
   const subscription = terminal.onOutput((output) => {
     const parsed = parseEtBootstrapIdPasskey(output);
     if (parsed) {
-      etBootstrapDebugLog('bootstrap.ts:onOutput', 'IDPASSKEY seen', {
-        outputLen: output.length,
-        clientId: parsed.clientId,
-        passkeyMatchesLocal: parsed.passkey === passkey,
-      }, 'D');
       resolveOutput();
     } else if (isEtBootstrapFailure(output)) {
-      etBootstrapDebugLog('bootstrap.ts:onOutput', 'bootstrap failure pattern', {
-        outputLen: output.length,
-        hasLeadingYes: /^\s*yes\s*$/m.test(output),
-        hasEtDaemonError: /Connection error communicating with et daemon/i.test(output),
-        tail: output.slice(-500),
-      }, 'A');
       rejectOutput(bootstrapError(output, clientId, passkey));
     }
   });
-  etBootstrapDebugLog('bootstrap.ts:createEtSession', 'starting ET bootstrap SSH', {
-    host: spec.hostname,
-    port: spec.port ?? 22,
-    allowHostKeyTtyResponse: false,
-  }, 'D');
   const bridge = new NasshCommandBridge({
     protocol: 'ssh',
     host: spec.hostname,
@@ -210,12 +181,6 @@ export async function createEtSession(spec: ConnectionIntent): Promise<string> {
     const credentials = finalPasskey !== passkey
       ? { ...(await wrapEtPasskey(finalPasskey)) }
       : { iv: record.passkeyIv, ciphertext: record.wrappedPasskey };
-    etBootstrapDebugLog('bootstrap.ts:createEtSession', 'persisting ET credentials', {
-      clientId: finalClientId,
-      host: spec.hostname,
-      etPort: spec.etPort ?? 2022,
-      credentialsFromOutput: Boolean(parsed),
-    }, 'D');
     await saveEtSession({
       ...record,
       clientId: finalClientId,

@@ -210,9 +210,6 @@ export class HostKeyGuard {
         this.lastHostKeyOffer = null;
       }
       if (!pending.consumedBySecureInput && this.options.allowTtyResponse !== false) {
-        // #region agent log
-        console.info('[iwa-ssh et-debug] HostKeyGuard sendResponse', { response, fingerprint });
-        // #endregion
         this.options.sendResponse(`${response}\n`);
       }
       if (response === 'no') this.options.onDenied?.();
