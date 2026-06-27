@@ -1123,6 +1123,241 @@ textarea {
   font-size: 13px;
 }
 
+/* ---------------------------------------------------------- tab overview -- */
+
+.tab-overview {
+  width: min(1120px, calc(100vw - 48px));
+  max-height: min(760px, calc(100vh - 56px));
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-overview-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 22px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab-overview-count {
+  color: var(--fg);
+  font-size: 13.5px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.tab-overview-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: min(420px, 100%);
+  padding: 9px 11px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.tab-overview-search .filter-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--muted);
+}
+
+.tab-overview-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--ui);
+  font-size: 13.5px;
+}
+
+.tab-overview-input::placeholder {
+  color: var(--faint);
+}
+
+.tab-overview-input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.tab-overview-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  align-content: start;
+  gap: 14px;
+  padding: 16px;
+}
+
+.tab-overview-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
+}
+
+.tab-overview-card:hover,
+.tab-overview-card[aria-selected='true'] {
+  border-color: var(--line-2);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.tab-overview-card[aria-selected='true'] {
+  transform: translateY(-1px);
+}
+
+.tab-overview-card[aria-current='true'] .tab-overview-thumb {
+  border-color: rgba(140, 170, 210, 0.72);
+}
+
+.tab-overview-thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #000;
+}
+
+.tab-overview-img,
+.tab-overview-placeholder {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.tab-overview-img {
+  object-fit: cover;
+}
+
+.tab-overview-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+  font-size: 12px;
+  background: #000;
+}
+
+.tab-overview-close {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: rgba(18, 19, 26, 0.92);
+  color: var(--fg);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.82;
+}
+
+.tab-overview-close:hover,
+.tab-overview-close:focus-visible {
+  opacity: 1;
+  background: var(--surface-2);
+}
+
+.tab-overview-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  text-align: center;
+}
+
+.tab-overview-title,
+.tab-overview-sub {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-overview-title {
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 560;
+}
+
+.tab-overview-sub {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.tab-overview-badges {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-height: 19px;
+}
+
+.tab-overview-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--faint);
+  font-size: 10.5px;
+  line-height: 1.2;
+}
+
+.tab-overview-badge[data-state='connecting'],
+.tab-overview-badge[data-state='disconnecting'] {
+  color: #e0b341;
+}
+
+.tab-overview-badge[data-state='error'] {
+  color: #f0c5c5;
+  border-color: rgba(224, 87, 75, 0.32);
+}
+
+.tab-overview-empty {
+  grid-column: 1 / -1;
+  margin: 22px 0;
+  color: var(--muted);
+  text-align: center;
+  font-size: 13px;
+}
+
+@media (max-width: 680px) {
+  .overlay:has(.tab-overview) {
+    padding: 16px;
+  }
+  .tab-overview {
+    width: 100%;
+    max-height: calc(100vh - 32px);
+  }
+  .tab-overview-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+    padding: 12px;
+  }
+}
+
 /* ---- Shared host picker (⌘K overlay, new-tab launcher, no-spec connect) ---- */
 
 /* Dissolve the wrapper so search + list become direct children of the host

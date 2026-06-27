@@ -362,6 +362,294 @@ type ResttySurface = ResttyHandle & {
   panes?: () => ResttyPaneHandleLite[];
 };
 
+export type TerminalPreviewOptions = {
+  width: number;
+  height: number;
+};
+
+type PreviewCaptureRequest = {
+  afterGeneration: number;
+  promise: Promise<HTMLCanvasElement | null>;
+  resolve: (canvas: HTMLCanvasElement | null) => void;
+  timeout: ReturnType<typeof setTimeout>;
+};
+
+type PreviewGpuTexture = object;
+type PreviewGpuCommandBuffer = object;
+type PreviewGpuBuffer = {
+  readonly mapState: string;
+  mapAsync(mode: number): Promise<void>;
+  getMappedRange(): ArrayBuffer;
+  unmap(): void;
+  destroy(): void;
+};
+type PreviewGpuCommandEncoder = {
+  copyTextureToBuffer(
+    source: { texture: PreviewGpuTexture },
+    destination: { buffer: PreviewGpuBuffer; bytesPerRow: number; rowsPerImage: number },
+    size: { width: number; height: number },
+  ): void;
+  finish(): PreviewGpuCommandBuffer;
+};
+type PreviewGpuQueue = {
+  submit(commandBuffers: Iterable<PreviewGpuCommandBuffer>): void;
+};
+type PreviewGpuDevice = {
+  queue: PreviewGpuQueue;
+  createBuffer(options: { size: number; usage: number }): PreviewGpuBuffer;
+  createCommandEncoder(): PreviewGpuCommandEncoder;
+};
+type PreviewGpuCanvasConfiguration = {
+  device: PreviewGpuDevice;
+  format: string;
+  usage?: number;
+  [key: string]: unknown;
+};
+type PreviewGpuCanvasContext = {
+  configure(configuration: PreviewGpuCanvasConfiguration): void;
+  getCurrentTexture(): PreviewGpuTexture;
+};
+
+const GPU_TEXTURE_COPY_SRC = 0x01;
+const GPU_TEXTURE_RENDER_ATTACHMENT = 0x10;
+const GPU_BUFFER_MAP_READ = 0x01;
+const GPU_BUFFER_COPY_DST = 0x08;
+const GPU_MAP_READ = 0x01;
+
+type WebGpuPreviewState = {
+  canvas: HTMLCanvasElement;
+  context: PreviewGpuCanvasContext | null;
+  device: PreviewGpuDevice | null;
+  format: string | null;
+  queue: PreviewGpuQueue | null;
+  generation: number;
+  latestTexture: PreviewGpuTexture | null;
+  request: PreviewCaptureRequest | null;
+  restoreGetContext: () => void;
+};
+
+type PreviewQueueRegistration = {
+  queue: PreviewGpuQueue;
+  originalSubmit: PreviewGpuQueue['submit'];
+  states: Set<WebGpuPreviewState>;
+  pendingStates: Set<WebGpuPreviewState>;
+};
+
+const previewQueueRegistrations = new WeakMap<PreviewGpuQueue, PreviewQueueRegistration>();
+
+function finishPreviewRequest(request: PreviewCaptureRequest, canvas: HTMLCanvasElement | null): void {
+  clearTimeout(request.timeout);
+  request.resolve(canvas);
+}
+
+function unregisterPreviewQueue(state: WebGpuPreviewState): void {
+  const queue = state.queue;
+  if (!queue) return;
+  const registration = previewQueueRegistrations.get(queue);
+  registration?.states.delete(state);
+  registration?.pendingStates.delete(state);
+  if (registration && registration.states.size === 0) {
+    Object.defineProperty(queue, 'submit', {
+      configurable: true,
+      value: registration.originalSubmit,
+    });
+    previewQueueRegistrations.delete(queue);
+  }
+  state.queue = null;
+}
+
+function mapPreviewBuffer(
+  request: PreviewCaptureRequest,
+  buffer: PreviewGpuBuffer,
+  bytesPerRow: number,
+  width: number,
+  height: number,
+  format: string,
+): void {
+  void buffer.mapAsync(GPU_MAP_READ).then(() => {
+    const source = new Uint8Array(buffer.getMappedRange());
+    const pixels = new Uint8ClampedArray(width * height * 4);
+    const isBgra = format.startsWith('bgra');
+    for (let y = 0; y < height; y += 1) {
+      const sourceRow = y * bytesPerRow;
+      const targetRow = y * width * 4;
+      for (let x = 0; x < width; x += 1) {
+        const sourceOffset = sourceRow + x * 4;
+        const targetOffset = targetRow + x * 4;
+        pixels[targetOffset] = source[sourceOffset + (isBgra ? 2 : 0)];
+        pixels[targetOffset + 1] = source[sourceOffset + 1];
+        pixels[targetOffset + 2] = source[sourceOffset + (isBgra ? 0 : 2)];
+        pixels[targetOffset + 3] = source[sourceOffset + 3];
+      }
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      finishPreviewRequest(request, null);
+      return;
+    }
+    context.putImageData(new ImageData(pixels, width, height), 0, 0);
+    finishPreviewRequest(request, canvas);
+  }).catch(() => finishPreviewRequest(request, null)).finally(() => {
+    if (buffer.mapState === 'mapped') buffer.unmap();
+    buffer.destroy();
+  });
+}
+
+function flushPreviewCopies(registration: PreviewQueueRegistration): void {
+  if (registration.pendingStates.size === 0) return;
+  const pendingStates = [...registration.pendingStates].filter((state) => (
+    state.request
+    && state.latestTexture
+    && state.generation > state.request.afterGeneration
+    && state.device
+    && state.format
+  ));
+  if (pendingStates.length === 0) return;
+
+  const captures: Array<{
+    request: PreviewCaptureRequest;
+    buffer: PreviewGpuBuffer;
+    bytesPerRow: number;
+    width: number;
+    height: number;
+    format: string;
+  }> = [];
+  const encoder = pendingStates[0]?.device?.createCommandEncoder();
+  if (!encoder) return;
+
+  for (const state of pendingStates) {
+    const request = state.request;
+    const texture = state.latestTexture;
+    if (!request || !texture || state.generation <= request.afterGeneration || !state.device || !state.format) continue;
+    state.request = null;
+    registration.pendingStates.delete(state);
+    clearTimeout(request.timeout);
+    const width = state.canvas.width;
+    const height = state.canvas.height;
+    const bytesPerRow = Math.ceil((width * 4) / 256) * 256;
+    try {
+      const buffer = state.device.createBuffer({
+        size: bytesPerRow * height,
+        usage: GPU_BUFFER_COPY_DST | GPU_BUFFER_MAP_READ,
+      });
+      encoder.copyTextureToBuffer(
+        { texture },
+        { buffer, bytesPerRow, rowsPerImage: height },
+        { width, height },
+      );
+      captures.push({ request, buffer, bytesPerRow, width, height, format: state.format });
+    } catch {
+      finishPreviewRequest(request, null);
+    }
+  }
+  if (captures.length === 0) return;
+
+  try {
+    registration.originalSubmit.call(registration.queue, [encoder.finish()]);
+    for (const capture of captures) {
+      mapPreviewBuffer(
+        capture.request,
+        capture.buffer,
+        capture.bytesPerRow,
+        capture.width,
+        capture.height,
+        capture.format,
+      );
+    }
+  } catch {
+    for (const capture of captures) {
+      capture.buffer.destroy();
+      finishPreviewRequest(capture.request, null);
+    }
+  }
+}
+
+function registerPreviewQueue(state: WebGpuPreviewState, queue: PreviewGpuQueue): void {
+  if (state.queue === queue) return;
+  unregisterPreviewQueue(state);
+  let registration = previewQueueRegistrations.get(queue);
+  if (!registration) {
+    const originalSubmit = queue.submit;
+    registration = { queue, originalSubmit, states: new Set(), pendingStates: new Set() };
+    previewQueueRegistrations.set(queue, registration);
+    Object.defineProperty(queue, 'submit', {
+      configurable: true,
+      value(commandBuffers: Iterable<PreviewGpuCommandBuffer>): void {
+        originalSubmit.call(queue, commandBuffers);
+        flushPreviewCopies(registration!);
+      },
+    });
+  }
+  registration.states.add(state);
+  state.queue = queue;
+}
+
+function instrumentPreviewCanvas(canvas: HTMLCanvasElement): WebGpuPreviewState {
+  const originalGetContext = canvas.getContext.bind(canvas);
+  const state: WebGpuPreviewState = {
+    canvas,
+    context: null,
+    device: null,
+    format: null,
+    queue: null,
+    generation: 0,
+    latestTexture: null,
+    request: null,
+    restoreGetContext: () => undefined,
+  };
+
+  const patchedGetContext = ((contextId: string, options?: unknown): unknown => {
+    const context = originalGetContext(contextId, options);
+    if (
+      contextId !== 'webgpu'
+      || !context
+      || state.context === (context as unknown as PreviewGpuCanvasContext)
+    ) return context;
+    const gpuContext = context as unknown as PreviewGpuCanvasContext;
+    const originalConfigure = gpuContext.configure.bind(gpuContext);
+    const originalGetCurrentTexture = gpuContext.getCurrentTexture.bind(gpuContext);
+    Object.defineProperty(gpuContext, 'configure', {
+      configurable: true,
+      value(configuration: PreviewGpuCanvasConfiguration): void {
+        state.context = gpuContext;
+        state.device = configuration.device;
+        state.format = configuration.format;
+        registerPreviewQueue(state, configuration.device.queue);
+        originalConfigure({
+          ...configuration,
+          usage: (configuration.usage ?? GPU_TEXTURE_RENDER_ATTACHMENT) | GPU_TEXTURE_COPY_SRC,
+        });
+      },
+    });
+    Object.defineProperty(gpuContext, 'getCurrentTexture', {
+      configurable: true,
+      value(): PreviewGpuTexture {
+        const texture = originalGetCurrentTexture();
+        state.latestTexture = texture;
+        state.generation += 1;
+        return texture;
+      },
+    });
+    state.context = gpuContext;
+    return context;
+  }) as typeof canvas.getContext;
+
+  Object.defineProperty(canvas, 'getContext', {
+    configurable: true,
+    value: patchedGetContext,
+  });
+  state.restoreGetContext = () => {
+    Object.defineProperty(canvas, 'getContext', {
+      configurable: true,
+      value: originalGetContext,
+    });
+  };
+  return state;
+}
+
 type PaneState = { bridge: PaneBridge; title: string | null; cwd: string | null; oscBuffer: string };
 
 /**
@@ -390,6 +678,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   private redispatchingWheel = false;
   private pointerFocusCleanup: (() => void) | null = null;
   private settings: PwaTerminalSettings | null = null;
+  private readonly previewCanvases = new Map<number, WebGpuPreviewState>();
 
   private get surface(): ResttySurface | null {
     return (this.term?.restty as ResttySurface | null) ?? null;
@@ -408,7 +697,8 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     const term = new Terminal({
       // Per-pane app options: every pane (the first and every split) gets its
       // own PtyTransport bridge keyed by the pane id restty assigns it.
-      appOptions: (ctx: { id: number }) => {
+      appOptions: (ctx: { id: number; canvas: HTMLCanvasElement }) => {
+        adapter.previewCanvases.set(ctx.id, instrumentPreviewCanvas(ctx.canvas));
         // Restty consumes this limit only when a pane core is created. Use the
         // latest settings so splits opened after a settings change get the new
         // capacity; existing panes keep their history and current limit.
@@ -535,6 +825,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   }
 
   private handlePaneClosed(id: number): void {
+    this.releasePreviewCanvas(id);
     this.panes.delete(id);
     this.openedPanes.delete(id);
     this.paneCloseListeners.forEach((cb) => cb(id));
@@ -565,6 +856,113 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   focusPane(id: number): void {
     this.activePaneId = id;
     this.surface?.setActivePane?.(id, { focus: true });
+  }
+
+  private releasePreviewCanvas(id: number): void {
+    const state = this.previewCanvases.get(id);
+    if (!state) return;
+    if (state.request) {
+      finishPreviewRequest(state.request, null);
+      state.request = null;
+    }
+    unregisterPreviewQueue(state);
+    state.restoreGetContext();
+    this.previewCanvases.delete(id);
+  }
+
+  private captureWebGpuPane(id: number, handle: ResttyPaneHandleLite): Promise<HTMLCanvasElement | null> {
+    const state = this.previewCanvases.get(id);
+    if (!state?.context || !state.device || !state.format) return Promise.resolve(null);
+    if (state.request) return state.request.promise;
+
+    let resolveRequest!: (canvas: HTMLCanvasElement | null) => void;
+    const promise = new Promise<HTMLCanvasElement | null>((resolve) => {
+      resolveRequest = resolve;
+    });
+    const request: PreviewCaptureRequest = {
+      afterGeneration: state.generation,
+      promise,
+      resolve: resolveRequest,
+      timeout: setTimeout(() => {
+        if (state.request === request) {
+          state.request = null;
+          if (state.queue) previewQueueRegistrations.get(state.queue)?.pendingStates.delete(state);
+        }
+        finishPreviewRequest(request, null);
+      }, 1500),
+    };
+    state.request = request;
+    if (state.queue) previewQueueRegistrations.get(state.queue)?.pendingStates.add(state);
+
+    const settings = this.settings;
+    if (settings) {
+      const palette = getThemePalette(settings.theme);
+      handle.applyTheme(buildResttyTheme(palette), palette.name);
+    }
+    handle.updateSize(true);
+    return promise;
+  }
+
+  async capturePreview(options: TerminalPreviewOptions): Promise<Blob | null> {
+    const root = this.root;
+    if (!root) return null;
+    const width = Math.max(1, Math.floor(options.width));
+    const height = Math.max(1, Math.floor(options.height));
+    const rootRect = root.getBoundingClientRect();
+    if (rootRect.width <= 0 || rootRect.height <= 0) return null;
+
+    const target = document.createElement('canvas');
+    target.width = width;
+    target.height = height;
+    const ctx = target.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, width, height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    const scale = Math.min(width / rootRect.width, height / rootRect.height);
+    const drawWidth = rootRect.width * scale;
+    const drawHeight = rootRect.height * scale;
+    const offsetX = (width - drawWidth) / 2;
+    const offsetY = (height - drawHeight) / 2;
+
+    const canvases = [...root.querySelectorAll<HTMLCanvasElement>('canvas.pane-canvas, .pane canvas')];
+    const snapshots = await Promise.all(canvases.map(async (canvas) => {
+      const pane = canvas.closest<HTMLElement>('.pane[data-pane-id]');
+      const paneId = Number(pane?.dataset.paneId);
+      const handle = Number.isFinite(paneId) ? this.surface?.pane?.(paneId) : null;
+      const source = handle?.getBackend() === 'webgpu'
+        ? await this.captureWebGpuPane(paneId, handle)
+        : canvas;
+      return { canvas, source };
+    }));
+    let drawn = 0;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(offsetX, offsetY, drawWidth, drawHeight);
+    ctx.clip();
+    for (const { canvas, source } of snapshots) {
+      if (!source) continue;
+      if (canvas.width <= 0 || canvas.height <= 0) continue;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      const dx = offsetX + (rect.left - rootRect.left) * scale;
+      const dy = offsetY + (rect.top - rootRect.top) * scale;
+      const dw = rect.width * scale;
+      const dh = rect.height * scale;
+      if (dx + dw < 0 || dy + dh < 0 || dx > width || dy > height) continue;
+      try {
+        ctx.drawImage(source, dx, dy, dw, dh);
+        drawn += 1;
+      } catch {
+        // Canvas readback can fail for a backend-specific surface; keep this
+        // preview path best-effort and leave the caller's cached image intact.
+      }
+    }
+    ctx.restore();
+    if (drawn === 0) return null;
+    return await new Promise<Blob | null>((resolve) => target.toBlob(resolve, 'image/png'));
   }
 
   // create() does the real work; open() exists to satisfy the interface.
@@ -733,6 +1131,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     this.layoutFrame = 0;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    for (const id of [...this.previewCanvases.keys()]) this.releasePreviewCanvas(id);
     this.term?.dispose();
     this.term = null;
     this.panes.clear();

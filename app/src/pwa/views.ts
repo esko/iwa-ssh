@@ -54,6 +54,13 @@ import { parseTerminalConnectionCommand } from '../connections/sshCommandParser'
 import { purgeAllEtLocalData, readEtLocalDataSummary } from '../et/purgeLocalData';
 import { readClipboardPaste } from './clipboardMedia';
 import { shellQuotePath } from '../ssh/RemoteImageUploader';
+import {
+  TabPreviewCache,
+  clampTabOverviewSelection,
+  filterTabOverviewEntries,
+  moveTabOverviewSelection,
+  type TabOverviewEntry,
+} from './tabOverview';
 
 // `active*` always point at the focused tab's session, so the existing helpers
 // (copy, reconnect, settings sync, context menu) keep operating on it.
@@ -110,6 +117,8 @@ const sessions: TermSession[] = [];
 let sessionSeq = 0;
 let statusHideTimer = 0;
 let tabRenderFrame = 0;
+const tabPreviewCache = new TabPreviewCache();
+const TAB_PREVIEW_SIZE = { width: 480, height: 270 };
 
 function activeSession(): TermSession | null {
   return sessions.find((s) => s.id === activeSessionId) ?? null;
@@ -1863,6 +1872,8 @@ function updateSharedStatus(session: TermSession, state: TerminalTransportStatus
 function setActiveSession(id: string): void {
   const session = sessions.find((s) => s.id === id);
   if (!session) return;
+  const previous = activeSession();
+  if (previous && previous.id !== id) void refreshSessionPreview(previous);
   activeSessionId = id;
   sessions.forEach((s) => (s.container.hidden = s.id !== id));
   activeTerminal = session.terminal ?? null;
@@ -1907,6 +1918,7 @@ function setActiveSession(id: string): void {
 function closeSession(session: TermSession): void {
   const index = sessions.indexOf(session);
   if (index < 0) return;
+  tabPreviewCache.revoke(session.id);
   session.titleSub?.dispose();
   session.paneSubs.forEach((sub) => sub.dispose());
   session.paneSubs = [];
@@ -1974,6 +1986,27 @@ function paneSessionStatus(session: TermSession): TerminalTransportStatus {
 
 function paneStatusError(session: TermSession): string | undefined {
   return [...session.panes.values()].find((pane) => pane.status === 'error' && pane.error)?.error;
+}
+
+async function refreshSessionPreview(session: TermSession | null | undefined): Promise<void> {
+  if (!session?.terminal) return;
+  const blob = await session.terminal.capturePreview(TAB_PREVIEW_SIZE).catch(() => null);
+  if (blob && sessions.includes(session)) tabPreviewCache.set(session.id, blob);
+}
+
+function tabOverviewEntry(session: TermSession): TabOverviewEntry {
+  const target = session.spec ? formatConnectionTarget(session.spec) : undefined;
+  return {
+    id: session.id,
+    title: session.title,
+    target,
+    protocol: session.spec?.protocol ?? (session.kind === 'terminal' ? 'ssh' : undefined),
+    kind: session.kind,
+    status: tabStatus(session),
+    paneCount: session.panes.size,
+    active: session.id === activeSessionId,
+    previewUrl: tabPreviewCache.get(session.id)?.url,
+  };
 }
 
 function scheduleTabRender(): void {
@@ -2101,6 +2134,147 @@ function cycleTab(direction: number): void {
   const index = sessions.findIndex((s) => s.id === activeSessionId);
   const next = (index + direction + sessions.length) % sessions.length;
   setActiveSession(sessions[next].id);
+}
+
+function tabOverviewBadgeHTML(entry: TabOverviewEntry): string {
+  const protocol = entry.protocol
+    ? `<span class="tab-overview-badge">${escapeHTML(entry.protocol === 'et' ? 'ET' : entry.protocol.toUpperCase())}</span>`
+    : '';
+  const panes = entry.paneCount > 1 ? `<span class="tab-overview-badge">⊞ ${entry.paneCount}</span>` : '';
+  const statusLabel = entry.kind === 'launcher' ? 'New Tab' : entry.status;
+  return `${protocol}${panes}<span class="tab-overview-badge" data-state="${escapeHTML(entry.status)}">${escapeHTML(statusLabel)}</span>`;
+}
+
+function tabOverviewCardHTML(entry: TabOverviewEntry, index: number, selected: boolean): string {
+  const preview = entry.previewUrl
+    ? `<img class="tab-overview-img" src="${escapeHTML(entry.previewUrl)}" alt="">`
+    : `<div class="tab-overview-placeholder"><span>${entry.kind === 'launcher' ? 'New Tab' : 'No preview yet'}</span></div>`;
+  const subtitle = entry.target && entry.target !== entry.title ? entry.target : entry.kind === 'launcher' ? 'Choose a host' : '';
+  return `<div class="tab-overview-card" role="option" tabindex="${selected ? '0' : '-1'}" data-tab-overview-id="${escapeHTML(entry.id)}" data-index="${index}" aria-selected="${selected}" aria-current="${entry.active ? 'true' : 'false'}">
+    <div class="tab-overview-thumb">
+      ${preview}
+      <button class="tab-overview-close" type="button" data-close-overview-tab="${escapeHTML(entry.id)}" aria-label="Close ${escapeHTML(entry.title)}">×</button>
+    </div>
+    <div class="tab-overview-meta">
+      <span class="tab-overview-title">${escapeHTML(entry.title)}</span>
+      ${subtitle ? `<span class="tab-overview-sub">${escapeHTML(subtitle)}</span>` : ''}
+      <span class="tab-overview-badges">${tabOverviewBadgeHTML(entry)}</span>
+    </div>
+  </div>`;
+}
+
+function openTabOverview(): void {
+  if (sessions.length === 0) return;
+  openOverlay((close) => {
+    const modal = elFromHTML(`
+      <div class="modal tab-overview" role="dialog" aria-label="Tab overview">
+        <header class="tab-overview-head">
+          <span class="tab-overview-count" data-tab-overview-count></span>
+          <div class="tab-overview-search">
+            <span class="filter-icon">${SEARCH_SVG}</span>
+            <input type="search" class="tab-overview-input" placeholder="Search tabs" autocomplete="off" spellcheck="false" aria-label="Search tabs" data-tab-overview-input>
+          </div>
+        </header>
+        <div class="tab-overview-grid" role="listbox" aria-label="Open tabs" data-tab-overview-list></div>
+      </div>
+    `);
+    const input = modal.querySelector<HTMLInputElement>('[data-tab-overview-input]')!;
+    const list = modal.querySelector<HTMLElement>('[data-tab-overview-list]')!;
+    const count = modal.querySelector<HTMLElement>('[data-tab-overview-count]')!;
+    let matches: TabOverviewEntry[] = [];
+    let selected = 0;
+
+    const syncSelection = (): void => {
+      const rows = [...list.querySelectorAll<HTMLElement>('.tab-overview-card')];
+      rows.forEach((row, i) => {
+        row.setAttribute('aria-selected', String(i === selected));
+        row.tabIndex = i === selected ? 0 : -1;
+      });
+      rows[selected]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    };
+
+    const renderList = (query: string, preferredSelection = selected): void => {
+      const entries = sessions.map(tabOverviewEntry);
+      matches = filterTabOverviewEntries(entries, query);
+      selected = clampTabOverviewSelection(preferredSelection, matches.length);
+      const searching = query.trim().length > 0;
+      count.textContent = searching
+        ? `${matches.length} of ${entries.length} ${entries.length === 1 ? 'Tab' : 'Tabs'}`
+        : `${entries.length} ${entries.length === 1 ? 'Tab' : 'Tabs'}`;
+      list.innerHTML = matches.length
+        ? matches.map((entry, i) => tabOverviewCardHTML(entry, i, i === selected)).join('')
+        : '<p class="tab-overview-empty">No tabs match.</p>';
+      syncSelection();
+    };
+
+    const activate = (entry?: TabOverviewEntry): void => {
+      if (!entry) return;
+      close();
+      setActiveSession(entry.id);
+    };
+
+    const closeEntry = (tabId: string): void => {
+      const session = sessions.find((s) => s.id === tabId);
+      if (!session || !confirmCloseSession(session)) return;
+      const closingLast = sessions.length <= 1;
+      const closedIndex = matches.findIndex((entry) => entry.id === tabId);
+      closeSession(session);
+      if (closingLast) {
+        close();
+        return;
+      }
+      renderList(input.value, closedIndex >= 0 ? Math.min(closedIndex, selected) : selected);
+    };
+
+    input.addEventListener('input', () => renderList(input.value, 0));
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+        event.preventDefault();
+        selected = moveTabOverviewSelection(selected, 1, matches.length);
+        syncSelection();
+      } else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+        event.preventDefault();
+        selected = moveTabOverviewSelection(selected, -1, matches.length);
+        syncSelection();
+      } else if (event.key === 'Home') {
+        event.preventDefault();
+        selected = 0;
+        syncSelection();
+      } else if (event.key === 'End') {
+        event.preventDefault();
+        selected = Math.max(0, matches.length - 1);
+        syncSelection();
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        activate(matches[selected]);
+      }
+    });
+
+    list.addEventListener('click', (event) => {
+      const closeBtn = (event.target as HTMLElement).closest<HTMLElement>('[data-close-overview-tab]');
+      if (closeBtn?.dataset.closeOverviewTab) {
+        event.stopPropagation();
+        closeEntry(closeBtn.dataset.closeOverviewTab);
+        return;
+      }
+      const card = (event.target as HTMLElement).closest<HTMLElement>('[data-tab-overview-id]');
+      const entry = matches.find((item) => item.id === card?.dataset.tabOverviewId);
+      activate(entry);
+    });
+    list.addEventListener('pointermove', (event) => {
+      const card = (event.target as HTMLElement).closest<HTMLElement>('[data-index]');
+      if (!card?.dataset.index) return;
+      selected = clampTabOverviewSelection(Number(card.dataset.index), matches.length);
+      syncSelection();
+    });
+
+    renderList('');
+    void refreshSessionPreview(activeSession()).then(() => {
+      if (modal.isConnected) renderList(input.value, selected);
+    });
+    setTimeout(() => input.focus(), 0);
+    return modal;
+  });
 }
 
 /** Split the focused Restty pane. */
@@ -2384,6 +2558,7 @@ function buildPaletteCommands(): PaletteCommand[] {
   const canCopy = (activeTerminal?.hasSelection() ?? false) || canCopyViaRenderer();
   const commands: PaletteCommand[] = [
     { label: 'New tab', group: 'Tabs', key: '⌃T', run: () => setActiveSession(createLauncherTab().id) },
+    { label: 'Tab overview', group: 'Tabs', disabled: sessions.length === 0, run: openTabOverview },
     { label: 'Duplicate session', group: 'Tabs', disabled: !activeSpec, run: duplicateSession },
     { label: 'Close tab', group: 'Tabs', key: '⌃W', disabled: !session, run: () => session && confirmCloseSession(session) && closeSession(session) },
     { label: 'Next tab', group: 'Tabs', key: '⌃Tab', disabled: sessions.length < 2, run: () => cycleTab(1) },
@@ -2830,6 +3005,7 @@ export function disposeTerminal(): void {
     session.terminal?.dispose();
   }
   sessions.length = 0;
+  tabPreviewCache.clear();
   fontSyncCleanup?.();
   fontSyncCleanup = null;
   captionCleanup?.();
