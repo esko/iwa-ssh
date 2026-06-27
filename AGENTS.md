@@ -1,17 +1,17 @@
 # Agent Guide
 
-This repo uses the Moshtty `legacy-pwa` frontend shape with Restty as its sole terminal renderer. `iwa-ssh` keeps IWA packaging, manifests, signing/bundling scripts, Direct Sockets permissions, install docs, upstream nassh/wassh runtime assets, and thin platform adapters.
+This repo uses the Moshtty `legacy-pwa` frontend shape with Restty as its sole terminal renderer. `Gosh` keeps IWA packaging, manifests, signing/bundling scripts, Direct Sockets permissions, install docs, upstream nassh/wassh runtime assets, and thin platform adapters.
 
 ## Current Product Direction
 
 - Base frontend work on Moshtty `legacy-pwa`, pruned for IWA.
 - Use Restty for terminal rendering, native pane layout, and splits.
 - Use custom caption tabs inside each unframed terminal window. Each tab contains one or more pane sessions, and each pane owns an independent transport. See `CONTEXT.md` and ADR 0008.
-- Use `iwa-ssh` profiles as the launcher/session model, replacing legacy PWA workspaces, spaces, internal tabs, panes, splits, and durable Go-agent sessions.
+- Use `Gosh` profiles as the launcher/session model, replacing legacy PWA workspaces, spaces, internal tabs, panes, splits, and durable Go-agent sessions.
 - Plug IWA Direct Sockets SSH transport into the frontend through a small transport boundary.
 - Match the ChromeOS Terminal visual north star in `docs/references/chromeos-terminal/` while implementing tabs in the custom caption.
 
-Do not reuse old `iwa-ssh` app-shell routes, xterm terminal UI, upstream Terminal-shaped settings screens, session route UI, simulated tabs, dashboard, or debug-first frontend surfaces. Keep code under `app/src/ssh`, `app/upstream`, IWA manifests, and scripts only when it is low-level IWA/runtime infrastructure.
+Do not reuse old `Gosh` app-shell routes, xterm terminal UI, upstream Terminal-shaped settings screens, session route UI, simulated tabs, dashboard, or debug-first frontend surfaces. Keep code under `app/src/ssh`, `app/upstream`, IWA manifests, and scripts only when it is low-level IWA/runtime infrastructure.
 
 Mosh remains a follow-up transport after SSH over Direct Sockets is stable. Do not keep old nassh UI scaffolding just to preserve Mosh.
 
@@ -35,7 +35,7 @@ Do not spawn subagents for tiny single-file edits or when their context loading 
 
 ### Issue tracker
 
-Issues and PRDs live in GitHub Issues for `esko/iwa-ssh`; external PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+Issues and PRDs live in GitHub Issues for `esko/gosh`; external PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

@@ -28,7 +28,7 @@ offers negotiated streaming, structured errors, and atomic filesystem actions.
 - Sidecars reuse the profile host, SSH port, username, identity staging,
   known-host store, host-key prompt, and secure-input prompt. Mosh and ET use
   their profile's SSH endpoint for this sidecar.
-- Uploads are limited to 25 MiB, stored below `~/.cache/iwa-ssh/pastes/`, use
+- Uploads are limited to 25 MiB, stored below `~/.cache/gosh/pastes/`, use
   randomized `iwa-paste-*` names, mode `0600`, a `.part` file, and atomic
   rename. App-owned files older than seven days are removed best-effort.
 - Kitty file (`t=f`), temporary-file (`t=t`), and shared-memory (`t=s`) media

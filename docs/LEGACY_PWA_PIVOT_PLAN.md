@@ -8,13 +8,13 @@ pane owns its connection intent, transport, and optional ET resume identity.
 
 ## Active slices
 
-1. [#47](https://github.com/esko/iwa-ssh/issues/47): align product truth,
+1. [#47](https://github.com/esko/gosh/issues/47): align product truth,
    remove Wterm and native-tab code, and keep Restty plus `TerminalSink`.
-2. [#48](https://github.com/esko/iwa-ssh/issues/48): canonicalize connection
+2. [#48](https://github.com/esko/gosh/issues/48): canonicalize connection
    intent and make echo development-only.
-3. [#49](https://github.com/esko/iwa-ssh/issues/49): move tab/pane lifecycle
+3. [#49](https://github.com/esko/gosh/issues/49): move tab/pane lifecycle
    behind `TerminalWindowController`.
-4. [#50](https://github.com/esko/iwa-ssh/issues/50): move ET worker and lock
+4. [#50](https://github.com/esko/gosh/issues/50): move ET worker and lock
    lifecycle behind `EtWorkerController`.
 
 Slices land sequentially. Every slice changes the installed IWA, bumps all four

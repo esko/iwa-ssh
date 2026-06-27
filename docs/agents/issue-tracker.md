@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and PRDs for this repo live as GitHub issues in `esko/iwa-ssh`. Use the `gh` CLI from the repo root.
+Issues and PRDs for this repo live as GitHub issues in `esko/gosh`. Use the `gh` CLI from the repo root.
 
 ## Conventions
 

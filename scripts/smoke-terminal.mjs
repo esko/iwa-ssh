@@ -18,7 +18,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
 async function main() {
-  console.log('iwa-ssh smoke runner\n');
+  console.log('Gosh smoke runner\n');
   let exitCode = 0;
 
   console.log('── SSH fixture ──');

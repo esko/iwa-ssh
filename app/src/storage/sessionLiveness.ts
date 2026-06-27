@@ -13,7 +13,7 @@
  * window can refresh its dots the instant a connection appears or drops.
  */
 
-export const LIVENESS_STORAGE_KEY = 'iwa-ssh:session-liveness';
+export const LIVENESS_STORAGE_KEY = 'gosh:session-liveness';
 /** How often a live transport refreshes its heartbeat. */
 export const HEARTBEAT_INTERVAL_MS = 8_000;
 /** A heartbeat older than this is treated as dead (covers unclean window close). */

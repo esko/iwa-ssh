@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "generatedAt": "2026-06-22T00:00:00.000Z",
-  "title": "Design System: iwa-ssh",
+  "title": "Design System: Gosh",
   "extensions": {
     "colorMeta": {
       "bg": { "role": "neutral", "displayName": "Pit Black", "canonical": "#16171b", "tonalRamp": ["#0c0d10", "#16171b", "#1f2127", "#292c34", "#3a3e48", "#565b66", "#7d828d", "#a8acb5", "#e7e9ee"] },
@@ -84,7 +84,7 @@
   ],
   "narrative": {
     "northStar": "The Quiet Cockpit",
-    "overview": "iwa-ssh is a dark instrument panel built to recede. The terminal is the only surface that earns brightness; every launcher row, dialog, tab, and settings control around it is a calm, low-contrast control that exists to get the user connected and then disappear. The system is monochrome by conviction — a single cool-gray ramp from near-black to off-white carries 95% of the interface. Surfaces are soft, not sharp: gently-gradiented panels, 12px radii, hairline white-on-black dividers, and shadows that appear only when an element genuinely floats above the black desktop. Color enters in exactly three places — transport pills, status dots, and the one light primary button. This system explicitly rejects the iTerm2 / heavy-configurator aesthetic.",
+    "overview": "Gosh is a dark instrument panel built to recede. The terminal is the only surface that earns brightness; every launcher row, dialog, tab, and settings control around it is a calm, low-contrast control that exists to get the user connected and then disappear. The system is monochrome by conviction — a single cool-gray ramp from near-black to off-white carries 95% of the interface. Surfaces are soft, not sharp: gently-gradiented panels, 12px radii, hairline white-on-black dividers, and shadows that appear only when an element genuinely floats above the black desktop. Color enters in exactly three places — transport pills, status dots, and the one light primary button. This system explicitly rejects the iTerm2 / heavy-configurator aesthetic.",
     "keyCharacteristics": [
       "Monochrome cool-gray ramp; color reserved for status and transport identity only.",
       "Dark by default; the terminal canvas is true black.",

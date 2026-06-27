@@ -9,7 +9,7 @@ import {
 } from './terminalFonts';
 import { getCustomFontData } from './customFontStore';
 
-export const SETTINGS_KEY = 'iwa-ssh-legacy-pwa-terminal-settings';
+export const SETTINGS_KEY = 'gosh-legacy-pwa-terminal-settings';
 
 export const DEFAULT_PWA_SETTINGS: PwaTerminalSettings = {
   fontFamily: DEFAULT_FONT_ID,

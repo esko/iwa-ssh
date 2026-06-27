@@ -31,7 +31,7 @@ class ExecSink implements TerminalSink {
 }
 
 export function buildPortableExecUploadCommand(filename: string, marker: string): string {
-  return `umask 077; d="$HOME/.cache/iwa-ssh/pastes"; mkdir -p "$d" || exit 73; find "$d" -type f -name 'iwa-paste-*' -mtime +7 -exec rm -f {} + 2>/dev/null || :; f="$d/${filename}"; p="$f.part"; trap 'rm -f "$p"' EXIT HUP INT TERM; if printf '' | base64 --decode >/dev/null 2>&1; then flag=--decode; elif printf '' | base64 -D >/dev/null 2>&1; then flag=-D; else exit 69; fi; { while IFS= read -r line; do [ "$line" = '${marker}' ] && break; printf %s "$line"; done; } | base64 "$flag" >"$p" && chmod 600 "$p" && mv -f "$p" "$f" || exit 74; trap - EXIT HUP INT TERM; printf '\\nIWA_UPLOAD_OK:%s\\n' "$(printf %s "$f" | base64 | tr -d '\\n')"`;
+  return `umask 077; d="$HOME/.cache/gosh/pastes"; mkdir -p "$d" || exit 73; find "$d" -type f -name 'iwa-paste-*' -mtime +7 -exec rm -f {} + 2>/dev/null || :; f="$d/${filename}"; p="$f.part"; trap 'rm -f "$p"' EXIT HUP INT TERM; if printf '' | base64 --decode >/dev/null 2>&1; then flag=--decode; elif printf '' | base64 -D >/dev/null 2>&1; then flag=-D; else exit 69; fi; { while IFS= read -r line; do [ "$line" = '${marker}' ] && break; printf %s "$line"; done; } | base64 "$flag" >"$p" && chmod 600 "$p" && mv -f "$p" "$f" || exit 74; trap - EXIT HUP INT TERM; printf '\\nIWA_UPLOAD_OK:%s\\n' "$(printf %s "$f" | base64 | tr -d '\\n')"`;
 }
 
 /** Portable Linux/macOS SSH-exec upload used only when SFTP is unavailable. */

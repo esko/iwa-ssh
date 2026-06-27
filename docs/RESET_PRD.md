@@ -4,7 +4,7 @@
 
 ## Goal
 
-Rebuild `iwa-ssh` as a near-upstream ChromeOS Terminal and nassh port for Isolated Web Apps. The product should feel and behave like Google Terminal/nassh by default, with only a small set of explicit local deltas.
+Rebuild `Gosh` as a near-upstream ChromeOS Terminal and nassh port for Isolated Web Apps. The product should feel and behave like Google Terminal/nassh by default, with only a small set of explicit local deltas.
 
 Primary upstream references:
 
@@ -14,7 +14,7 @@ Primary upstream references:
 
 Related prior work:
 
-- moshtty (legacy PWA): https://github.com/esko/moshtty/tree/legacy-pwa — our earlier ChromeOS terminal. Gets **working tabs from native PWA tabbed mode** (`display_override: ["tabbed"]` + `tab_strip`), as a **multi-page** app (separate `index.html` / `terminal.html`); PTY sessions are kept durable by a Crostini Go agent over WebSocket. Closest precedent for the tab behavior we want. Differences from iwa-ssh: it is a PWA (not IWA) and multi-page (not a single-page app). iwa-ssh already declares the same tab manifest keys, so the open question is why the IWA/SPA combination does not surface tabs.
+- moshtty (legacy PWA): https://github.com/esko/moshtty/tree/legacy-pwa — our earlier ChromeOS terminal. Gets **working tabs from native PWA tabbed mode** (`display_override: ["tabbed"]` + `tab_strip`), as a **multi-page** app (separate `index.html` / `terminal.html`); PTY sessions are kept durable by a Crostini Go agent over WebSocket. Closest precedent for the tab behavior we want. Differences from gosh: it is a PWA (not IWA) and multi-page (not a single-page app). Gosh already declares the same tab manifest keys, so the open question is why the IWA/SPA combination does not surface tabs.
 
 ## Approved Deltas
 
@@ -50,20 +50,20 @@ The reset uses these local module boundaries:
 
 ## Issue Order
 
-1. [#24](https://github.com/esko/iwa-ssh/issues/24): Create reset branch and preserve current WIP.
-2. [#25](https://github.com/esko/iwa-ssh/issues/25): Write reset PRD, ADRs, and agent guide.
-3. [#26](https://github.com/esko/iwa-ssh/issues/26): Import upstream-shaped terminal module layout.
-4. [#27](https://github.com/esko/iwa-ssh/issues/27): Port SSH command parser and profile model.
-5. [#28](https://github.com/esko/iwa-ssh/issues/28): Build `TerminalEmulator` around xterm 6.1 beta.
-6. [#29](https://github.com/esko/iwa-ssh/issues/29): Implement font and Nerd Font settings.
-7. [#30](https://github.com/esko/iwa-ssh/issues/30): Implement robust theme settings.
-8. [#31](https://github.com/esko/iwa-ssh/issues/31): Implement scrollback and performance settings.
-9. [#32](https://github.com/esko/iwa-ssh/issues/32): Add `NasshRuntime` adapter.
-10. [#33](https://github.com/esko/iwa-ssh/issues/33): Add upstream asset sync and patch script.
-11. [#34](https://github.com/esko/iwa-ssh/issues/34): Implement Mosh support.
-12. [#35](https://github.com/esko/iwa-ssh/issues/35): Port upstream-style tests.
-13. [#36](https://github.com/esko/iwa-ssh/issues/36): Run device acceptance.
-14. [#37](https://github.com/esko/iwa-ssh/issues/37): Remove obsolete custom code.
+1. [#24](https://github.com/esko/gosh/issues/24): Create reset branch and preserve current WIP.
+2. [#25](https://github.com/esko/gosh/issues/25): Write reset PRD, ADRs, and agent guide.
+3. [#26](https://github.com/esko/gosh/issues/26): Import upstream-shaped terminal module layout.
+4. [#27](https://github.com/esko/gosh/issues/27): Port SSH command parser and profile model.
+5. [#28](https://github.com/esko/gosh/issues/28): Build `TerminalEmulator` around xterm 6.1 beta.
+6. [#29](https://github.com/esko/gosh/issues/29): Implement font and Nerd Font settings.
+7. [#30](https://github.com/esko/gosh/issues/30): Implement robust theme settings.
+8. [#31](https://github.com/esko/gosh/issues/31): Implement scrollback and performance settings.
+9. [#32](https://github.com/esko/gosh/issues/32): Add `NasshRuntime` adapter.
+10. [#33](https://github.com/esko/gosh/issues/33): Add upstream asset sync and patch script.
+11. [#34](https://github.com/esko/gosh/issues/34): Implement Mosh support.
+12. [#35](https://github.com/esko/gosh/issues/35): Port upstream-style tests.
+13. [#36](https://github.com/esko/gosh/issues/36): Run device acceptance.
+14. [#37](https://github.com/esko/gosh/issues/37): Remove obsolete custom code.
 
 ## Acceptance Gates
 

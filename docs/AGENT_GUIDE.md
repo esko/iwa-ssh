@@ -22,7 +22,7 @@ Before reset implementation work, read:
 1. Preserve WIP and create/reset branch when requested by the maintainer.
 2. Keep docs, PRD, and issue links current.
 3. Keep the active frontend under the legacy-PWA/Ghostty shape.
-4. Replace legacy workspaces/sessions with `iwa-ssh` profiles and recents.
+4. Replace legacy workspaces/sessions with `Gosh` profiles and recents.
 5. Keep tab and pane-session lifecycle consistent with ADR 0008.
 6. Plug Direct Sockets SSH through a transport boundary.
 7. Keep Mosh deferred until SSH acceptance passes.

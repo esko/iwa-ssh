@@ -19,7 +19,7 @@ Before changing product direction, frontend architecture, runtime transport, or 
 ## Vocabulary
 
 - **legacy PWA frontend**: Moshtty `legacy-pwa:web/`, used as the frontend base.
-- **profile**: `iwa-ssh` saved connection model, replacing legacy PWA workspaces, spaces, and sessions.
+- **profile**: `Gosh` saved connection model, replacing legacy PWA workspaces, spaces, and sessions.
 - **tab**: An app-rendered tab in the custom unframed caption.
 - **pane session**: A Restty pane with its own connection intent, transport, and optional ET resume identity.
 - **transport boundary**: A narrow `TerminalSink` between pane I/O and browser networking.

@@ -6,7 +6,7 @@ p1_count: 0
 timestamp: 2026-06-23T06-27-20Z
 slug: connect-modal-openconnectionform
 ---
-# Connect Modal Critique — iwa-ssh
+# Connect Modal Critique — Gosh
 
 ## Design Health Score
 

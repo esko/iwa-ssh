@@ -1,6 +1,6 @@
 # Security
 
-iwa-ssh is a **high-trust IWA** — packaged, signed, isolated. Security choices below are intentional for personal SSH use on ChromeOS.
+Gosh is a **high-trust IWA** — packaged, signed, isolated. Security choices below are intentional for personal SSH use on ChromeOS.
 
 ## Threat model
 
@@ -28,7 +28,7 @@ iwa-ssh is a **high-trust IWA** — packaged, signed, isolated. Security choices
 
 ### What IWA isolation protects
 
-- **Origin isolation** — App data (`iwa-ssh` IndexedDB, nassh `indexeddb-fs`) is not readable by arbitrary `https://` pages or other extensions.
+- **Origin isolation** — App data (`gosh` IndexedDB, nassh `indexeddb-fs`) is not readable by arbitrary `https://` pages or other extensions.
 - **Bundle integrity** — Production installs load only code from the signed `.swbn`; CSP blocks inline scripts and remote script loads.
 - **Cross-origin isolation** — COOP/COEP/CORP headers enable a locked-down execution environment suitable for WASM SSH.
 - **No extension relay** — TCP goes through Direct Sockets in-process; there is no NaCl/background-relay hop that another extension could impersonate.
@@ -52,7 +52,7 @@ Data and trust flow across these layers. Each boundary is a place where secrets 
 flowchart LR
   User["User"]
   UI["IWA UI<br/>routes · settings · prompts"]
-  IDB["IndexedDB<br/>database: iwa-ssh"]
+  IDB["IndexedDB<br/>database: gosh"]
   Stage["Connect staging<br/>identitySecrets · nasshIdentity · nasshKnownHosts"]
   NasshFS["nassh indexeddb-fs<br/>/.ssh/identity · known_hosts"]
   Wassh["wassh / OpenSSH WASM<br/>CommandInstance"]
@@ -74,7 +74,7 @@ flowchart LR
 
 1. **User → UI** — All auth and trust decisions are explicit (connect button, storage passphrase, host-trust modal, `SecureInputPrompt` for OpenSSH-encrypted keys).
 2. **UI → IndexedDB** — Private keys are stored as `encryptedPrivateKey` (WebCrypto blob). Export JSON omits key bytes (`hasEncryptedPrivateKey` / `hasLegacyPlaintextKey` flags only).
-3. **IndexedDB → nassh FS** — On connect, `stageIdentityForNassh` decrypts and writes PEM to `/.ssh/identity/iwa-ssh-{id}`; `stageKnownHostsForNassh` writes `/.ssh/known_hosts`. This is a **plaintext staging step** inside the IWA origin.
+3. **IndexedDB → nassh FS** — On connect, `stageIdentityForNassh` decrypts and writes PEM to `/.ssh/identity/gosh-{id}`; `stageKnownHostsForNassh` writes `/.ssh/known_hosts`. This is a **plaintext staging step** inside the IWA origin.
 4. **nassh FS → wassh** — Upstream `CommandInstance` runs OpenSSH in WASM with `--field-trial-direct-sockets`. `nasshChromePolyfill.ts` stubs `chrome.*` but deliberately leaves `chrome.sockets` unset so wassh uses Direct Sockets.
 5. **wassh → Direct Sockets → remote** — Raw TCP to the profile’s declared `host:port` only; no relay fallback in this fork.
 
@@ -148,7 +148,7 @@ SSH traffic uses upstream wassh via nassh `CommandInstance` (`--field-trial-dire
   profile SSH host and port. It reuses identity staging, known-host state, live
   host-key confirmation, and secure-input UI; it does not weaken SSH trust.
 - Original bytes are written with `0600` permissions under
-  `~/.cache/iwa-ssh/pastes/` through an exclusive `.part` name and atomic
+  `~/.cache/gosh/pastes/` through an exclusive `.part` name and atomic
   rename. Cancellation and failure remove the partial file best-effort.
 - Cleanup considers only randomized `iwa-paste-*` files owned by this feature
   and older than seven days. Cleanup failure does not broaden deletion or block
@@ -203,22 +203,22 @@ Cross-Origin-Resource-Policy: same-origin
 
 - IWA storage is separate from normal browser profile storage.
 - Each Web Bundle ID gets its own `isolated-app://` origin.
-- App state uses IndexedDB database `iwa-ssh` (`settings`, `profiles`, `identities`, `knownHosts`).
+- App state uses IndexedDB database `gosh` (`settings`, `profiles`, `identities`, `knownHosts`).
 - nassh maintains a separate `indexeddb-fs` volume for `/.ssh/*` staging — still inside the same IWA origin, not shared with other apps.
 - Export JSON omits private key bytes (`hasEncryptedPrivateKey` / `hasLegacyPlaintextKey` flags only).
 
-## nassh extension vs iwa-ssh IWA
+## nassh extension vs Gosh IWA
 
 Both reuse Chromium **libapps** (nassh + wassh), but the packaging and platform APIs differ.
 
-| | **Secure Shell (nassh) extension** | **iwa-ssh IWA** |
+| | **Secure Shell (nassh) extension** | **Gosh IWA** |
 |---|----------------------------------|-----------------|
 | **Origin** | `chrome-extension://{extension-id}/` | `isolated-app://{web-bundle-id}/` |
 | **Distribution** | Chrome Web Store (Google-signed CRX) | Signed Web Bundle (`.swbn`); local install or optional update manifest |
 | **Updates** | Web Store auto-update channel | Publisher-controlled signed bundles; `iwa/update-manifest.json` scaffold only |
 | **TCP transport** | `chrome.sockets.tcp` in extension mode; Direct Sockets optional in PWA manifest | **Direct Sockets only** — `chrome.sockets` intentionally absent (`nasshChromePolyfill.ts`) |
 | **Relay / proxy** | Optional NaCl/Google relay HTML for constrained networks | **No relay** — direct TCP or fail |
-| **Storage** | `chrome.storage` + extension IndexedDB | IWA-isolated IndexedDB (`iwa-ssh` + nassh `indexeddb-fs`) |
+| **Storage** | `chrome.storage` + extension IndexedDB | IWA-isolated IndexedDB (`gosh` + nassh `indexeddb-fs`) |
 | **Key storage** | Upstream nassh preferences / FS (varies by build) | WebCrypto `encryptedPrivateKey` in app IndexedDB; legacy `privateKeyPemBytesDevOnly` only for old imports |
 | **CSP** | MV3 `extension_pages` CSP (`script-src 'self' 'wasm-unsafe-eval'`) | Full IWA CSP + Trusted Types + COOP/COEP/CORP (see above) |
 | **Signing** | Web Store code signing | Ed25519 or ECDSA P-256 bundle signing key (`iwa/keys/encrypted_key.pem`) |

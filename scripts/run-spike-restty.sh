@@ -2,7 +2,7 @@
 # Launch Vite + headless Chrome (CDP) and run the restty spike harness.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PORT="${IWA_SSH_DEV_PORT:-5173}"
+PORT="${GOSH_DEV_PORT:-5173}"
 CDP_PORT="${CHROME_DEBUG_PORT:-9222}"
 
 cd "$ROOT"

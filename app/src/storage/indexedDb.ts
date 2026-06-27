@@ -3,7 +3,7 @@ import type { AppSettings, Identity, KnownHost, Profile } from '../settings/type
 import { DEFAULT_SETTINGS } from '../settings/defaults';
 import { normalizeIdentity } from './identityNormalize';
 
-interface IwaSshDb extends DBSchema {
+interface GoshDb extends DBSchema {
   settings: {
     key: 'app';
     value: AppSettings;
@@ -54,7 +54,7 @@ interface IwaSshDb extends DBSchema {
   };
 }
 
-const DB_NAME = 'iwa-ssh';
+const DB_NAME = 'gosh';
 const DB_VERSION = 5;
 
 export type EtSessionPhase = 'bootstrapping' | 'active' | 'detached' | 'stale' | 'ended';
@@ -149,7 +149,7 @@ export type HostScreenshotRecord = {
   updatedAt: number;
 };
 
-let dbPromise: Promise<IDBPDatabase<IwaSshDb>> | null = null;
+let dbPromise: Promise<IDBPDatabase<GoshDb>> | null = null;
 let deviceKeyPromise: Promise<CryptoKey> | null = null;
 
 /** Close the cached connection. Exported for deterministic storage migration tests. */
@@ -160,9 +160,9 @@ export async function resetIndexedDbConnection(): Promise<void> {
   deviceKeyPromise = null;
 }
 
-function getDb(): Promise<IDBPDatabase<IwaSshDb>> {
+function getDb(): Promise<IDBPDatabase<GoshDb>> {
   if (!dbPromise) {
-    dbPromise = openDB<IwaSshDb>(DB_NAME, DB_VERSION, {
+    dbPromise = openDB<GoshDb>(DB_NAME, DB_VERSION, {
       upgrade(db, oldVersion) {
         if (oldVersion < 1) {
           db.createObjectStore('settings');

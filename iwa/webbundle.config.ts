@@ -59,12 +59,12 @@ export const IWA_CSP =
   "style-src 'self' 'unsafe-inline'; require-trusted-types-for 'script'; trusted-types default;";
 
 export const bundleConfig: WebBundleConfig = {
-  appName: 'iwa-ssh',
+  appName: 'gosh',
   webBundleId: 'PLACEHOLDER_RUN_wbn-dump-id_AFTER_GENERATING_KEY',
   version: '0.1.1',
   distDir: 'dist',
-  unsignedBundle: 'dist/iwa-ssh.unsigned.wbn',
-  signedBundle: 'dist/iwa-ssh.swbn',
+  unsignedBundle: 'dist/gosh.unsigned.wbn',
+  signedBundle: 'dist/gosh.swbn',
   signingKeyPath: 'iwa/keys/encrypted_key.pem',
   headerOverride: {
     'cross-origin-embedder-policy': 'require-corp',

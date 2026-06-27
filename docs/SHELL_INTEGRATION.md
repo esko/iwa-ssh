@@ -1,7 +1,7 @@
 # Shell integration (OSC 7 working directory)
 
 The terminal's right-click **Copy path** reports the remote shell's current
-working directory. iwa-ssh reads it from the standard **OSC 7** escape sequence
+working directory. Gosh reads it from the standard **OSC 7** escape sequence
 (`ESC ] 7 ; file://HOST/PATH ST`). A remote shell that doesn't emit OSC 7 will
 have no directory to report, so Copy path falls back to the connection target
 (`user@host`).
@@ -32,6 +32,6 @@ function __iwa_osc7 --on-event fish_prompt
 end
 ```
 
-Paths with spaces or non-ASCII characters should be percent-encoded; iwa-ssh
+Paths with spaces or non-ASCII characters should be percent-encoded; Gosh
 percent-decodes whatever the shell sends. Once enabled, Copy path returns the
 live remote directory.

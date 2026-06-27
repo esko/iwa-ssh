@@ -13,12 +13,12 @@ const UPSTREAM_BASE = '/upstream';
 const WASSH_WORKER_URL = `${UPSTREAM_BASE}/wassh/js/worker.js`;
 const UPSTREAM_PLUGIN_BASE = `${UPSTREAM_BASE}/plugin`;
 
-const DEV_HOST = process.env.IWA_SSH_DEV_HOST ?? '127.0.0.1';
-const DEV_PORT = Number(process.env.IWA_SSH_DEV_PORT ?? 5173);
+const DEV_HOST = process.env.GOSH_DEV_HOST ?? '127.0.0.1';
+const DEV_PORT = Number(process.env.GOSH_DEV_PORT ?? 5173);
 /** Dev Mode Proxy CSP adds ws://localhost:<port>; HMR must match (not 127.0.0.1). */
-const DEV_HMR_HOST = process.env.IWA_SSH_DEV_HMR_HOST ?? 'localhost';
+const DEV_HMR_HOST = process.env.GOSH_DEV_HMR_HOST ?? 'localhost';
 /** HMR is off by default — IWA CSP blocks ws except Dev Mode Proxy allowance; dev workflow reopens the app anyway. */
-const DEV_HMR_ENABLED = process.env.IWA_SSH_HMR === '1';
+const DEV_HMR_ENABLED = process.env.GOSH_HMR === '1';
 
 const crossOriginIsolationHeaders = {
   'Cross-Origin-Opener-Policy': 'same-origin',
@@ -187,7 +187,7 @@ export default defineConfig({
     // Asset URLs in isolated-app dev should resolve to the proxied dev origin.
     origin: `http://${DEV_HMR_HOST}:${DEV_PORT}`,
     headers: iwaDevHeaders,
-    // Vite HMR: off by default in IWA dev (CSP connect-src spam). Set IWA_SSH_HMR=1 for browser-only dev.
+    // Vite HMR: off by default in IWA dev (CSP connect-src spam). Set GOSH_HMR=1 for browser-only dev.
     hmr: DEV_HMR_ENABLED
       ? {
           host: DEV_HMR_HOST,

@@ -4,7 +4,7 @@ Personal-use **local-only** Isolated Web App for ChromeOS SSH. No web server hos
 
 ## Official references
 
-Use these before debugging iwa-ssh install or TCP issues:
+Use these before debugging Gosh install or TCP issues:
 
 | Resource | Role |
 |----------|------|
@@ -14,7 +14,7 @@ Use these before debugging iwa-ssh install or TCP issues:
 | [Direct Sockets (Chrome docs)](https://developer.chrome.com/docs/iwa/direct-sockets) | Required `permissions_policy`, `TCPSocket` usage, DevTools from Chrome 138+ |
 | [moshtty (legacy PWA)](https://github.com/esko/moshtty/tree/legacy-pwa) | Our earlier ChromeOS terminal with **working native tabbed mode** (`display_override: tabbed` + `tab_strip`) as a multi-page PWA. Tab-behavior precedent; PWA (not IWA), multi-page (not SPA) |
 
-iwa-ssh’s manifest `permissions_policy` matches Kitchen Sink / Telnet for TCP SSH targets:
+Gosh’s manifest `permissions_policy` matches Kitchen Sink / Telnet for TCP SSH targets:
 
 ```json
 "permissions_policy": {
@@ -55,7 +55,7 @@ Install steps (same for any dev-proxy example):
 2. `chrome://web-app-internals` → **Install IWA with Dev Mode Proxy**
 3. Paste `http://127.0.0.1:<port>/` (trailing slash)
 
-Kitchen Sink’s Direct Sockets tab is the best place to confirm `TCPSocket` works on your Chromebook before testing iwa-ssh.
+Kitchen Sink’s Direct Sockets tab is the best place to confirm `TCPSocket` works on your Chromebook before testing Gosh.
 
 CLI install (Linux/Crostini alternative to Web App Internals — Chrome must be fully quit first):
 
@@ -69,7 +69,7 @@ google-chrome --enable-features=IsolatedWebApps,IsolatedWebAppDevMode \
 1. `npm run dev` — Vite on `http://127.0.0.1:5173` (keep terminal open)
 2. `chrome://web-app-internals` → **Install IWA with Dev Mode Proxy**
 3. URL: `http://127.0.0.1:5173/` (prefer `127.0.0.1` over `localhost`)
-4. Launch **iwa-ssh** from the app launcher (not a normal browser tab)
+4. Launch **Gosh** from the app launcher (not a normal browser tab)
 5. Open **Debug** (`/debug`) — confirm **TCPSocket** = yes, **Upstream assets** = ready, **IWA origin** = yes
 6. **Connect** → enter host, port, username → accept host-key prompt if shown
 7. Terminal shows a shell prompt; run `echo ok` on the remote host
@@ -80,13 +80,13 @@ Dev Mode Proxy serves your **live** Vite server — you usually do **not** need 
 
 1. Keep `npm run dev` running
 2. Save files in the repo
-3. Close the iwa-ssh window and reopen it from the launcher (or hard-refresh if the window allows)
+3. Close the Gosh window and reopen it from the launcher (or hard-refresh if the window allows)
 
 **Force update check** only runs when `version` in `/.well-known/manifest.webmanifest` **increases** (e.g. `0.1.0` → `0.1.1`). If you see *“Installed app is already on version …”*, that is normal — the version did not change.
 
 | Situation | What to do |
 |-----------|------------|
-| Edited app code (routes, SSH, UI) | Save → close/reopen iwa-ssh (Vite must be running) |
+| Edited app code (routes, SSH, UI) | Save → close/reopen Gosh (Vite must be running) |
 | Changed manifest, icons, or boot/trusted-types | Bump `version` in both manifest files, restart `npm run dev`, then **Force update check** |
 | Still broken / black screen | Web App Internals → remove dev install → **Install IWA with Dev Mode Proxy** again at `http://127.0.0.1:5173/` |
 | Changed dev server port | Reinstall Dev Mode Proxy with the new URL |
@@ -109,7 +109,7 @@ You have two ways to run this on your Chromebook — both stay on the machine:
 | Mode | When to use | How |
 |------|-------------|-----|
 | **Dev Mode Proxy** | Daily development | `npm run dev` → install `http://127.0.0.1:5173` via Web App Internals |
-| **Signed `.swbn`** | Stable install without Vite running | `npm run bundle:iwa` → pick `dist/iwa-ssh.swbn` from disk in Web App Internals |
+| **Signed `.swbn`** | Stable install without Vite running | `npm run bundle:iwa` → pick `dist/gosh.swbn` from disk in Web App Internals |
 
 You do **not** need:
 
@@ -171,7 +171,7 @@ Use this when you want a normal app-launcher icon without keeping `npm run dev` 
 
 1. `npm run bundle:iwa` (builds `dist/`, signs if you have a key — see below)
 2. On **Web App Internals**, choose **Install IWA from Signed Web Bundle**
-3. Select `dist/iwa-ssh.swbn` from this repo on disk (USB, Downloads, home directory — anywhere local)
+3. Select `dist/gosh.swbn` from this repo on disk (USB, Downloads, home directory — anywhere local)
 
 Identity is stable when signed — tied to your Ed25519 key (Web Bundle ID).
 
@@ -214,7 +214,7 @@ Use a dev key while iterating. Switch to a release key only when you want a stab
    npm run bundle:iwa
    ```
 
-   Output: `dist/iwa-ssh.swbn` (signed) and `dist/iwa-ssh.unsigned.wbn` (intermediate).
+   Output: `dist/gosh.swbn` (signed) and `dist/gosh.unsigned.wbn` (intermediate).
 
 4. **Verify bundle metadata** (optional):
 
@@ -293,10 +293,10 @@ npm run typecheck
 ```text
 1. npm run iwa:keygen          → iwa/keys/encrypted_key.pem + webBundleId
 2. export WEB_BUNDLE_SIGNING_PASSPHRASE='…'
-3. npm run bundle:iwa            → dist/iwa-ssh.swbn
+3. npm run bundle:iwa            → dist/gosh.swbn
 4. chrome://flags → enable IWA dev mode → restart
 5. chrome://web-app-internals → Install from Signed Web Bundle
-6. Select dist/iwa-ssh.swbn
+6. Select dist/gosh.swbn
 7. Launch from app launcher; npm run bundle:iwa:info to inspect
 ```
 

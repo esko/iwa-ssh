@@ -129,7 +129,7 @@ function activeSession(): TermSession | null {
 }
 
 // Per-window tab persistence (sessionStorage survives reload, not relaunch).
-const TAB_LAYOUT_KEY = 'iwa-ssh-tab-layout';
+const TAB_LAYOUT_KEY = 'gosh-tab-layout';
 type SavedTabLayout = { specs: LaunchConnectionIntent[]; activeIndex: number };
 
 /** Identity of a connection, so a fresh launch doesn't inherit stale tabs. */
@@ -414,8 +414,8 @@ type LauncherCtx = {
 
 /** How the launcher lays out host/recent cards; persisted across launches. */
 type LauncherView = 'cards' | 'list';
-const LAUNCHER_VIEW_KEY = 'iwa-ssh-launcher-view';
-const LAUNCHER_SHOTS_KEY = 'iwa-ssh-launcher-shots';
+const LAUNCHER_VIEW_KEY = 'gosh-launcher-view';
+const LAUNCHER_SHOTS_KEY = 'gosh-launcher-shots';
 
 function loadLauncherView(): LauncherView {
   try {
@@ -453,7 +453,7 @@ function saveLauncherShots(on: boolean): void {
 export async function renderHome(root: HTMLElement): Promise<void> {
   setThemeColor('#000000');
   clearTerminalChromeColors();
-  document.title = 'iwa-ssh';
+  document.title = 'Gosh';
   homeKeydownCleanup?.();
   homeKeydownCleanup = null;
   await purgeStaleEtSessions();
@@ -549,7 +549,7 @@ async function renderLauncherInto(root: HTMLElement, ctx: LauncherCtx): Promise<
   const emptyHint = isFirstRun
     ? `<section class="launch-empty">
         <h1 class="empty-title">Connect to your first server</h1>
-        <p class="empty-sub">Fill in the host on the left and hit Connect — iwa-ssh speaks SSH, Eternal Terminal, and Mosh over Direct Sockets. Saved hosts appear here as cards.</p>
+        <p class="empty-sub">Fill in the host on the left and hit Connect — Gosh speaks SSH, Eternal Terminal, and Mosh over Direct Sockets. Saved hosts appear here as cards.</p>
       </section>`
     : '';
 
@@ -1366,7 +1366,7 @@ export function openSettings(initial: SettingsTab = 'appearance'): void {
             <nav class="aside-nav">
               ${TABS.map((t) => `<button class="nav-item" type="button" role="tab" data-tab="${t.id}" aria-selected="${t.id === initial}">${t.label}</button>`).join('')}
             </nav>
-            <div class="aside-version">iwa-ssh ${escapeHTML(__APP_VERSION__)}</div>
+            <div class="aside-version">Gosh ${escapeHTML(__APP_VERSION__)}</div>
           </aside>
           <div class="settings-main">
             <button class="settings-close" type="button" data-close aria-label="Close settings">×</button>
@@ -3308,7 +3308,7 @@ async function reconnect(): Promise<void> {
 function renderTerminalConnect(root: HTMLElement): void {
   setThemeColor('#000000');
   clearTerminalChromeColors();
-  document.title = 'iwa-ssh';
+  document.title = 'Gosh';
   // The no-spec connect fallback shows the same full launcher; navigating opens
   // the chosen host in this window.
   void renderLauncherInto(root, {

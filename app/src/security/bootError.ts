@@ -4,7 +4,7 @@ export function showBootError(message: string): void {
   if (!root) return;
   root.innerHTML = `
     <div class="boot-error" role="alert">
-      <h1>iwa-ssh failed to start</h1>
+      <h1>Gosh failed to start</h1>
       <pre>${escapeHtml(message)}</pre>
       <p class="muted">Open DevTools on this window for the full stack trace.</p>
     </div>

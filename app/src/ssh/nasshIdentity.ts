@@ -1,5 +1,5 @@
 /**
- * Stage iwa-ssh identities into nassh's indexeddb-fs for -i/.ssh/identity/… usage.
+ * Stage Gosh identities into nassh's indexeddb-fs for -i/.ssh/identity/… usage.
  */
 
 import { log } from '../debug/logger';
@@ -48,7 +48,7 @@ function ensureTrailingNewline(pem: ArrayBuffer): ArrayBuffer {
 
 /** Filename placed under /.ssh/identity/ for upstream ssh -i. */
 export function nasshIdentityFilename(identityId: string): string {
-  return `iwa-ssh-${identityId}`;
+  return `gosh-${identityId}`;
 }
 
 /**

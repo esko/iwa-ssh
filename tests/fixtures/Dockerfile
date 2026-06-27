@@ -19,7 +19,7 @@ COPY sshd_config /etc/ssh/sshd_config
 COPY keys/smoke.pub /etc/ssh/authorized_keys.d/test
 RUN chmod 644 /etc/ssh/authorized_keys.d/test \
   && /usr/sbin/sshd -t -f /etc/ssh/sshd_config \
-  && grep -q 'iwa-ssh-smoke-fixture' /etc/ssh/authorized_keys.d/test
+  && grep -q 'gosh-smoke-fixture' /etc/ssh/authorized_keys.d/test
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

@@ -12,7 +12,7 @@ import type { RecentConnection } from './types';
 
 export { profileToSpec, specFromQuery, specToQuery, specTitle, layoutSpecKey, formatConnectionTarget };
 
-const RECENTS_KEY = 'iwa-ssh-legacy-pwa-recents';
+const RECENTS_KEY = 'gosh-legacy-pwa-recents';
 
 export function loadRecentConnections(): RecentConnection[] {
   try {

@@ -2,7 +2,7 @@
 
 > **Superseded (2026-06-17).** This describes the earlier near-upstream xterm/app-shell frontend, which has been **removed**. The active frontend is the legacy-PWA/Ghostty multi-page app under `app/src/pwa/` — see [LEGACY_PWA_PIVOT_PRD.md](LEGACY_PWA_PIVOT_PRD.md) and [adr/0007-one-session-per-window.md](adr/0007-one-session-per-window.md). Kept for historical context only; do not implement it as active work.
 
-`iwa-ssh` is resetting toward a near-upstream Google Terminal + nassh architecture. The app is an Isolated Web App shell around upstream-shaped terminal flows, upstream nassh/wassh runtime code, xterm.js `6.1.0-beta`, and a thin IWA/Direct Sockets adapter layer.
+`Gosh` is resetting toward a near-upstream Google Terminal + nassh architecture. The app is an Isolated Web App shell around upstream-shaped terminal flows, upstream nassh/wassh runtime code, xterm.js `6.1.0-beta`, and a thin IWA/Direct Sockets adapter layer.
 
 ## Target Shape
 

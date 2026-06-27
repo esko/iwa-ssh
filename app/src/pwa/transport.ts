@@ -35,7 +35,7 @@ export class EchoTransport implements TerminalTransport {
 
   async connect(adapter: TerminalSink): Promise<void> {
     this.onStatus('connecting');
-    const banner = this.options?.banner ?? `\x1b[1;36miwa-ssh Ghostty echo\x1b[0m\r\nTarget: ${this.spec.username ?? 'user'}@${this.spec.hostname}`;
+    const banner = this.options?.banner ?? `\x1b[1;36mGosh Ghostty echo\x1b[0m\r\nTarget: ${this.spec.username ?? 'user'}@${this.spec.hostname}`;
     adapter.write(`\r\n${banner}\r\n\r\n$ `);
     this.input = adapter.onInput((data) => {
       if (data === '\r') {
@@ -283,7 +283,7 @@ export function createTransport(spec: LaunchConnectionIntent, onStatus: Transpor
   }
   if (spec.protocol === 'echo') {
     return new EchoTransport(spec, onStatus, {
-      banner: `\x1b[1;36miwa-ssh Ghostty echo\x1b[0m\r\nTarget: ${spec.username ?? 'user'}@${spec.hostname}`,
+      banner: `\x1b[1;36mGosh Ghostty echo\x1b[0m\r\nTarget: ${spec.username ?? 'user'}@${spec.hostname}`,
     });
   }
   // SSH and Mosh both run through the nassh bridge; only Mosh (persistent) gets

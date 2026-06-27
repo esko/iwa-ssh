@@ -1,4 +1,4 @@
-export const REMOTE_PASTE_DIRECTORY = '.cache/iwa-ssh/pastes';
+export const REMOTE_PASTE_DIRECTORY = '.cache/gosh/pastes';
 export const REMOTE_PASTE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type RemoteUploadProgress = { uploaded: number; total: number };
@@ -53,7 +53,7 @@ export class RemoteImageUploader {
     signal?.throwIfAborted();
     const home = (await channel.home()).replace(/\/$/, '');
     const directory = `${home}/${REMOTE_PASTE_DIRECTORY}`;
-    for (const path of [`${home}/.cache`, `${home}/.cache/iwa-ssh`, directory]) {
+    for (const path of [`${home}/.cache`, `${home}/.cache/gosh`, directory]) {
       await channel.ensureDirectory(path);
     }
     await this.cleanup(channel, directory);

@@ -1,5 +1,5 @@
 ---
-name: iwa-ssh
+name: Gosh
 description: A soft-dark, monochrome IWA terminal client where the chrome recedes and the terminal is the only loud surface.
 colors:
   bg: "#16171b"
@@ -97,13 +97,13 @@ components:
     typography: "{typography.label}"
 ---
 
-# Design System: iwa-ssh
+# Design System: Gosh
 
 ## 1. Overview
 
 **Creative North Star: "The Quiet Cockpit"**
 
-iwa-ssh is a dark instrument panel built to recede. The terminal is the only surface that earns brightness; every launcher row, dialog, tab, and settings control around it is a calm, low-contrast control that exists to get the user connected and then disappear. The system is monochrome by conviction — a single cool-gray ramp from near-black to off-white carries 95% of the interface, and the eye is never pulled away from the working surface unless something needs a decision. This is a tool that expresses power through restraint, not through density of controls or ornament.
+Gosh is a dark instrument panel built to recede. The terminal is the only surface that earns brightness; every launcher row, dialog, tab, and settings control around it is a calm, low-contrast control that exists to get the user connected and then disappear. The system is monochrome by conviction — a single cool-gray ramp from near-black to off-white carries 95% of the interface, and the eye is never pulled away from the working surface unless something needs a decision. This is a tool that expresses power through restraint, not through density of controls or ornament.
 
 Surfaces are soft, not sharp: gently-gradiented panels, 12px corner radii, hairline white-on-black dividers, and shadows that appear only when an element genuinely floats above the black desktop. Color enters the system in exactly three places and nowhere else — transport-type pills (ET cyan, Mosh green), connection status dots (amber connecting, red error), and the one light primary button. Restraint is the whole personality.
 

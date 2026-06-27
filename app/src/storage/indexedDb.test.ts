@@ -18,7 +18,7 @@ import { checkpointEtOutput, flushEtSessionCheckpoint, prepareEtSessionForConnec
 async function deleteDatabase(): Promise<void> {
   await resetIndexedDbConnection();
   await new Promise<void>((resolve, reject) => {
-    const request = indexedDB.deleteDatabase('iwa-ssh');
+    const request = indexedDB.deleteDatabase('gosh');
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });
@@ -44,7 +44,7 @@ afterEach(async () => {
 describe('IndexedDB v2 Eternal Terminal state', () => {
   it('migrates a v1 profile without recreating existing stores', async () => {
     await new Promise<void>((resolve, reject) => {
-      const request = indexedDB.open('iwa-ssh', 1);
+      const request = indexedDB.open('gosh', 1);
       request.onupgradeneeded = () => {
         const db = request.result;
         db.createObjectStore('settings');

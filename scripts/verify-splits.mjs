@@ -9,7 +9,7 @@
  */
 
 const CDP_PORT = Number(process.env.CHROME_DEBUG_PORT || 9222);
-const APP_PORT = Number(process.env.IWA_SSH_DEV_PORT || 5173);
+const APP_PORT = Number(process.env.GOSH_DEV_PORT || 5173);
 const BASE = `http://127.0.0.1:${APP_PORT}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

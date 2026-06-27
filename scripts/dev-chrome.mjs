@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = Number(process.env.IWA_SSH_DEV_PORT || 5173);
+const PORT = Number(process.env.GOSH_DEV_PORT || 5173);
 const DEV_URL = `http://127.0.0.1:${PORT}/debug`;
 const IWA_PROXY_URL = `http://127.0.0.1:${PORT}/`;
 const DEBUG_PORT = Number(process.env.CHROME_DEBUG_PORT || 9222);

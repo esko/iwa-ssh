@@ -372,7 +372,7 @@ function printManifest() {
 }
 
 async function main() {
-  console.log('iwa-ssh upstream asset fetch (Phase 1)\n');
+  console.log('Gosh upstream asset fetch (Phase 1)\n');
 
   if (exists(OUT_DIR)) {
     await fsp.rm(OUT_DIR, { recursive: true, force: true });

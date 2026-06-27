@@ -2,7 +2,7 @@
 
 ## Product model
 
-`iwa-ssh` is an unframed Isolated Web App with a profile-first launcher and
+`Gosh` is an unframed Isolated Web App with a profile-first launcher and
 terminal windows. Each terminal window draws its own caption controls and tab
 strip. Each tab contains one or more Restty-native pane sessions; every pane
 session owns an independent SSH, Mosh, or Eternal Terminal transport.
@@ -38,5 +38,5 @@ Restty rendering/splits, type checking, and production builds. Installed-IWA
 acceptance covers custom caption tabs, independent SSH splits, exact close and
 reconnect behavior, and ET detach/resume/lock cleanup.
 
-The original parent issue is [#38](https://github.com/esko/iwa-ssh/issues/38).
+The original parent issue is [#38](https://github.com/esko/gosh/issues/38).
 The architecture-correction slices are tracked in #47 through #50.

@@ -12,7 +12,7 @@ export type SettingsProfile = {
   settings: PwaTerminalSettings;
 };
 
-const STORE_KEY = 'iwa-ssh-settings-profiles';
+const STORE_KEY = 'gosh-settings-profiles';
 /** localStorage key the profiles persist under (for cross-window `storage` events). */
 export const SETTINGS_PROFILES_STORAGE_KEY = STORE_KEY;
 export const DEFAULT_SETTINGS_PROFILE_ID = 'default';

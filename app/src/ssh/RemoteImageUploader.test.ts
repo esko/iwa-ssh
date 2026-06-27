@@ -19,11 +19,11 @@ describe('RemoteImageUploader', () => {
     const progress = vi.fn();
     const uploader = new RemoteImageUploader({ connect: async () => channel, randomName: () => 'fixed', now: () => 9 * 24 * 60 * 60 * 1000 });
     const path = await uploader.uploadFile(new Blob(['hello'], { type: 'image/png' }), undefined, progress);
-    expect(path).toBe('/home/test/.cache/iwa-ssh/pastes/iwa-paste-fixed.png');
+    expect(path).toBe('/home/test/.cache/gosh/pastes/iwa-paste-fixed.png');
     expect(channel.calls).toContain(`chmod:${path}.part:600`);
     expect(channel.calls.at(-1)).toBe(`rename:${path}.part:${path}`);
-    expect(channel.calls).toContain('rm:/home/test/.cache/iwa-ssh/pastes/iwa-paste-old.png');
-    expect(channel.calls).not.toContain('rm:/home/test/.cache/iwa-ssh/pastes/notes.png');
+    expect(channel.calls).toContain('rm:/home/test/.cache/gosh/pastes/iwa-paste-old.png');
+    expect(channel.calls).not.toContain('rm:/home/test/.cache/gosh/pastes/notes.png');
     expect(progress).toHaveBeenLastCalledWith({ uploaded: 5, total: 5 });
     expect(new TextDecoder().decode(Uint8Array.from(channel.writes.flatMap((chunk) => [...chunk])))).toBe('hello');
   });
@@ -34,7 +34,7 @@ describe('RemoteImageUploader', () => {
     channel.write = async () => { controller.abort(); };
     const uploader = new RemoteImageUploader({ connect: async () => channel, randomName: () => 'cancel' });
     await expect(uploader.uploadFile(new Blob(['hello']), controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
-    expect(channel.calls).toContain('rm:/home/test/.cache/iwa-ssh/pastes/iwa-paste-cancel.bin.part');
+    expect(channel.calls).toContain('rm:/home/test/.cache/gosh/pastes/iwa-paste-cancel.bin.part');
   });
 
   it('quotes paths without allowing shell injection', () => {

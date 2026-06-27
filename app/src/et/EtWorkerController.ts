@@ -18,7 +18,7 @@ export async function acquireEtSessionLock(sessionId: string): Promise<ReleaseLo
   const acquired = new Promise<ReleaseLock | null>((resolve) => { resolveAcquired = resolve; });
   let release!: ReleaseLock;
   const held = new Promise<void>((resolve) => { release = resolve; });
-  void navigator.locks.request(`iwa-ssh-et:${sessionId}`, { ifAvailable: true }, async (lock) => {
+  void navigator.locks.request(`gosh-et:${sessionId}`, { ifAvailable: true }, async (lock) => {
     resolveAcquired(lock ? release : null);
     if (lock) await held;
   }).catch(() => resolveAcquired(null));

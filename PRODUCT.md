@@ -10,7 +10,7 @@ Developers on ChromeOS who connect to remote servers via SSH, Mosh, or Eternal T
 
 ## Product Purpose
 
-iwa-ssh is a ChromeOS Isolated Web App that provides a profile-first SSH/Mosh/ET terminal client. The launcher organizes saved profiles and recent connections; each terminal window draws its own custom caption controls and tab strip; each tab hosts one or more Restty pane sessions with independent transports. IWA packaging, Direct Sockets, and upstream nassh/wassh runtime assets are the platform foundation.
+Gosh is a ChromeOS Isolated Web App that provides a profile-first SSH/Mosh/ET terminal client. The launcher organizes saved profiles and recent connections; each terminal window draws its own custom caption controls and tab strip; each tab hosts one or more Restty pane sessions with independent transports. IWA packaging, Direct Sockets, and upstream nassh/wassh runtime assets are the platform foundation.
 
 Success looks like: a user launches a profile, connects, and spends the rest of the session entirely inside the terminal without the app chrome making any demands on their attention.
 

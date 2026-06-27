@@ -6,7 +6,7 @@ p1_count: 0
 timestamp: 2026-06-23T06-42-14Z
 slug: settings-modal-opensettings
 ---
-# Settings Critique — iwa-ssh
+# Settings Critique — Gosh
 
 ## Design Health Score
 

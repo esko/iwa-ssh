@@ -86,7 +86,7 @@ console.log(`→ Creating unsigned web bundle → ${bundleConfig.unsignedBundle}
 
 const headerOverridePath = join(
   tmpdir(),
-  `iwa-ssh-header-override-${process.pid}.json`,
+  `gosh-header-override-${process.pid}.json`,
 );
 writeFileSync(headerOverridePath, JSON.stringify(bundleConfig.headerOverride, null, 2));
 

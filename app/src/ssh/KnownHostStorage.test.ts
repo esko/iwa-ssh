@@ -10,7 +10,7 @@ import {
 async function deleteDatabase(): Promise<void> {
   await resetIndexedDbConnection();
   await new Promise<void>((resolve, reject) => {
-    const request = indexedDB.deleteDatabase('iwa-ssh');
+    const request = indexedDB.deleteDatabase('gosh');
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });

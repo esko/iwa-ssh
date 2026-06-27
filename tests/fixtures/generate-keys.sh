@@ -44,7 +44,7 @@ if [[ -f "$KEY" ]]; then
   fi
 fi
 
-ssh-keygen -t ed25519 -f "$KEY" -N "" -C "iwa-ssh-smoke-fixture"
+ssh-keygen -t ed25519 -f "$KEY" -N "" -C "gosh-smoke-fixture"
 chmod 600 "$KEY"
 echo "Created $KEY and ${KEY}.pub"
 echo ""

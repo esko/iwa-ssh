@@ -5,7 +5,7 @@ import path from 'node:path';
 import ts from 'typescript';
 
 const root = process.cwd();
-const tempDir = await mkdtemp(path.join(tmpdir(), 'iwa-ssh-reset-tests-'));
+const tempDir = await mkdtemp(path.join(tmpdir(), 'gosh-reset-tests-'));
 
 async function assertFileExists(relativePath) {
   const info = await stat(path.join(root, relativePath));

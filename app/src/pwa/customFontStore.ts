@@ -17,7 +17,7 @@ export type CustomFontMeta = {
 
 type CustomFontRecord = CustomFontMeta & { data: ArrayBuffer };
 
-const DB_NAME = 'iwa-ssh-fonts';
+const DB_NAME = 'gosh-fonts';
 const DB_VERSION = 1;
 const STORE = 'fonts';
 /** Reject absurdly large uploads early (10 MB is generous for a single face). */

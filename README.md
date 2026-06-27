@@ -1,4 +1,4 @@
-# iwa-ssh
+# Gosh
 
 ChromeOS Isolated Web App terminal client. The project is being reset into a near-upstream port of Google Terminal + nassh, with upstream behavior as the default and a small set of documented local deltas.
 

@@ -1,9 +1,9 @@
 {
   "id": "/",
-  "name": "iwa-ssh",
-  "short_name": "iwa-ssh",
+  "name": "Gosh",
+  "short_name": "Gosh",
   "description": "ChromeOS IWA SSH client",
-  "version": "0.1.116",
+  "version": "0.1.118",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

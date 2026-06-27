@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Print Chrome CLI flags to install iwa-ssh (or any URL) via Dev Mode Proxy.
+ * Print Chrome CLI flags to install Gosh (or any URL) via Dev Mode Proxy.
  * Chrome must be fully quit before launching with these flags.
  *
  * Usage:
@@ -8,7 +8,7 @@
  *   node scripts/install-iwa-dev.mjs http://127.0.0.1:8765/
  */
 
-const url = process.argv[2] ?? `http://127.0.0.1:${process.env.IWA_SSH_DEV_PORT || 5173}/`;
+const url = process.argv[2] ?? `http://127.0.0.1:${process.env.GOSH_DEV_PORT || 5173}/`;
 
 console.log(`Install URL: ${url}\n`);
 console.log('1. Quit all Chrome windows');

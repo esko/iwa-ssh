@@ -18,7 +18,7 @@ Device testing on ChromeOS showed the installed IWA never enters tabbed mode:
 `window.matchMedia('(display-mode: tabbed)').matches` is `false` and the app
 falls back to `standalone`. The same manifest shape works for a regular PWA on
 the same device (the maintainer's Crostini Ghostty Terminal PWA has native
-tabs), and converting iwa-ssh to a multi-page app did **not** change the result.
+tabs), and converting Gosh to a multi-page app did **not** change the result.
 Tabbed application mode therefore appears unavailable for **Isolated Web Apps**
 on current ChromeOS, independent of SPA-vs-multi-page structure. Direct Sockets
 (raw TCP SSH) requires the IWA, so dropping the IWA to gain tabs is not an
