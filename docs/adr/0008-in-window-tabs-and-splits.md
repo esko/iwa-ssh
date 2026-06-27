@@ -61,6 +61,25 @@ real, independent sessions (one transport each). No shared/echo panes.
   - restty → `ptyTransport.resize(cols, rows)` → SSH window-change.
 - Keyboard: `Ctrl+Shift+D` / `Ctrl+Shift+E` (or the existing restty context-menu
   "Split Right/Down") split; `Ctrl+Shift+W` closes the focused pane.
+- Keyboard pane management (all in `ResttyTerminalAdapter`, exposed through
+  `views.ts`):
+  - `Ctrl+Shift+Arrow` moves focus spatially to the neighboring pane, plus
+    "Focus next/previous pane" in the command palette (`cyclePane`). Uses
+    restty's public `setActivePane(id, { focus })` over pane-container rects.
+  - `Ctrl+Alt+Arrow` resizes the focused pane toward the arrow.
+  - `Ctrl+Shift+Z` maximizes/restores the focused pane (also in the context menu
+    and command palette as "Zoom pane" / "Restore pane").
+- **Restty has no public resize or maximize API**, so resize and zoom depend on
+  restty's internal DOM contract rather than a stable interface:
+  - Resize reads/writes the inline `flex: 0 0 <pct>%` sizing on the two children
+    of the nearest matching `.pane-split` node (`.is-vertical` /
+    `.is-horizontal`), mirroring restty's own divider-drag math.
+  - Zoom overlays the active `.pane[data-pane-id]` container with
+    `position:absolute; inset:0` anchored to the terminal root (relies on
+    `.pane-split` nodes being unpositioned).
+  - These class names and the flex sizing scheme are stable in the pinned
+    `vendor/restty/` build but are **not** guaranteed across versions. A restty
+    bump must re-verify them; see `docs/UPSTREAM_SYNC.md`.
 
 ### Tabs (app-rendered, one session per tab)
 

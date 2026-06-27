@@ -83,6 +83,26 @@ row per rounded cell-height pixel, and draws the filled half circles from the
 cell boundary. It fails the build if the pinned bundle changes, and should be
 removed when the next pinned Restty release includes the upstream corrections.
 
+## Restty Pane DOM Dependency
+
+Restty exposes no public pane resize or maximize API. The keyboard pane
+**resize** (`Ctrl+Alt+Arrow`) and **zoom** (`Ctrl+Shift+Z`) features in
+`app/src/pwa/resttyAdapter.ts` therefore reach into Restty's internal split DOM:
+
+- Resize reads and writes the inline `flex: 0 0 <pct>%` sizing that Restty puts
+  on the two children of each `.pane-split` node (`.is-vertical` /
+  `.is-horizontal`), mirroring Restty's own divider-drag math.
+- Zoom overlays the active `.pane[data-pane-id]` container with
+  `position:absolute; inset:0`, which assumes `.pane-split` ancestors are
+  unpositioned so the overlay anchors to the terminal root.
+
+Unlike the renderer patch above there is **no build-time drift check** for this —
+it is runtime adapter code. When bumping `vendor/restty/`, re-verify that the
+`.pane` / `.pane-split` / `.pane-divider` class names and the `flex: 0 0 <pct>%`
+sizing scheme still hold, and smoke-test directional focus, resize, and zoom with
+at least three split panes. Pane focus/navigation uses Restty's public
+`setActivePane(id, { focus })` and is not at risk.
+
 ## Refresh Procedure
 
 1. Update `upstream/libapps` to the chosen commit.
@@ -104,3 +124,4 @@ Keep this ledger current as generated patches are added:
 | wassh Direct Sockets adaptation | `scripts/fetch-upstream-assets.mjs` | IWA socket compatibility | fetch script should verify expected socket symbols before patching |
 | wassh TTY pixel dimensions | `scripts/fetch-upstream-assets.mjs` | Populate `TIOCGWINSZ` pixels for terminal image clients such as `kitten icat` | exact upstream zero-pixel block must match before replacement |
 | nassh locale/bootstrap adaptation | `scripts/fetch-upstream-assets.mjs` and `app/src/ssh/` | Runtime messages without extension packaging | typecheck and SSH smoke |
+| Restty pane resize/zoom DOM access | `app/src/pwa/resttyAdapter.ts` | No public Restty resize/maximize API; drives `.pane-split` inline `flex` and a `.pane` overlay | manual: focus/resize/zoom with 3+ split panes after a Restty bump (no automated check) |
