@@ -48,10 +48,14 @@ interface IwaSshDb extends DBSchema {
     key: string;
     value: VaultKeyRecord;
   };
+  hostScreenshots: {
+    key: string;
+    value: HostScreenshotRecord;
+  };
 }
 
 const DB_NAME = 'iwa-ssh';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 export type EtSessionPhase = 'bootstrapping' | 'active' | 'detached' | 'stale' | 'ended';
 
@@ -132,6 +136,19 @@ export type VaultKeyRecord = {
   ciphertext: ArrayBuffer;
 };
 
+/**
+ * A captured terminal thumbnail for a saved host, keyed by `hostTargetKey` (the
+ * same identity used for liveness). Populated from the tab-overview preview
+ * machinery so the launcher can show a real session screenshot on the host card
+ * instead of the placeholder glyph. Best-effort and disposable — losing it just
+ * falls back to the glyph.
+ */
+export type HostScreenshotRecord = {
+  hostKey: string;
+  blob: Blob;
+  updatedAt: number;
+};
+
 let dbPromise: Promise<IDBPDatabase<IwaSshDb>> | null = null;
 let deviceKeyPromise: Promise<CryptoKey> | null = null;
 
@@ -168,6 +185,9 @@ function getDb(): Promise<IDBPDatabase<IwaSshDb>> {
         }
         if (oldVersion < 4) {
           db.createObjectStore('vaultMeta', { keyPath: 'id' });
+        }
+        if (oldVersion < 5) {
+          db.createObjectStore('hostScreenshots', { keyPath: 'hostKey' });
         }
       },
       blocking() {
@@ -534,6 +554,24 @@ export async function saveProfile(profile: Profile): Promise<void> {
 export async function deleteProfile(id: string): Promise<void> {
   const db = await getDb();
   await db.delete('profiles', id);
+}
+
+/** Store/replace the latest terminal thumbnail for a host (keyed by hostTargetKey). */
+export async function saveHostScreenshot(hostKey: string, blob: Blob): Promise<void> {
+  const db = await getDb();
+  await db.put('hostScreenshots', { hostKey, blob, updatedAt: Date.now() });
+}
+
+/** All saved host thumbnails as a `hostKey → blob` map for the launcher. */
+export async function listHostScreenshots(): Promise<Map<string, Blob>> {
+  const db = await getDb();
+  const records = await db.getAll('hostScreenshots');
+  return new Map(records.map((record) => [record.hostKey, record.blob]));
+}
+
+export async function deleteHostScreenshot(hostKey: string): Promise<void> {
+  const db = await getDb();
+  await db.delete('hostScreenshots', hostKey);
 }
 
 export async function listIdentities(): Promise<Identity[]> {
