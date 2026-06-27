@@ -8,7 +8,7 @@ import {
   type TerminalViewport,
 } from '../terminal/TerminalAdapter';
 import type { PwaTerminalSettings } from './types';
-import { DEFAULT_FONT_ID, bundledFontForSelection, isCustomSelection, customSelectionId } from './terminalFonts';
+import { DEFAULT_FONT_ID, bundledFontForSelection, isCustomSelection, customSelectionId, type BundledFont } from './terminalFonts';
 import { getCustomFontData } from './customFontStore';
 import { getThemePalette } from './themes';
 import { DA1_REPLY } from './deviceAttributes';
@@ -75,6 +75,34 @@ function renderOptions(settings: PwaTerminalSettings): {
   };
 }
 
+/**
+ * Remove the SGR italic attribute (param 3) and its reset (23) from CSI `m`
+ * sequences so italic text renders upright when "use italics" is off. Extended
+ * color introducers (38/48/58) consume their own arguments, so a literal `3`
+ * appearing as a color value (e.g. `38;5;3`) is preserved, not stripped.
+ */
+export function stripItalicSgr(text: string): string {
+  if (!text.includes('\x1b[')) return text;
+  return text.replace(/\x1b\[([0-9;]*)m/g, (full, params: string) => {
+    if (params === '') return full; // CSI m == reset-all; leave untouched
+    const parts = params.split(';');
+    const out: string[] = [];
+    for (let i = 0; i < parts.length; i += 1) {
+      const p = parts[i];
+      if (p === '38' || p === '48' || p === '58') {
+        const mode = parts[i + 1];
+        const span = mode === '2' ? 5 : mode === '5' ? 3 : 1; // introducer + its args
+        for (let k = 0; k < span && i < parts.length; k += 1, i += 1) out.push(parts[i]);
+        i -= 1; // the for-loop's increment lands on the next param
+        continue;
+      }
+      if (p === '3' || p === '23') continue; // italic set / reset → drop
+      out.push(p);
+    }
+    return out.length ? `\x1b[${out.join(';')}m` : '';
+  });
+}
+
 /** DECSCUSR sequence for cursor shape + blink. */
 function cursorSequence(style: 'block' | 'bar' | 'underline', blink: boolean): string {
   const steady = style === 'block' ? 2 : style === 'underline' ? 4 : 6;
@@ -132,7 +160,28 @@ const NERD_SYMBOLS_FALLBACK: ResttyFontSource = {
  * bundled URL fails, and (when `nerdFallback`) the Symbols Nerd Font is the last
  * fallback so icon glyphs render with any selected font.
  */
-async function resolveFontSources(selection: string, nerdFallback: boolean): Promise<ResttyFontSource[]> {
+/**
+ * Ordered face list for a bundled font: the base weight (regular, or medium when
+ * selected and shipped) plus its italic, then bold and bold-italic. Restty maps
+ * SGR bold/italic to the matching cut by each file's embedded weight/italic, so
+ * providing the real faces yields real bold/italic instead of synthetic ones.
+ */
+function bundledFontFaces(font: BundledFont, fontWeight: 'regular' | 'medium'): ResttyFontSource[] {
+  const useMedium = fontWeight === 'medium' && Boolean(font.medium);
+  const normal = useMedium ? font.medium! : font.regular;
+  const normalItalic = useMedium ? font.mediumItalic : font.italic;
+  const faces: ResttyFontSource[] = [{ type: 'url', url: normal, label: font.family }];
+  if (normalItalic) faces.push({ type: 'url', url: normalItalic, label: `${font.family} Italic` });
+  if (font.bold) faces.push({ type: 'url', url: font.bold, label: `${font.family} Bold` });
+  if (font.boldItalic) faces.push({ type: 'url', url: font.boldItalic, label: `${font.family} Bold Italic` });
+  return faces;
+}
+
+async function resolveFontSources(
+  selection: string,
+  nerdFallback: boolean,
+  fontWeight: 'regular' | 'medium',
+): Promise<ResttyFontSource[]> {
   const withFallbacks = (sources: ResttyFontSource[]): ResttyFontSource[] =>
     nerdFallback ? [...sources, NERD_SYMBOLS_FALLBACK] : sources;
   if (isCustomSelection(selection)) {
@@ -141,10 +190,11 @@ async function resolveFontSources(selection: string, nerdFallback: boolean): Pro
     return withFallbacks(BUNDLED_FALLBACK);
   }
   const font = bundledFontForSelection(selection);
-  if (font.id === DEFAULT_FONT_ID) return withFallbacks(BUNDLED_FALLBACK);
-  const sources: ResttyFontSource[] = [{ type: 'url', url: font.regular, label: font.family }];
-  if (font.bold) sources.push({ type: 'url', url: font.bold, label: `${font.family} Bold` });
-  return withFallbacks([...sources, ...BUNDLED_FALLBACK]);
+  const faces = bundledFontFaces(font, fontWeight);
+  // JetBrains Mono (regular+bold) is the guaranteed text fallback so a real font
+  // always loads (cellH > 0); skip it when it IS the selection to avoid dupes.
+  const guaranteed = font.id === DEFAULT_FONT_ID ? [] : BUNDLED_FALLBACK;
+  return withFallbacks([...faces, ...guaranteed]);
 }
 
 /** Trim the device wheel ring (kept for the debug HUD; no network egress). */
@@ -280,7 +330,8 @@ export class PaneBridge implements TerminalSink {
     const { kittyReplies, sendDa1 } = this.queryScanner.ingest(text);
     for (const reply of kittyReplies) this.emitInput(reply);
     if (sendDa1) this.emitInput(DA1_REPLY);
-    this.callbacks?.onData?.(stripInboundTerminalProbes(text));
+    const rendered = stripInboundTerminalProbes(text);
+    this.callbacks?.onData?.(this.owner.italicsEnabled ? rendered : stripItalicSgr(rendered));
   }
 
   /** Render trusted local output without OSC capture, DA replies, or remote input. */
@@ -699,7 +750,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     // buffer sources before opening; restty's default font list (Local Font
     // Access + CDN) is unusable in the IWA. JetBrains Mono is always appended as
     // a fallback so a real font loads (cellH > 0), which keeps scrolling alive.
-    const fontSources = await resolveFontSources(settings.fontFamily, settings.nerdFontFallback);
+    const fontSources = await resolveFontSources(settings.fontFamily, settings.nerdFontFallback, settings.fontWeight);
 
     const term = new Terminal({
       // Per-pane app options: every pane (the first and every split) gets its
@@ -1216,6 +1267,11 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     for (const id of this.panes.keys()) this.applyAppearanceToPane(id, settings);
   }
 
+  /** Whether SGR italic should render; false makes PaneBridge strip it (upright). */
+  get italicsEnabled(): boolean {
+    return this.settings?.useItalics !== false;
+  }
+
   private applyAppearanceToPane(id: number, settings: PwaTerminalSettings): void {
     const handle = this.surface?.pane?.(id);
     if (!handle) return;
@@ -1228,7 +1284,7 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   /** Reapply the terminal font live (every pane) without reopening. */
   async setFont(settings: PwaTerminalSettings): Promise<void> {
     this.settings = settings;
-    const sources = await resolveFontSources(settings.fontFamily, settings.nerdFontFallback);
+    const sources = await resolveFontSources(settings.fontFamily, settings.nerdFontFallback, settings.fontWeight);
     await this.surface?.setFontSources?.(sources);
     // restty's setFontSources updates cell metrics + schedules a paint but omits
     // the WASM renderUpdate() that setFontSize performs, so already-painted cells

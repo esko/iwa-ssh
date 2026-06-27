@@ -42,6 +42,10 @@ export type PwaTerminalSettings = {
   scrollSensitivity: number;
   /** Glyph alpha blending: grayscale (GPU-native) or gamma-corrected smoothing. */
   fontSmoothing: 'grayscale' | 'smooth';
+  /** Base text weight: regular (400) or, for fonts that ship one, medium (500). */
+  fontWeight: 'regular' | 'medium';
+  /** Render SGR italic with the font's italic cut; off forces upright text. */
+  useItalics: boolean;
   /** TrueType hinting target during atlas rasterization (off disables hinting). */
   fontHinting: 'off' | 'light' | 'normal';
   /** Programming-ligature shaping across adjacent operator cells. */

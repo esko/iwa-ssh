@@ -12,6 +12,8 @@ import { ensureTerminalFontLoaded, normalizePwaSettings, applyPwaAppearance } fr
 import {
   BUNDLED_FONTS,
   DEFAULT_FONT_ID,
+  bundledFontForSelection,
+  fontHasMedium,
   customSelection,
   isCustomSelection,
 } from './terminalFonts';
@@ -1578,12 +1580,27 @@ function renderRenderingTab(body: HTMLElement, profileId: string): void {
   };
   const opt = (value: string, current: string, label: string): string =>
     `<option value="${value}"${value === current ? ' selected' : ''}>${label}</option>`;
+  // Base-weight "Medium" is offered only when the chosen bundled font ships a
+  // Medium cut (custom uploads are a single face, so never).
+  const selectedFontHasMedium = !isCustomSelection(s.fontFamily) && fontHasMedium(bundledFontForSelection(s.fontFamily));
   body.innerHTML =
     `<div class="group-title">Text rendering</div>` +
     setRow(
       'Text rendering',
       `<select name="fontSmoothing">${opt('grayscale', s.fontSmoothing, 'Thicker')}${opt('smooth', s.fontSmoothing, 'Normal')}</select>`,
       'Thicker uses heavier (gamma-incorrect) glyph blending; Normal is lighter and gamma-corrected. Restty rasterizes grayscale either way — there is no subpixel mode.',
+    ) +
+    setRow(
+      'Base weight',
+      `<select name="fontWeight"${selectedFontHasMedium ? '' : ' disabled'}>${opt('regular', s.fontWeight, 'Regular')}${selectedFontHasMedium ? opt('medium', s.fontWeight, 'Medium') : ''}</select>`,
+      selectedFontHasMedium
+        ? 'Render normal text in the font’s Medium (500) cut instead of Regular (400).'
+        : 'The selected font ships only a Regular cut — Medium is unavailable.',
+    ) +
+    setRow(
+      'Italics',
+      `<select name="useItalics"><option value="on"${s.useItalics ? ' selected' : ''}>On</option><option value="off"${s.useItalics ? '' : ' selected'}>Off</option></select>`,
+      'Render italic text where the app or theme asks for it (using the font’s italic cut); off keeps everything upright.',
     ) +
     setRow(
       'Font hinting',
@@ -1610,6 +1627,12 @@ function renderRenderingTab(body: HTMLElement, profileId: string): void {
     `<p class="set-hint set-note">Rendering changes apply to newly opened tabs.</p>`;
   body.querySelector<HTMLSelectElement>('[name="fontSmoothing"]')?.addEventListener('change', (e) =>
     save({ fontSmoothing: (e.target as HTMLSelectElement).value }),
+  );
+  body.querySelector<HTMLSelectElement>('[name="fontWeight"]')?.addEventListener('change', (e) =>
+    save({ fontWeight: (e.target as HTMLSelectElement).value }),
+  );
+  body.querySelector<HTMLSelectElement>('[name="useItalics"]')?.addEventListener('change', (e) =>
+    save({ useItalics: (e.target as HTMLSelectElement).value === 'on' }),
   );
   body.querySelector<HTMLSelectElement>('[name="fontHinting"]')?.addEventListener('change', (e) =>
     save({ fontHinting: (e.target as HTMLSelectElement).value }),

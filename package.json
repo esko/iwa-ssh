@@ -1,6 +1,6 @@
 {
   "name": "iwa-ssh",
-  "version": "0.1.115",
+  "version": "0.1.116",
   "private": true,
   "type": "module",
   "packageManager": "npm@11.13.0",
