@@ -1480,5 +1480,8 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     }
 
     if (consumed) state.oscBuffer = state.oscBuffer.slice(consumed);
+    // No ESC left means no partial OSC to complete on a later write — drop the
+    // tail so subsequent plain output hits the early-out instead of re-scanning.
+    if (state.oscBuffer && !state.oscBuffer.includes('\x1b')) state.oscBuffer = '';
   }
 }

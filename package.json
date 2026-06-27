@@ -1,8 +1,13 @@
 {
   "name": "iwa-ssh",
-  "version": "0.1.107",
+  "version": "0.1.108",
   "private": true,
   "type": "module",
+  "packageManager": "npm@11.13.0",
+  "engines": {
+    "node": ">=22",
+    "npm": ">=11"
+  },
   "scripts": {
     "dev": "vite",
     "dev:chrome": "node scripts/dev-chrome.mjs",
