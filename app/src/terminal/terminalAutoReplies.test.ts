@@ -34,13 +34,23 @@ describe('terminalQueryReplies', () => {
     expect(terminalQueryReplies(probes)).toEqual(['\x1b_Gi=1;OK\x1b\\']);
   });
 
-  it('answers DA1 for a kitty probe whose id is not 1 (Yazi TRT)', () => {
-    // Yazi's emulator detection probes kitty graphics with i=31 then uses DA1
-    // as the read sentinel; suppressing DA1 here makes Yazi time out (TRT).
+  it('supports direct kitty transmission for a non-1 id and answers DA1 (Yazi)', () => {
+    // Yazi probes direct (t=d) graphics with i=31, then reads until DA1. Direct
+    // transmission renders over the remote transport, so it must get OK (not
+    // EINVAL), and DA1 must still follow or Yazi times out (TRT).
     const probes = '\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c';
     expect(terminalQueryReplies(probes)).toEqual([
-      '\x1b_Gi=31;EINVAL: unsupported medium\x1b\\',
+      '\x1b_Gi=31;OK\x1b\\',
       DA1_REPLY,
+    ]);
+  });
+
+  it('rejects file/shared-memory media regardless of id', () => {
+    // A non-1 id must not flip a file-medium (t=t) probe to OK: those paths are
+    // unreachable across the remote transport.
+    const fileProbe = '\x1b_Ga=q,t=t,f=24,s=1,v=1,S=3,i=9;MTIz\x1b\\';
+    expect(terminalQueryReplies(fileProbe)).toEqual([
+      '\x1b_Gi=9;EINVAL: unsupported medium\x1b\\',
     ]);
   });
 });

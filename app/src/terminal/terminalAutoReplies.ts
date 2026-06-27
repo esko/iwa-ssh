@@ -7,9 +7,21 @@ const DSR_REPLY = /\x1b\[\d+;\d+R/g;
 /** kitten serializes query action as `a=q`; some builds use the enum value `a=2`. */
 const QUERY_ACTION = /(?:^|,)a=(?:q|2)(?:,|;|$)/;
 const IMAGE_ID = /(?:^|,)i=(\d+)(?:,|;|$)/;
+/** Transmission medium: d=direct (in-band), f/t=file, s=shared memory. Default d. */
+const TRANSMISSION_MEDIUM = /(?:^|,)t=([a-z])(?:,|;|$)/;
 
-function kittyQueryReply(id: string): string {
-  return id === '1'
+/**
+ * A kitty `a=q` query asks whether a transmission *medium* is supported, not
+ * whether a specific image id is valid. We render in-band direct transmission
+ * (t=d, the protocol default) across the remote transport, so that is answered
+ * OK; file (t=f/t=t) and shared-memory (t=s) media reference paths on the
+ * rendering host a remote app cannot populate, so those are EINVAL. Decide per
+ * medium, not per id — kitten/icat probes direct with i=1, Yazi with i=31, and
+ * both must get OK to use kitty image preview over ET/SSH/Mosh.
+ */
+function kittyQueryReply(id: string, control: string): string {
+  const medium = TRANSMISSION_MEDIUM.exec(control)?.[1] ?? 'd';
+  return medium === 'd'
     ? `\x1b_Gi=${id};OK\x1b\\`
     : `\x1b_Gi=${id};EINVAL: unsupported medium\x1b\\`;
 }
@@ -57,7 +69,7 @@ export class TerminalQueryScanner {
       const id = IMAGE_ID.exec(control)?.[1];
       if (!id || this.answeredKittyIds.has(id)) continue;
       this.answeredKittyIds.add(id);
-      kittyReplies.push(kittyQueryReply(id));
+      kittyReplies.push(kittyQueryReply(id, control));
     }
 
     // DA1 doubles as the end-of-probe sentinel for kitty-graphics capability
