@@ -91,6 +91,7 @@ export type NasshCommandInstanceCtor = new (argv: {
   environment?: Record<string, string>;
   onExit?: (code: number) => void;
   terminalLocation?: { href: string; hash: string; replace: (url: string) => void };
+  terminalWindow?: Record<string, unknown>;
   isSftp?: boolean;
   sftpStartupCallback?: (success: boolean, message: string | null) => void;
 }) => NasshCommandInstance;

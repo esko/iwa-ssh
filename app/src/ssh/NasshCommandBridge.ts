@@ -197,6 +197,23 @@ export class NasshCommandBridge {
       replace: () => {},
     };
 
+    // Upstream CommandInstance registers a `beforeunload` handler that sets
+    // `event.returnValue`, which makes the browser show a native "Leave site?"
+    // quit warning. The app manages tab/session close confirmation itself with a
+    // styled modal, so give nassh a window stub that silently drops beforeunload
+    // listeners while proxying everything else to the real window.
+    const terminalWindow: Record<string, unknown> = {
+      addEventListener: (type: string, listener: EventListenerOrEventListenerObject, options?: unknown) => {
+        if (type === 'beforeunload') return;
+        globalThis.addEventListener(type, listener, options as AddEventListenerOptions);
+      },
+      removeEventListener: (type: string, listener: EventListenerOrEventListenerObject, options?: unknown) => {
+        if (type === 'beforeunload') return;
+        globalThis.removeEventListener(type, listener, options as EventListenerOptions);
+      },
+      close: () => globalThis.close(),
+    };
+
     const syncStorage = getSyncStorage();
     log.storage.debug('using nassh sync storage', {
       storageType: syncStorage?.constructor?.name ?? 'unknown',
@@ -206,6 +223,7 @@ export class NasshCommandBridge {
       io: this.ioShim.io,
       syncStorage,
       terminalLocation: noopLocation,
+      terminalWindow,
       environment: { ...NASSH_ENVIRONMENT },
       onExit: (code) => {
         this.handleExit(code, 'nassh');

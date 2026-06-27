@@ -80,6 +80,18 @@ export async function connectNasshSftpSidecar(spec: ConnectionIntent, signal?: A
     io: io.io,
     syncStorage: getSyncStorage(),
     terminalLocation: { href: globalThis.location?.href ?? '', hash: '', replace: () => undefined },
+    // Drop nassh's native `beforeunload` quit-warning handler; see NasshCommandBridge.
+    terminalWindow: {
+      addEventListener: (type: string, listener: EventListenerOrEventListenerObject, options?: unknown) => {
+        if (type === 'beforeunload') return;
+        globalThis.addEventListener(type, listener, options as AddEventListenerOptions);
+      },
+      removeEventListener: (type: string, listener: EventListenerOrEventListenerObject, options?: unknown) => {
+        if (type === 'beforeunload') return;
+        globalThis.removeEventListener(type, listener, options as EventListenerOptions);
+      },
+      close: () => globalThis.close(),
+    },
     environment: { ...NASSH_ENVIRONMENT },
     isSftp: true,
   });
