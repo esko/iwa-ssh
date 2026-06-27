@@ -22,6 +22,8 @@
   /* Keyboard-focus ring: visible against the dark surfaces (the old --line-2
      ring at 0.12 alpha was nearly invisible). */
   --focus: rgba(140, 170, 210, 0.7);
+  /* Connected/active status (ET & Mosh live dots). */
+  --status-ok: #4ec77e;
   --shadow: 0 20px 60px -18px rgba(0, 0, 0, 0.75), 0 2px 8px -2px rgba(0, 0, 0, 0.5);
   --radius: 12px;
   --radius-sm: 8px;
@@ -125,6 +127,395 @@ a {
   font-weight: 600;
   letter-spacing: normal;
   color: var(--faint);
+}
+
+/* -------------------------------------------------------------- launcher -- */
+
+/* Two-column launcher: an always-open new-session form on the left, a scrolling
+   wall of host/session/recent cards on the right (the ChromeOS-Terminal north
+   star, mirrored so the form leads). The whole thing owns the viewport height;
+   each column scrolls independently. */
+.launch {
+  display: grid;
+  grid-template-columns: minmax(320px, 380px) 1fr;
+  height: 100vh;
+  max-height: 100vh;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* Under the custom unframed titlebar, body is padded down by its height, so a
+   full-viewport launcher must shrink to match (mirrors the .home rule). */
+html.app-chrome .launch {
+  height: calc(100vh - var(--titlebar-h));
+  max-height: calc(100vh - var(--titlebar-h));
+}
+
+/* Mounted inside an in-window new-tab, the launcher fills its absolutely-
+   positioned tab container instead of the viewport. */
+.launch-host {
+  height: 100%;
+}
+
+.term-launcher .launch,
+html.app-chrome .term-launcher .launch {
+  height: 100%;
+  max-height: 100%;
+}
+
+/* Left column: the inline form panel, separated by a hairline rule. */
+.launch-form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 22px 28px;
+  border-right: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 120px);
+}
+
+.ns-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ns-title {
+  margin: 0 0 2px;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
+/* Save / Don't-save segmented control. Save is pre-selected (the default), so
+   not-saving is a deliberate opt-out. */
+.ns-save {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 2px;
+}
+
+.ns-save-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--faint);
+}
+
+.seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.seg-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 7px 10px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.seg-btn:hover {
+  color: var(--fg);
+}
+
+.seg-btn[aria-checked='true'] {
+  background: var(--surface-2);
+  color: var(--fg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.seg-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.ns-connect {
+  margin-top: 4px;
+  width: 100%;
+  justify-content: center;
+  padding: 11px 14px;
+  font-size: 13.5px;
+}
+
+/* Right column: header bar (brand + search), then a scrolling card area, then a
+   pinned footer. */
+.launch-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.launch-top {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 26px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Top row: brand + search. Controls row: Settings (far left) and the view
+   options (far right) on the same line via space-between. */
+.launch-top-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.launch-top-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.launch-top .home-brand {
+  flex: none;
+}
+
+.launch-top .home-filter {
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 440px;
+  margin-left: auto;
+}
+
+.launch-view-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-grad);
+  border-radius: var(--radius-sm);
+  padding: 8px 11px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+
+.tool-btn:hover,
+.tool-btn:focus-visible {
+  color: var(--fg);
+  border-color: var(--line-2);
+  outline: none;
+}
+
+.tool-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.tool-icon {
+  display: inline-grid;
+  place-items: center;
+  color: inherit;
+}
+
+/* Screenshots toggle: a pressed (active) state echoes the segmented selection. */
+.tool-toggle {
+  padding: 8px;
+}
+
+.tool-toggle[aria-pressed='true'] {
+  color: var(--fg);
+  border-color: var(--line-2);
+  background: var(--surface-2);
+}
+
+/* Icon-only segmented control for the card/list switch. */
+.seg-icons .seg-btn {
+  display: inline-grid;
+  place-items: center;
+  padding: 7px 9px;
+}
+
+.launch-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  padding: 24px 26px 28px;
+}
+
+.launch-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.launch-section .home-head {
+  margin: 0 2px;
+}
+
+/* Responsive card wall: cards flow into as many columns as fit. */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: 16px;
+}
+
+.host-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-grad);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
+}
+
+.host-card:hover,
+.host-card:focus-visible {
+  border-color: var(--line-2);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.host-card:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.card-glyph {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
+  overflow: hidden;
+}
+
+/* Captured host screenshot: embedded but hidden until the screenshots option is
+   on AND this host actually has a capture (.has-shot). Falls back to the glyph. */
+.card-shot {
+  display: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+[data-shots='on'] .card-glyph.has-shot {
+  width: 64px;
+  border-color: var(--line-2);
+}
+
+[data-shots='on'] .card-glyph.has-shot > svg {
+  display: none;
+}
+
+[data-shots='on'] .card-glyph.has-shot .card-shot {
+  display: block;
+}
+
+/* List view: one host per row instead of the responsive card wall. The 0 min
+   track (vs. the default auto) keeps long host text from blowing out the row. */
+[data-view='list'] .card-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.card-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-sub {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.card-meta {
+  font-size: 12px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  opacity: 0;
+  transition: opacity 0.14s ease;
+}
+
+.host-card:hover .card-actions,
+.host-card:focus-within .card-actions {
+  opacity: 1;
+}
+
+.launch-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 52ch;
+  padding: 18px 2px;
+}
+
+@media (max-width: 760px) {
+  .launch {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    overflow-y: auto;
+  }
+  .launch-form {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
 }
 
 /* ------------------------------------------------------------------ home -- */
@@ -495,6 +886,9 @@ a {
 }
 
 .conn-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   flex: 0 0 auto;
   font-size: 10px;
   font-weight: 700;
@@ -514,6 +908,22 @@ a {
 .conn-pill-mosh {
   color: #a5f3b1;
   border-color: rgba(123, 216, 143, 0.4);
+}
+
+/* Live-session roundel inside an ET/Mosh pill: green = connected (fresh
+   heartbeat), dim = not connected. Status, not decoration. */
+.pill-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.pill-dot[data-live='true'] {
+  background: var(--status-ok);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-ok) 28%, transparent);
 }
 
 .conn-body {
@@ -625,65 +1035,6 @@ a {
 .conn-profile[aria-expanded='true'] .conn-expand {
   transform: rotate(180deg);
   color: var(--muted);
-}
-
-/* Nested resumable sessions — a hairline tree-connector reads the hierarchy. */
-.session-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin: 2px 0 6px 17px;
-  padding-left: 17px;
-  border-left: 1px solid var(--line);
-}
-
-.session-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--fg);
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.14s ease, border-color 0.14s ease;
-}
-
-.session-row:hover,
-.session-row:focus-visible {
-  background: var(--surface);
-  border-color: var(--line);
-  outline: none;
-}
-
-.session-row .conn-actions {
-  opacity: 0;
-}
-
-.session-row:hover .conn-actions,
-.session-row:focus-within .conn-actions {
-  opacity: 1;
-}
-
-/* Liveness dot — green = running, faint = suspended (status, not decoration). */
-.session-dot {
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--faint);
-}
-
-.session-dot[data-state='active'] {
-  background: #7fdd91;
-}
-
-.session-label {
-  font-size: 13px;
-  color: var(--fg);
 }
 
 /* --------------------------------------------------------------- controls -- */
@@ -1964,8 +2315,15 @@ html.app-chrome .term-shell {
   scrollbar-width: none;
 }
 
-/* Keep the custom caption quiet until there is a choice between tabs. */
-.term-tabs[data-count='1'] {
+/* With a single tab, ChromeOS shows the centered window title instead of a tab
+   chip — so hide the lone chip but keep the strip (and its hover "+") alive in
+   the caption. In a plain browser tab there is no caption title, so hide the
+   whole empty bar there as before. */
+.term-tabs[data-count='1'] .term-tab {
+  display: none;
+}
+
+.term-shell .term-tabs[data-count='1'] {
   display: none;
 }
 
@@ -2066,50 +2424,43 @@ html.app-chrome .term-shell {
   opacity: 1;
 }
 
-/* Windows-Terminal-style segmented "+ ⌄": new tab + profile dropdown. */
-.term-tab-newgroup {
+/* Single "+" that opens the new-tab menu. Hidden until the top bar is hovered
+   (or the button is focused) so the caption stays quiet at rest. */
+.term-tab-new {
   flex: 0 0 auto;
-  display: inline-flex;
-  align-items: stretch;
   align-self: center;
-  height: 26px;
-  margin-left: 6px;
-  border-radius: 6px;
-  overflow: hidden;
-  /* Lighter pill so the control stands out against the dark caption. */
-  background: rgba(255, 255, 255, 0.09);
-}
-
-.term-tab-new,
-.term-tab-newmenu {
   display: grid;
   place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 6px;
   border: 0;
   padding: 0;
+  border-radius: 6px;
   background: transparent;
-  color: var(--fg);
+  color: var(--term-fg, var(--fg));
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease;
 }
 
-.term-tab-new {
-  width: 23px;
+.term-tab-new svg {
+  display: block;
 }
 
-.term-tab-newmenu {
-  width: 25px;
-  /* Always-visible hairline split between the two halves. */
-  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.14);
-}
-
-.term-tab-new:hover,
-.term-tab-newmenu:hover {
+.term-tab-new:hover {
   background: rgba(255, 255, 255, 0.16);
 }
 
-.term-tab-new svg,
-.term-tab-newmenu svg {
-  display: block;
+.titlebar:hover .term-tab-new,
+.term-shell .term-tabs:hover .term-tab-new,
+.term-tab-new:focus-visible {
+  opacity: 1;
+}
+
+.term-tab-new:focus-visible {
+  outline: none;
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .term-status {
@@ -2292,8 +2643,20 @@ html.app-chrome .term-shell {
   min-width: 0;
 }
 
+/* With one tab the title is centered to the window: absolutely positioned and
+   pinned to the window's horizontal center so the tab strip (left) and window
+   controls (right) don't pull it off-center. line-height centers it vertically;
+   pointer-events:none keeps the caption draggable through it. */
 .titlebar-title {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 60%;
+  height: var(--titlebar-h);
+  line-height: var(--titlebar-h);
   padding: 0 12px;
+  text-align: center;
   font-size: 12.5px;
   color: color-mix(in srgb, var(--term-fg, var(--muted)), transparent 32%);
   white-space: nowrap;

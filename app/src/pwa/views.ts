@@ -1,12 +1,12 @@
 import type { Identity, Profile } from '../settings/types';
-import { deleteIdentity, deleteProfile, forgetEtSession, getEtSession, getProfile, listEtSessionSummaries, listIdentities, listKnownHosts, listProfiles, purgeStaleEtSessions, saveIdentity, saveProfile, type EtSessionSummary } from '../storage/indexedDb';
+import { deleteHostScreenshot, deleteIdentity, deleteProfile, getEtSession, getProfile, listHostScreenshots, listIdentities, listKnownHosts, listProfiles, purgeStaleEtSessions, saveHostScreenshot, saveIdentity, saveProfile } from '../storage/indexedDb';
 import { encryptPrivateKey } from '../security/KeyCrypto';
 import { credentialVault } from '../security/credentialVault';
 import { cacheIdentityPassphrase } from '../ssh/IdentityPassphrase';
 import { wipeTrustedHostKeys } from '../ssh/nasshKnownHosts';
 import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
-import { ResttyTerminalAdapter, type ResttyPaneSink } from './resttyAdapter';
+import { ResttyTerminalAdapter, type PaneDirection, type ResttyPaneSink } from './resttyAdapter';
 import type { TerminalSubscription } from '../terminal/TerminalAdapter';
 import { ensureTerminalFontLoaded, normalizePwaSettings, applyPwaAppearance } from './settings';
 import {
@@ -37,6 +37,7 @@ import {
 } from './settingsProfiles';
 import {
   formatConnectionTarget,
+  hostTargetKey,
   layoutSpecKey,
   loadRecentConnections,
   profileToSpec,
@@ -54,6 +55,7 @@ import { parseTerminalConnectionCommand } from '../connections/sshCommandParser'
 import { purgeAllEtLocalData, readEtLocalDataSummary } from '../et/purgeLocalData';
 import { readClipboardPaste } from './clipboardMedia';
 import { shellQuotePath } from '../ssh/RemoteImageUploader';
+import { HEARTBEAT_INTERVAL_MS, LIVENESS_STORAGE_KEY, liveHostKeys } from '../storage/sessionLiveness';
 import {
   TabPreviewCache,
   clampTabOverviewSelection,
@@ -167,11 +169,21 @@ function currentSettings(): PwaTerminalSettings {
   return resolveSettings(activeSpec?.settingsProfileId);
 }
 
-/** Behavior: optionally confirm before a user closes a still-connected tab. */
-function confirmCloseSession(session: TermSession): boolean {
-  if (session.kind !== 'terminal' || !session.spec) return true; // launcher tab: nothing to confirm
-  if (!resolveSettings(session.spec.settingsProfileId).confirmClose || !sessionHasConnectedPane(session)) return true;
-  return window.confirm(`Close ${session.title}? The session is still connected.`);
+/**
+ * Behavior: optionally confirm before a user closes a still-connected tab.
+ * Runs {@link onConfirm} immediately when no confirmation is needed, otherwise
+ * routes through the styled confirm modal (no native dialog).
+ */
+function confirmCloseSession(session: TermSession, onConfirm: () => void): void {
+  if (session.kind !== 'terminal' || !session.spec) return onConfirm(); // launcher tab: nothing to confirm
+  if (!resolveSettings(session.spec.settingsProfileId).confirmClose || !sessionHasConnectedPane(session)) return onConfirm();
+  openConfirmModal({
+    title: 'Close tab',
+    body: `Close ${session.title}? The session is still connected.`,
+    confirmLabel: 'Close',
+    danger: true,
+    onConfirm,
+  });
 }
 
 /**
@@ -209,15 +221,31 @@ const BRAND_MARK = `<svg width="30" height="30" viewBox="0 0 30 30" fill="none" 
 const SEARCH_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>`;
 const KEY_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="4.5"></circle><path d="m10.5 12.5 7-7"></path><path d="m17 4 3 3"></path><path d="m14 7 3 3"></path></svg>`;
 
-/** Show the connection filter once the saved list is long enough to scan. */
-const FILTER_MIN = 4;
 const TRASH_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6M14 11v6"></path></svg>`;
 
+// Launcher view-option icons: card grid, list rows, and a screenshot/photo glyph.
+const GRID_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>`;
+const LIST_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"></path><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"></path></svg>`;
+const IMAGE_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><path d="m21 15-5-5L5 21"></path></svg>`;
+
 /** Small uppercase transport badge (SSH / ET / MOSH). */
-function protocolPill(protocol: Profile['protocol']): string {
+/** True for transports that hold a resumable/roaming session worth a live dot. */
+function isPersistentProtocol(protocol: Profile['protocol']): boolean {
+  return protocol === 'et' || protocol === 'mosh';
+}
+
+/**
+ * A protocol pill. For persistent transports (ET/Mosh) pass `opts.live` to embed
+ * a status dot — green when a heartbeat says the host is connected, dim when not.
+ * Omit `opts` (e.g. in pickers) to render a plain pill with no dot.
+ */
+function protocolPill(protocol: Profile['protocol'], opts?: { live: boolean }): string {
   const p = protocol ?? 'ssh';
   const label = p === 'et' ? 'ET' : p.toUpperCase();
-  return `<span class="conn-pill conn-pill-${p}">${label}</span>`;
+  const dot = opts && isPersistentProtocol(p)
+    ? `<span class="pill-dot" data-live="${opts.live ? 'true' : 'false'}" aria-hidden="true"></span>`
+    : '';
+  return `<span class="conn-pill conn-pill-${p}">${dot}${label}</span>`;
 }
 
 function elFromHTML(html: string): HTMLElement {
@@ -372,6 +400,50 @@ function openOverlay(build: (close: () => void) => HTMLElement): void {
 
 // -------------------------------------------------------------------- home --
 
+/** Launcher behavior at each mount point — how launching and reload work. */
+type LauncherCtx = {
+  onLaunch: (spec: LaunchConnectionIntent) => void;
+  reload: () => void | Promise<void>;
+};
+
+/** How the launcher lays out host/recent cards; persisted across launches. */
+type LauncherView = 'cards' | 'list';
+const LAUNCHER_VIEW_KEY = 'iwa-ssh-launcher-view';
+const LAUNCHER_SHOTS_KEY = 'iwa-ssh-launcher-shots';
+
+function loadLauncherView(): LauncherView {
+  try {
+    return localStorage.getItem(LAUNCHER_VIEW_KEY) === 'list' ? 'list' : 'cards';
+  } catch {
+    return 'cards';
+  }
+}
+
+function saveLauncherView(view: LauncherView): void {
+  try {
+    localStorage.setItem(LAUNCHER_VIEW_KEY, view);
+  } catch {
+    /* persistence is best-effort */
+  }
+}
+
+function loadLauncherShots(): boolean {
+  try {
+    return localStorage.getItem(LAUNCHER_SHOTS_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveLauncherShots(on: boolean): void {
+  try {
+    localStorage.setItem(LAUNCHER_SHOTS_KEY, on ? '1' : '0');
+  } catch {
+    /* persistence is best-effort */
+  }
+}
+
+/** The home route: full-window launcher plus document-level `/` and ⌘K shortcuts. */
 export async function renderHome(root: HTMLElement): Promise<void> {
   setThemeColor('#000000');
   clearTerminalChromeColors();
@@ -379,78 +451,101 @@ export async function renderHome(root: HTMLElement): Promise<void> {
   homeKeydownCleanup?.();
   homeKeydownCleanup = null;
   await purgeStaleEtSessions();
+  await renderLauncherInto(root, {
+    onLaunch: (spec) => navigate(`/terminal.html?${specToQuery(spec)}`),
+    reload: () => renderHome(root),
+  });
+
+  // Document-level launcher shortcuts (home route only): "/" focuses the filter,
+  // ⌘K / Ctrl+K opens the host picker overlay. Torn down on the next render.
+  const homeCleanups: Array<() => void> = [];
+  const filterInput = root.querySelector<HTMLInputElement>('[data-filter]');
+  if (filterInput) {
+    const focusFilter = (event: KeyboardEvent): void => {
+      const typingTarget = event.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
+      if (event.key === '/' && !typingTarget && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        filterInput.focus();
+      }
+    };
+    document.addEventListener('keydown', focusFilter);
+    homeCleanups.push(() => document.removeEventListener('keydown', focusFilter));
+  }
+  const onPaletteKey = (event: KeyboardEvent): void => {
+    if ((event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'K')) {
+      event.preventDefault();
+      openHostPickerOverlay();
+    }
+  };
+  document.addEventListener('keydown', onPaletteKey);
+  homeCleanups.push(() => document.removeEventListener('keydown', onPaletteKey));
+  homeKeydownCleanup = () => homeCleanups.forEach((fn) => fn());
+}
+
+/**
+ * Shared two-column launcher (ADR 0008 north star): an always-open inline
+ * new-session form on the left, host/session/recent cards on the right. Mounted
+ * by the home route, the in-window new-tab, and the no-spec connect fallback;
+ * `ctx` decides what launching, resuming, and reloading mean at each.
+ */
+async function renderLauncherInto(root: HTMLElement, ctx: LauncherCtx): Promise<void> {
   // Degrade to an empty (but functional) launcher if storage is unavailable
   // rather than rendering a blank route; the New-host / quick-connect paths
   // and ⌘K picker still work without saved data.
-  const [profiles, etSessions, identities] = await Promise.all([listProfiles(), listEtSessionSummaries(), listIdentities()]).catch((error) => {
+  const [profiles, identities, shotBlobs] = await Promise.all([
+    listProfiles(),
+    listIdentities(),
+    listHostScreenshots().catch(() => new Map<string, Blob>()),
+  ]).catch((error) => {
     console.warn('launcher: failed to load saved data', error);
-    return [[], [], []] as [Profile[], EtSessionSummary[], Identity[]];
+    return [[], [], new Map<string, Blob>()] as [Profile[], Identity[], Map<string, Blob>];
   });
   // Recent connections (incl. throwaway sessions) that aren't already a saved
   // host — clicking one relaunches it; saving is a deliberate choice in the form.
   const savedKeys = new Set(profiles.map((p) => hostTargetKey(profileToSpec(p))));
   const recents = loadRecentConnections().filter((r) => !savedKeys.has(hostTargetKey(r)));
 
-  const isFirstRun = profiles.length === 0 && etSessions.length === 0 && recents.length === 0;
-  // Show the filter/address bar once there's anything to scan or quick-connect to.
-  const showFilter = profiles.length + recents.length >= FILTER_MIN;
-  // Document-level launcher listeners, torn down together on the next render.
-  const homeCleanups: Array<() => void> = [];
+  const isFirstRun = profiles.length === 0 && recents.length === 0;
+  // Per-host liveness for the ET/Mosh status dot; refreshed on a poll below so it
+  // never goes stale while the launcher is open.
+  const liveKeys = liveHostKeys();
+  const isLive = (intent: Parameters<typeof hostTargetKey>[0]): boolean => liveKeys.has(hostTargetKey(intent));
 
-  // Group each resumable ET session under the profile that owns it — by stored
-  // profileId, else by matching the connection target (legacy sessions). Any
-  // that match no current profile surface in a top "Other sessions" group.
-  const sessionsByProfile = new Map<string, EtSessionSummary[]>();
-  const orphanSessions: EtSessionSummary[] = [];
-  for (const session of etSessions) {
-    const owner =
-      (session.profileId && profiles.some((p) => p.id === session.profileId) && session.profileId) ||
-      profiles.find(
-        (p) =>
-          p.protocol === 'et' &&
-          p.host === session.host &&
-          p.username === session.username &&
-          (p.etPort ?? 2022) === (session.etPort ?? 2022),
-      )?.id;
-    if (owner) (sessionsByProfile.get(owner) ?? sessionsByProfile.set(owner, []).get(owner)!).push(session);
-    else orphanSessions.push(session);
-  }
+  // Launcher view prefs: cards vs. list, and whether to show captured session
+  // screenshots in place of the placeholder glyph. Screenshots are always
+  // embedded when present; the `data-shots` attribute toggles their visibility
+  // via CSS so flipping the option doesn't re-fetch or re-render.
+  const view = loadLauncherView();
+  const showShots = loadLauncherShots();
+  const shotUrls = installLauncherShotUrls(root, shotBlobs);
+  const shotFor = (intent: Parameters<typeof hostTargetKey>[0]): string | undefined => shotUrls.get(hostTargetKey(intent));
 
-  const otherSessionsSection = orphanSessions.length
-    ? `<section class="home-section">
-        <div class="home-head"><span class="section-label">Other sessions</span></div>
-        <div class="conn-list">${orphanSessions.map(etSessionRow).join('')}</div>
+  // Hosts section: saved profiles as launch cards (data-attrs drive the filter
+  // and the shared click/edit/delete wiring below). Every protocol — SSH, ET,
+  // Mosh — is a plain launch card; ET/Mosh additionally carry a live-status dot.
+  const hostsSection = profiles.length
+    ? `<section class="launch-section">
+        <div class="home-head"><span class="section-label">Hosts</span></div>
+        <div class="card-grid" data-conn-list>
+          ${profiles.map((p) => hostCard(p, isLive(profileToSpec(p)), shotFor(profileToSpec(p)))).join('')}
+        </div>
+        <p class="conn-none" data-filter-empty hidden>No hosts match.</p>
       </section>`
     : '';
 
-  const connectionsSection = isFirstRun
-    ? `<section class="home-empty">
-        <h1 class="empty-title">Connect to your first server</h1>
-        <p class="empty-sub">iwa-ssh speaks SSH, Eternal Terminal, and Mosh over Direct Sockets — saved hosts land here.</p>
-        <button class="btn btn-lg" type="button" data-new><span class="btn-plus">${PLUS_SVG}</span>New host</button>
-        <p class="empty-hint">Tip: right-click a saved host for quick actions.</p>
+  const recentsSection = recents.length
+    ? `<section class="launch-section">
+        <div class="home-head"><span class="section-label">Recent connections</span></div>
+        <div class="card-grid">${recents.map((r, i) => recentCard(r, i, isLive(r), shotFor(r))).join('')}</div>
       </section>`
-    : `<section class="home-section">
-        ${showFilter
-          ? `<div class="home-filter">
-              <span class="filter-icon">${SEARCH_SVG}</span>
-              <input type="search" class="filter-input" placeholder="Find a host or ssh user@hostname…" autocomplete="off" spellcheck="false" aria-label="Find a host or connect" data-filter>
-              <kbd class="filter-kbd" aria-hidden="true">/</kbd>
-            </div>
-            <button type="button" class="filter-connect" data-connect-hint hidden></button>`
-          : ''}
-        <div class="conn-list" data-conn-list>
-          ${profiles.map((p) => profileGroup(p, sessionsByProfile.get(p.id) ?? [])).join('')}
-          <p class="conn-none" data-filter-empty hidden>No hosts match.</p>
-        </div>
-        ${recents.length
-          ? `<div class="home-head"><span class="section-label">Recent connections</span></div>
-             <div class="conn-list">${recents.map(recentRow).join('')}</div>`
-          : ''}
-        <button class="conn-row conn-add" type="button" data-new>
-          <span class="conn-target"><span class="plus">+</span>New host</span>
-        </button>
-      </section>`;
+    : '';
+
+  const emptyHint = isFirstRun
+    ? `<section class="launch-empty">
+        <h1 class="empty-title">Connect to your first server</h1>
+        <p class="empty-sub">Fill in the host on the left and hit Connect — iwa-ssh speaks SSH, Eternal Terminal, and Mosh over Direct Sockets. Saved hosts appear here as cards.</p>
+      </section>`
+    : '';
 
   const keysPanel = identities.length
     ? `<div class="keys-panel" data-keys-panel hidden>
@@ -460,28 +555,58 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     : '';
 
   root.innerHTML = `
-    <div class="home">
-      <header class="home-brand">
-        <span class="home-mark">${BRAND_MARK}</span>
-        <span class="home-wordmark">iwa<span class="home-wordmark-dim">-ssh</span></span>
-      </header>
-      ${otherSessionsSection}
-      ${connectionsSection}
-      ${keysPanel}
-      <footer class="home-foot">
-        <button class="foot-link" type="button" data-settings>
-          <span class="foot-icon">${GEAR_SVG}</span>Settings
-        </button>
+    <div class="launch">
+      <aside class="launch-form" data-form-host></aside>
+      <main class="launch-main">
+        <header class="launch-top">
+          <div class="launch-top-main">
+            <span class="home-brand">
+              <span class="home-mark">${BRAND_MARK}</span>
+              <span class="home-wordmark">iwa<span class="home-wordmark-dim">-ssh</span></span>
+            </span>
+            <div class="home-filter">
+              <span class="filter-icon">${SEARCH_SVG}</span>
+              <input type="search" class="filter-input" placeholder="Find a host or ssh user@hostname…" autocomplete="off" spellcheck="false" aria-label="Find a host or connect" data-filter>
+              <kbd class="filter-kbd" aria-hidden="true">/</kbd>
+            </div>
+            <button type="button" class="filter-connect" data-connect-hint hidden></button>
+          </div>
+          <div class="launch-top-controls">
+            <button type="button" class="tool-btn" data-settings>
+              <span class="tool-icon">${GEAR_SVG}</span>Settings
+            </button>
+            <div class="launch-view-options" role="group" aria-label="View options">
+              <div class="seg seg-icons" role="radiogroup" aria-label="Card layout">
+                <button type="button" class="seg-btn" role="radio" data-view-mode="cards" aria-checked="${view === 'cards'}" aria-label="Card view" title="Card view">${GRID_SVG}</button>
+                <button type="button" class="seg-btn" role="radio" data-view-mode="list" aria-checked="${view === 'list'}" aria-label="List view" title="List view">${LIST_SVG}</button>
+              </div>
+              <button type="button" class="tool-btn tool-toggle" data-toggle-shots aria-pressed="${showShots}" aria-label="Show screenshots" title="Show host screenshots">
+                <span class="tool-icon">${IMAGE_SVG}</span>
+              </button>
+            </div>
+          </div>
+        </header>
+        <div class="launch-scroll" data-view="${view}" data-shots="${showShots ? 'on' : 'off'}">
+          ${emptyHint}
+          ${hostsSection}
+          ${recentsSection}
+          ${keysPanel}
+        </div>
         ${identities.length
-          ? `<button class="foot-link" type="button" data-toggle-keys aria-expanded="false">
-              <span class="foot-icon">${KEY_SVG}</span>${identities.length} ${identities.length === 1 ? 'key' : 'keys'}
-            </button>`
+          ? `<footer class="home-foot">
+              <button class="foot-link" type="button" data-toggle-keys aria-expanded="false">
+                <span class="foot-icon">${KEY_SVG}</span>${identities.length} ${identities.length === 1 ? 'key' : 'keys'}
+              </button>
+            </footer>`
           : ''}
-      </footer>
+      </main>
     </div>
   `;
 
-  const resumeUrl = (id: string): string => `/terminal.html?resume=${encodeURIComponent(id)}`;
+  // The always-open inline new-session form (left column). Saving is the default;
+  // submitting connects with no confirmation — a saved host lands as a card here.
+  renderNewSessionForm(requiredElement<HTMLElement>('[data-form-host]', root), { onLaunch: ctx.onLaunch });
+
   const activate = (rowEl: HTMLElement, run: () => void): void => {
     rowEl.addEventListener('click', run);
     rowEl.addEventListener('keydown', (event) => {
@@ -489,53 +614,32 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     });
   };
 
-  root.querySelectorAll<HTMLElement>('[data-resume-id]').forEach((rowEl) => {
-    const id = rowEl.dataset.resumeId!;
-    activate(rowEl, () => navigate(resumeUrl(id)));
-    rowEl.addEventListener('contextmenu', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      showContextMenu(event.clientX, event.clientY, [
-        { type: 'item', label: 'Resume', onSelect: () => navigate(resumeUrl(id)) },
-        { type: 'item', label: 'Open in new window', onSelect: () => openWindow(resumeUrl(id)) },
-        { type: 'separator' },
-        { type: 'item', label: 'Forget local session', onSelect: () => void forgetSession(id, root) },
-      ]);
-    });
-  });
-
   root.querySelectorAll<HTMLElement>('[data-recent-index]').forEach((rowEl) => {
     const recent = recents[Number(rowEl.dataset.recentIndex)];
     if (!recent) return;
-    activate(rowEl, () => navigate(`/terminal.html?${specToQuery(recent)}`));
+    activate(rowEl, () => ctx.onLaunch(recent));
     rowEl.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
       showContextMenu(event.clientX, event.clientY, [
-        { type: 'item', label: 'Connect', onSelect: () => navigate(`/terminal.html?${specToQuery(recent)}`) },
+        { type: 'item', label: 'Connect', onSelect: () => ctx.onLaunch(recent) },
         { type: 'item', label: 'Open in new window', onSelect: () => openWindow(`/terminal.html?${specToQuery(recent)}`) },
       ]);
     });
   });
 
-  const launchProfile = (profile: Profile): void => navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
-  const toggleGroup = (rowEl: HTMLElement): void => {
-    const list = rowEl.closest('[data-profile-group]')?.querySelector<HTMLElement>('[data-sessions]');
-    if (!list) return;
-    list.hidden = !list.hidden;
-    rowEl.setAttribute('aria-expanded', String(!list.hidden));
-  };
+  const launchProfile = (profile: Profile): void => ctx.onLaunch(profileToSpec(profile));
 
   root.querySelectorAll<HTMLElement>('[data-launch-id]').forEach((rowEl) => {
     const profile = profiles.find((item) => item.id === rowEl.dataset.launchId);
     if (!profile) return;
-    // A profile with live sessions expands to list them; otherwise the row is a
-    // direct launch. The "New session" button always launches regardless.
-    activate(rowEl, () => (rowEl.hasAttribute('data-expandable') ? toggleGroup(rowEl) : launchProfile(profile)));
+    // A host card launches a fresh terminal; resumable sessions have their own
+    // cards in the Sessions section above.
+    activate(rowEl, () => launchProfile(profile));
     rowEl.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      showProfileMenu(event, profile, root);
+      showProfileMenu(event, profile, ctx);
     });
   });
 
@@ -551,7 +655,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     btn.addEventListener('click', (event) => {
       event.stopPropagation();
       const profile = profiles.find((item) => item.id === btn.dataset.editId);
-      if (profile) openConnectionForm({ profile, onSaved: () => renderHome(root) });
+      if (profile) openConnectionForm({ profile, onSaved: ctx.reload });
     });
   });
 
@@ -559,14 +663,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     btn.addEventListener('click', (event) => {
       event.stopPropagation();
       const profile = profiles.find((item) => item.id === btn.dataset.deleteId);
-      if (profile) void deleteProfileConfirmed(profile, root);
-    });
-  });
-
-  root.querySelectorAll<HTMLButtonElement>('[data-forget-id]').forEach((btn) => {
-    btn.addEventListener('click', (event) => {
-      event.stopPropagation();
-      void forgetSession(btn.dataset.forgetId!, root);
+      if (profile) void deleteProfileConfirmed(profile, ctx.reload);
     });
   });
 
@@ -574,7 +671,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     btn.addEventListener('click', (event) => {
       event.stopPropagation();
       const identity = identities.find((item) => item.id === btn.dataset.deleteKeyId);
-      if (identity) void deleteKeyConfirmed(identity, root);
+      if (identity) void deleteKeyConfirmed(identity, ctx.reload);
     });
   });
 
@@ -620,7 +717,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     };
     connectHint?.addEventListener('click', () => {
       const typed = typedTarget();
-      if (typed) navigate(`/terminal.html?${specToQuery(typed)}`);
+      if (typed) ctx.onLaunch(typed);
     });
     filterInput.addEventListener('input', () => { applyFilter(filterInput.value); syncConnectHint(); });
     filterInput.addEventListener('keydown', (event) => {
@@ -629,7 +726,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
         // otherwise Enter launches the top filtered match fresh.
         const typed = typedTarget();
         if (typed) {
-          navigate(`/terminal.html?${specToQuery(typed)}`);
+          ctx.onLaunch(typed);
           return;
         }
         const topId = groups.find((g) => !g.hidden)?.querySelector<HTMLElement>('[data-launch-id]')?.dataset.launchId;
@@ -642,27 +739,7 @@ export async function renderHome(root: HTMLElement): Promise<void> {
         syncConnectHint();
       }
     });
-    const focusFilter = (event: KeyboardEvent): void => {
-      const typingTarget = event.target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
-      if (event.key === '/' && !typingTarget && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        filterInput.focus();
-      }
-    };
-    document.addEventListener('keydown', focusFilter);
-    homeCleanups.push(() => document.removeEventListener('keydown', focusFilter));
   }
-
-  // ⌘K / Ctrl+K opens the host picker overlay from anywhere on the launcher.
-  const onPaletteKey = (event: KeyboardEvent): void => {
-    if ((event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'K')) {
-      event.preventDefault();
-      openHostPickerOverlay();
-    }
-  };
-  document.addEventListener('keydown', onPaletteKey);
-  homeCleanups.push(() => document.removeEventListener('keydown', onPaletteKey));
-  homeKeydownCleanup = () => homeCleanups.forEach((fn) => fn());
 
   // Footer SSH-keys disclosure: keep key management out of the way until asked.
   const keysToggle = root.querySelector<HTMLButtonElement>('[data-toggle-keys]');
@@ -673,21 +750,94 @@ export async function renderHome(root: HTMLElement): Promise<void> {
     keysToggle.setAttribute('aria-expanded', String(open));
   });
 
-  requiredElement<HTMLButtonElement>('[data-new]', root).addEventListener('click', () => openConnectionForm());
   requiredElement<HTMLButtonElement>('[data-settings]', root).addEventListener('click', () => openSettings());
+
+  // View options (cards/list + screenshots) live in the toolbar to the right of
+  // Settings and flip the scroll container's data attributes — purely CSS-driven,
+  // so toggling never re-fetches or re-renders the card wall.
+  const scroll = root.querySelector<HTMLElement>('.launch-scroll');
+  root.querySelectorAll<HTMLButtonElement>('[data-view-mode]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.viewMode === 'list' ? 'list' : 'cards';
+      saveLauncherView(mode);
+      scroll?.setAttribute('data-view', mode);
+      root.querySelectorAll<HTMLButtonElement>('[data-view-mode]').forEach((b) => b.setAttribute('aria-checked', String(b === btn)));
+    });
+  });
+  const shotsToggle = root.querySelector<HTMLButtonElement>('[data-toggle-shots]');
+  shotsToggle?.addEventListener('click', () => {
+    const on = shotsToggle.getAttribute('aria-pressed') !== 'true';
+    saveLauncherShots(on);
+    shotsToggle.setAttribute('aria-pressed', String(on));
+    scroll?.setAttribute('data-shots', on ? 'on' : 'off');
+  });
+
+  installLivenessRefresh(root);
 }
 
-async function deleteProfileConfirmed(profile: Profile, root: HTMLElement): Promise<void> {
+/**
+ * Create object URLs for the host screenshots shown this render and stash a
+ * revoke on the root so the previous render's URLs are released on the next one
+ * (and when the launcher is torn down). Mirrors {@link installLivenessRefresh}.
+ */
+function installLauncherShotUrls(root: HTMLElement, blobs: Map<string, Blob>): Map<string, string> {
+  const host = root as HTMLElement & { __shotCleanup?: () => void };
+  host.__shotCleanup?.();
+  const urls = new Map<string, string>();
+  for (const [key, blob] of blobs) urls.set(key, URL.createObjectURL(blob));
+  const cleanup = (): void => {
+    for (const url of urls.values()) URL.revokeObjectURL(url);
+    if (host.__shotCleanup === cleanup) delete host.__shotCleanup;
+  };
+  host.__shotCleanup = cleanup;
+  return urls;
+}
+
+/**
+ * Keep the ET/Mosh status dots fresh while the launcher is open: re-read the
+ * liveness registry on a poll (in case a heartbeat aged out) and on cross-window
+ * `storage` events (instant when a connection appears or drops elsewhere). The
+ * teardown is stashed on the root and run on the next render so reloads don't
+ * stack timers; the poll also self-stops once the root leaves the document.
+ */
+function installLivenessRefresh(root: HTMLElement): void {
+  const host = root as HTMLElement & { __livenessCleanup?: () => void };
+  host.__livenessCleanup?.();
+  const refresh = (): void => {
+    const live = liveHostKeys();
+    root.querySelectorAll<HTMLElement>('[data-live-key]').forEach((card) => {
+      card.querySelector<HTMLElement>('.pill-dot')?.setAttribute('data-live', String(live.has(card.dataset.liveKey ?? '')));
+    });
+  };
+  const onStorage = (event: StorageEvent): void => {
+    if (event.key === LIVENESS_STORAGE_KEY || event.key === null) refresh();
+  };
+  window.addEventListener('storage', onStorage);
+  const timer = window.setInterval(() => {
+    if (!root.isConnected) { cleanup(); return; }
+    refresh();
+  }, HEARTBEAT_INTERVAL_MS);
+  const cleanup = (): void => {
+    window.clearInterval(timer);
+    window.removeEventListener('storage', onStorage);
+    if (host.__livenessCleanup === cleanup) delete host.__livenessCleanup;
+  };
+  host.__livenessCleanup = cleanup;
+}
+
+function deleteProfileConfirmed(profile: Profile, reload: () => void | Promise<void>): void {
   const label = profile.name?.trim() || formatConnectionTarget(profileToSpec(profile));
-  if (!window.confirm(`Delete the host “${label}”?`)) return;
-  await deleteProfile(profile.id);
-  await renderHome(root);
-}
-
-async function forgetSession(id: string, root: HTMLElement): Promise<void> {
-  if (!window.confirm('Forget this local ET session? The remote shell may continue running.')) return;
-  await forgetEtSession(id);
-  await renderHome(root);
+  openConfirmModal({
+    title: 'Delete host',
+    body: `Delete the host “${label}”?`,
+    confirmLabel: 'Delete',
+    danger: true,
+    onConfirm: async () => {
+      await deleteProfile(profile.id);
+      await deleteHostScreenshot(hostTargetKey(profileToSpec(profile))).catch(() => undefined);
+      await reload();
+    },
+  });
 }
 
 /** The display name shown for a profile (custom name, else the connection target). */
@@ -697,85 +847,61 @@ function profileDisplayName(profile: Profile): string {
   return name && name !== target ? name : target;
 }
 
+/** The small server glyph shown on every launcher card. */
+const SERVER_GLYPH = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"></rect><rect x="3" y="13" width="18" height="7" rx="2"></rect><path d="M7 7.5h.01M7 16.5h.01"></path></svg>`;
+
 /**
- * A profile as the unit of launching: the header row starts a new terminal (or,
- * when the profile owns live ET sessions, expands to list them), and a persistent
- * "New session" button always launches a fresh one. Resumable sessions nest in a
- * collapsible list below (ADR 0008 — only ET sessions are durable; SSH/Mosh have
- * no resumable record, so those profiles are a plain launch row).
+ * The leading card tile. When a captured screenshot exists for the host the img
+ * is embedded alongside the glyph; the `data-shots` toggle on the scroll
+ * container reveals it via CSS (and hosts with no capture keep the glyph).
  */
-function profileGroup(profile: Profile, sessions: EtSessionSummary[]): string {
-  const target = formatConnectionTarget(profileToSpec(profile));
+function cardGlyph(shotUrl?: string): string {
+  const shot = shotUrl ? `<img class="card-shot" src="${escapeHTML(shotUrl)}" alt="" loading="lazy">` : '';
+  return `<span class="card-glyph${shotUrl ? ' has-shot' : ''}">${shot}${SERVER_GLYPH}</span>`;
+}
+
+/**
+ * A saved host as a launch card (ADR 0008 — the unit of launching). Click starts
+ * a fresh terminal; hover reveals edit/delete; a "+" always launches a new
+ * session. Every protocol is handled identically — no protocol gets a session
+ * list, resume affordance, or count badge.
+ */
+function hostCard(profile: Profile, live: boolean, shotUrl?: string): string {
+  const spec = profileToSpec(profile);
+  const target = formatConnectionTarget(spec);
   const primary = profileDisplayName(profile);
   const named = primary !== target;
   const secondary = named ? target : profile.lastConnectedAt ? formatTime(profile.lastConnectedAt) : '';
   const search = `${primary} ${target} ${profile.protocol ?? 'ssh'}`.toLowerCase();
-  const has = sessions.length > 0;
-  const countLabel = `${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`;
+  const persistent = isPersistentProtocol(profile.protocol);
+  const liveAttr = persistent ? ` data-live-key="${escapeHTML(hostTargetKey(spec))}"` : '';
   return `
-    <div class="conn-group" data-profile-group data-search="${escapeHTML(search)}">
-      <div class="conn-row conn-profile" data-launch-id="${escapeHTML(profile.id)}" role="button" tabindex="0"${has ? ' data-expandable aria-expanded="false"' : ''}>
-        ${protocolPill(profile.protocol)}
-        <span class="conn-body">
-          <span class="conn-target">${escapeHTML(primary)}</span>
-          ${secondary ? `<span class="conn-meta">${escapeHTML(secondary)}</span>` : ''}
-        </span>
-        ${has ? `<span class="conn-count">${countLabel}</span>` : ''}
-        <span class="conn-actions">
-          <button class="icon-btn icon-sm" type="button" data-edit-id="${escapeHTML(profile.id)}" aria-label="Edit ${escapeHTML(primary)}" title="Edit">${PENCIL_SVG}</button>
-          <button class="icon-btn icon-sm" type="button" data-delete-id="${escapeHTML(profile.id)}" aria-label="Delete ${escapeHTML(primary)}" title="Delete">${TRASH_SVG}</button>
-        </span>
-        <button class="icon-btn icon-sm conn-newbtn" type="button" data-new-session="${escapeHTML(profile.id)}" aria-label="New session on ${escapeHTML(primary)}" title="New session">${PLUS_SVG}</button>
-        ${has ? `<span class="conn-expand" aria-hidden="true">${CHEVRON_DOWN_SVG}</span>` : ''}
-      </div>
-      ${has ? `<div class="session-list" data-sessions hidden>${sessions.map(etSessionSubRow).join('')}</div>` : ''}
-    </div>
-  `;
-}
-
-/** A resumable ET session nested under its profile. */
-function etSessionSubRow(session: EtSessionSummary): string {
-  const live = session.phase === 'active';
-  return `
-    <div class="session-row" data-resume-id="${escapeHTML(session.id)}" role="button" tabindex="0">
-      <span class="session-dot" data-state="${live ? 'active' : 'detached'}" aria-hidden="true"></span>
-      <span class="conn-body">
-        <span class="session-label">${live ? 'Active' : 'Suspended'} session</span>
-        <span class="conn-meta">${escapeHTML(formatTime(session.updatedAt))}</span>
+    <div class="host-card" data-profile-group data-search="${escapeHTML(search)}" data-launch-id="${escapeHTML(profile.id)}"${liveAttr} role="button" tabindex="0" title="Connect to ${escapeHTML(primary)}">
+      ${cardGlyph(shotUrl)}
+      <span class="card-body">
+        <span class="card-title">${escapeHTML(primary)}</span>
+        <span class="card-sub">${protocolPill(profile.protocol, persistent ? { live } : undefined)}${secondary ? `<span class="card-meta">${escapeHTML(secondary)}</span>` : ''}</span>
       </span>
-      <span class="conn-actions">
-        <button class="icon-btn icon-sm" type="button" data-forget-id="${escapeHTML(session.id)}" aria-label="Forget session" title="Forget session">${TRASH_SVG}</button>
+      <span class="card-actions">
+        <button class="icon-btn icon-sm" type="button" data-new-session="${escapeHTML(profile.id)}" aria-label="New session on ${escapeHTML(primary)}" title="New session">${PLUS_SVG}</button>
+        <button class="icon-btn icon-sm" type="button" data-edit-id="${escapeHTML(profile.id)}" aria-label="Edit ${escapeHTML(primary)}" title="Edit">${PENCIL_SVG}</button>
+        <button class="icon-btn icon-sm" type="button" data-delete-id="${escapeHTML(profile.id)}" aria-label="Delete ${escapeHTML(primary)}" title="Delete">${TRASH_SVG}</button>
       </span>
     </div>
   `;
 }
 
-function etSessionRow(session: EtSessionSummary): string {
-  const port = session.etPort && session.etPort !== 2022 ? `:${session.etPort}` : '';
-  const target = `${session.username}@${session.host}${port}`;
-  return `
-    <div class="conn-row" data-resume-id="${escapeHTML(session.id)}" role="button" tabindex="0">
-      ${protocolPill('et')}
-      <span class="conn-body">
-        <span class="conn-target">${escapeHTML(target)}</span>
-        <span class="conn-meta">${escapeHTML(session.phase)}</span>
-      </span>
-      <span class="conn-actions">
-        <button class="icon-btn icon-sm" type="button" data-forget-id="${escapeHTML(session.id)}" aria-label="Forget ${escapeHTML(target)}" title="Forget session">${TRASH_SVG}</button>
-      </span>
-    </div>
-  `;
-}
-
-/** A recent (often throwaway) connection — click to relaunch; not a saved host. */
-function recentRow(recent: RecentConnection, index: number): string {
+/** A recent (often throwaway) connection card — click to relaunch; not saved. */
+function recentCard(recent: RecentConnection, index: number, live: boolean, shotUrl?: string): string {
   const target = formatConnectionTarget(recent);
+  const persistent = isPersistentProtocol(recent.protocol);
+  const liveAttr = persistent ? ` data-live-key="${escapeHTML(hostTargetKey(recent))}"` : '';
   return `
-    <div class="conn-row" data-recent-index="${index}" role="button" tabindex="0" title="Relaunch ${escapeHTML(target)}">
-      ${protocolPill(recent.protocol)}
-      <span class="conn-body">
-        <span class="conn-target">${escapeHTML(target)}</span>
-        <span class="conn-meta">${escapeHTML(formatTime(recent.connectedAt))}</span>
+    <div class="host-card" data-recent-index="${index}"${liveAttr} role="button" tabindex="0" title="Relaunch ${escapeHTML(target)}">
+      ${cardGlyph(shotUrl)}
+      <span class="card-body">
+        <span class="card-title">${escapeHTML(target)}</span>
+        <span class="card-sub">${protocolPill(recent.protocol, persistent ? { live } : undefined)}<span class="card-meta">${escapeHTML(formatTime(recent.connectedAt))}</span></span>
       </span>
     </div>
   `;
@@ -797,22 +923,28 @@ function keyRow(identity: Identity): string {
   `;
 }
 
-async function deleteKeyConfirmed(identity: Identity, root: HTMLElement): Promise<void> {
+function deleteKeyConfirmed(identity: Identity, reload: () => void | Promise<void>): void {
   const label = identity.label?.trim() || 'this SSH key';
-  if (!window.confirm(`Delete the SSH key “${label}”? Connections using it will need a new key.`)) return;
-  await deleteIdentity(identity.id);
-  await renderHome(root);
+  openConfirmModal({
+    title: 'Delete SSH key',
+    body: `Delete the SSH key “${label}”? Connections using it will need a new key.`,
+    confirmLabel: 'Delete',
+    danger: true,
+    onConfirm: async () => {
+      await deleteIdentity(identity.id);
+      await reload();
+    },
+  });
 }
 
-function showProfileMenu(event: MouseEvent, profile: Profile, root: HTMLElement): void {
+function showProfileMenu(event: MouseEvent, profile: Profile, ctx: LauncherCtx): void {
   const items: ContextMenuItem[] = [
-    { type: 'item', label: 'Open', onSelect: () => navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`) },
+    { type: 'item', label: 'Open', onSelect: () => ctx.onLaunch(profileToSpec(profile)) },
     { type: 'item', label: 'Open in new window', onSelect: () => openWindow(`/terminal.html?${specToQuery(profileToSpec(profile))}`) },
     { type: 'separator' },
-    { type: 'item', label: 'Edit', onSelect: () => openConnectionForm({ profile, onSaved: () => renderHome(root) }) },
-    { type: 'item', label: 'Delete', onSelect: () => void deleteProfileConfirmed(profile, root) },
+    { type: 'item', label: 'Edit', onSelect: () => openConnectionForm({ profile, onSaved: ctx.reload }) },
+    { type: 'item', label: 'Delete', onSelect: () => void deleteProfileConfirmed(profile, ctx.reload) },
     { type: 'separator' },
-    { type: 'item', label: 'New host', onSelect: () => openConnectionForm() },
     { type: 'item', label: 'Settings', onSelect: () => openSettings() },
   ];
   showContextMenu(event.clientX, event.clientY, items);
@@ -828,194 +960,302 @@ function showHomeMenu(event: MouseEvent): void {
 
 // -------------------------------------------------------- connection form --
 
+/** Field values gathered from either the inline new-session form or the modal. */
+type ConnFormValues = {
+  host: string;
+  user: string;
+  port: number;
+  protocol: 'ssh' | 'et' | 'mosh';
+  etPort?: number;
+  settingsProfileId?: string;
+  name: string;
+  keyText: string;
+  keyFile?: File;
+  passphrase: string;
+};
+
+/**
+ * Shared submit pipeline for the inline new-session form and the edit modal.
+ * Persists a pasted/loaded key as an identity, then either saves a host profile
+ * (`save`) or builds a throwaway intent. Returns the spec to launch plus the
+ * saved profile (when one was written) so the caller can refresh its card list.
+ * Throws when a key is supplied without a passphrase, or on a storage failure.
+ */
+async function buildConnectionResult(
+  values: ConnFormValues,
+  existing: Profile | undefined,
+  save: boolean,
+): Promise<{ spec: LaunchConnectionIntent; saved?: Profile }> {
+  let identityId = existing?.identityId;
+  if (values.keyText || values.keyFile) {
+    if (!values.passphrase) throw new Error('Enter a passphrase to encrypt the key on this device.');
+    const file = values.keyFile;
+    const pemBytes = file ? await file.arrayBuffer() : (new TextEncoder().encode(values.keyText).buffer as ArrayBuffer);
+    const pemText = file ? new TextDecoder().decode(pemBytes) : values.keyText;
+    const encryptedPrivateKey = await encryptPrivateKey(pemBytes, values.passphrase);
+    identityId = crypto.randomUUID();
+    await saveIdentity({
+      id: identityId,
+      label: `${values.user}@${values.host}`,
+      publicKey: '',
+      encryptedPrivateKey,
+      opensshKeyEncrypted: isPemEncrypted(pemText),
+      createdAt: Date.now(),
+    });
+    cacheIdentityPassphrase(identityId, values.passphrase);
+  }
+
+  if (save) {
+    const profile: Profile = {
+      ...existing,
+      id: existing?.id ?? crypto.randomUUID(),
+      name: values.name,
+      protocol: values.protocol,
+      host: values.host,
+      port: values.port,
+      etPort: values.etPort,
+      username: values.user,
+      identityId,
+      settingsProfileId: values.settingsProfileId,
+    };
+    await saveProfile(profile);
+    return { spec: profileToSpec(profile), saved: profile };
+  }
+  const intent: ConnectionIntent = {
+    protocol: values.protocol,
+    username: values.user,
+    hostname: values.host,
+    port: values.port,
+    etPort: values.etPort,
+    identityId,
+    settingsProfileId: values.settingsProfileId,
+    args: [],
+  };
+  return { spec: intent };
+}
+
+/** The shared connection-field markup used by the inline form and the modal. */
+function connectionFieldsHTML(existing?: Profile): string {
+  const settingsProfiles = loadSettingsProfiles();
+  const spField =
+    settingsProfiles.length > 1
+      ? `<label class="field"><span>settings profile</span><select name="sp">${settingsProfiles
+          .map((p) => `<option value="${escapeHTML(p.id)}" ${existing?.settingsProfileId === p.id ? 'selected' : ''}>${escapeHTML(p.name)}</option>`)
+          .join('')}</select></label>`
+      : '';
+  const proto = existing?.protocol ?? 'ssh';
+  const sel = (value: string): string => (proto === value ? 'selected' : '');
+  const nameValue = existing && existing.name !== formatConnectionTarget(profileToSpec(existing)) ? existing.name : '';
+  return `
+    <label class="field"><span>name — optional</span><input name="name" value="${escapeHTML(nameValue)}" placeholder="defaults to user@host" autocomplete="off" spellcheck="false"></label>
+    <label class="field"><span>host</span><input name="host" value="${escapeHTML(existing?.host ?? '')}" placeholder="192.168.1.60" autocomplete="off" spellcheck="false" required></label>
+    <div class="field-row">
+      <label class="field"><span>user</span><input name="user" value="${escapeHTML(existing?.username ?? '')}" placeholder="esko" autocomplete="off" spellcheck="false" required></label>
+      <label class="field"><span>port</span><input name="port" type="number" min="1" max="65535" value="${existing?.port ?? 22}"></label>
+    </div>
+    <label class="field"><span>protocol</span><select name="protocol"><option value="ssh" ${sel('ssh')}>SSH</option><option value="et" ${sel('et')}>Eternal Terminal</option><option value="mosh" ${sel('mosh')}>Mosh</option></select></label>
+    <label class="field" data-et-port hidden><span>ET port</span><input name="etPort" type="number" min="1" max="65535" value="${existing?.etPort ?? 2022}"></label>
+    ${spField}
+    <div class="key-section">
+      <button type="button" class="key-toggle" data-key-toggle aria-expanded="false">
+        <span class="key-chevron" aria-hidden="true">${CHEVRON_DOWN_SVG}</span>
+        <span class="key-toggle-label">${existing?.identityId ? 'Replace SSH key' : 'Add an SSH key'}</span>
+        <span class="key-toggle-opt">optional</span>
+      </button>
+      <div class="key-body" data-key-body hidden>
+        <label class="field"><span>paste a private key</span><textarea name="key" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" spellcheck="false"></textarea></label>
+        <div class="field">
+          <span>or choose a key file</span>
+          <div class="file-pick">
+            <button type="button" class="btn-ghost" data-keyfile-btn>Choose file…</button>
+            <span class="file-name" data-keyfile-name>No file chosen</span>
+          </div>
+          <input type="file" name="keyfile" accept=".pem,.key,text/plain,application/octet-stream" hidden>
+        </div>
+        <label class="field" data-pass hidden><span>passphrase — encrypts the key on this device</span><input name="passphrase" type="password" autocomplete="off"></label>
+      </div>
+    </div>`;
+}
+
+/**
+ * Wire the shared connection fields inside `form`: protocol-conditional ET port,
+ * the collapsible key block, the styled file picker, and the reveal-passphrase
+ * behavior. Returns the values getter the submit handlers use. Pure DOM glue —
+ * no submit logic, which differs between the inline form and the modal.
+ */
+function wireConnectionFields(form: HTMLFormElement): { readValues: () => ConnFormValues; openKeySection: () => void } {
+  const keyArea = form.querySelector<HTMLTextAreaElement>('[name="key"]')!;
+  const keyFile = form.querySelector<HTMLInputElement>('[name="keyfile"]')!;
+  const passField = form.querySelector<HTMLElement>('[data-pass]')!;
+  const protocolField = form.querySelector<HTMLSelectElement>('[name="protocol"]')!;
+  const etPortField = form.querySelector<HTMLElement>('[data-et-port]')!;
+  const keyToggle = form.querySelector<HTMLButtonElement>('[data-key-toggle]')!;
+  const keyBody = form.querySelector<HTMLElement>('[data-key-body]')!;
+  const keyFileName = form.querySelector<HTMLElement>('[data-keyfile-name]')!;
+
+  const syncProtocol = (): void => { etPortField.hidden = protocolField.value !== 'et'; };
+  protocolField.addEventListener('change', syncProtocol);
+  syncProtocol();
+
+  const revealPass = (): void => { passField.hidden = !(keyArea.value.trim() || (keyFile.files?.length ?? 0) > 0); };
+  keyArea.addEventListener('input', revealPass);
+  keyFile.addEventListener('change', revealPass);
+
+  keyToggle.addEventListener('click', () => {
+    keyBody.hidden = !keyBody.hidden;
+    keyToggle.setAttribute('aria-expanded', String(!keyBody.hidden));
+    if (!keyBody.hidden) keyArea.focus();
+  });
+
+  form.querySelector<HTMLButtonElement>('[data-keyfile-btn]')?.addEventListener('click', () => keyFile.click());
+  keyFile.addEventListener('change', () => { keyFileName.textContent = keyFile.files?.[0]?.name ?? 'No file chosen'; });
+
+  const readValues = (): ConnFormValues => {
+    const data = new FormData(form);
+    const host = String(data.get('host') ?? '').trim();
+    const user = String(data.get('user') ?? '').trim();
+    const protocol = data.get('protocol') === 'mosh' ? 'mosh' : data.get('protocol') === 'et' ? 'et' : 'ssh';
+    return {
+      host,
+      user,
+      port: Number(data.get('port') ?? 22) || 22,
+      protocol,
+      etPort: protocol === 'et' ? Number(data.get('etPort') ?? 2022) || 2022 : undefined,
+      settingsProfileId: String(data.get('sp') ?? '').trim() || undefined,
+      name: String(data.get('name') ?? '').trim() || `${user}@${host}`,
+      keyText: String(data.get('key') ?? '').trim(),
+      keyFile: keyFile.files?.[0],
+      passphrase: String(data.get('passphrase') ?? ''),
+    };
+  };
+
+  const openKeySection = (): void => {
+    keyBody.hidden = false;
+    keyToggle.setAttribute('aria-expanded', 'true');
+  };
+
+  return { readValues, openKeySection };
+}
+
+/**
+ * The always-open, inline new-session form (left column of the launcher). Saving
+ * is the default; the segmented control lets the user opt out to a throwaway
+ * connection. Submitting connects with no confirmation step — a saved host
+ * simply appears as a card on the next launcher render.
+ */
+function renderNewSessionForm(container: HTMLElement, opts: { onLaunch: (spec: LaunchConnectionIntent) => void }): void {
+  container.innerHTML = `
+    <form id="newSessionForm" class="ns-form" novalidate>
+      <h2 class="ns-title">New session</h2>
+      ${connectionFieldsHTML()}
+      <p class="set-hint field-error" data-err role="alert" hidden></p>
+      <div class="ns-save">
+        <span class="ns-save-label">After connecting</span>
+        <div class="seg" role="radiogroup" aria-label="Save this host">
+          <button type="button" class="seg-btn" role="radio" aria-checked="true" data-save="save">Save host</button>
+          <button type="button" class="seg-btn" role="radio" aria-checked="false" data-save="nosave">Don’t save</button>
+        </div>
+      </div>
+      <button type="submit" class="btn ns-connect" data-submit>Connect</button>
+    </form>
+  `;
+  const form = container.querySelector<HTMLFormElement>('#newSessionForm')!;
+  const errEl = form.querySelector<HTMLElement>('[data-err]')!;
+  const submitBtn = form.querySelector<HTMLButtonElement>('[data-submit]')!;
+  const segBtns = [...form.querySelectorAll<HTMLButtonElement>('.seg-btn')];
+  const { readValues, openKeySection } = wireConnectionFields(form);
+
+  let save = true;
+  segBtns.forEach((btn) => btn.addEventListener('click', () => {
+    save = btn.dataset.save === 'save';
+    segBtns.forEach((b) => b.setAttribute('aria-checked', String(b === btn)));
+  }));
+
+  let submitting = false;
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (submitting) return;
+    const values = readValues();
+    if (!values.host || !values.user) {
+      errEl.hidden = false;
+      errEl.textContent = 'Enter a host and user.';
+      return;
+    }
+    errEl.hidden = true;
+    submitting = true;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Connecting…';
+    try {
+      const { spec } = await buildConnectionResult(values, undefined, save);
+      opts.onLaunch(spec);
+    } catch (error) {
+      submitting = false;
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Connect';
+      if (error instanceof Error && error.message.includes('passphrase')) openKeySection();
+      errEl.hidden = false;
+      errEl.textContent = error instanceof Error ? error.message : 'Could not connect.';
+    }
+  });
+}
+
+/**
+ * Modal host editor. New-session creation now lives in the always-open inline
+ * form ({@link renderNewSessionForm}); this modal is the edit path (and the
+ * "New host" context-menu entry) — it always saves.
+ */
 function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Promise<void> } = {}): void {
   const existing = opts.profile;
   openOverlay((close) => {
-    const settingsProfiles = loadSettingsProfiles();
-    const spField =
-      settingsProfiles.length > 1
-        ? `<label class="field"><span>settings profile</span><select name="sp">${settingsProfiles
-            .map((p) => `<option value="${escapeHTML(p.id)}" ${existing?.settingsProfileId === p.id ? 'selected' : ''}>${escapeHTML(p.name)}</option>`)
-            .join('')}</select></label>`
-        : '';
-    const proto = existing?.protocol ?? 'ssh';
-    const sel = (value: string): string => (proto === value ? 'selected' : '');
-    const nameValue = existing && existing.name !== formatConnectionTarget(profileToSpec(existing)) ? existing.name : '';
     const modal = elFromHTML(`
       <div class="modal">
         <h2>${existing ? 'Edit host' : 'New host'}</h2>
         <form id="connForm">
-          <label class="field"><span>name — optional</span><input name="name" value="${escapeHTML(nameValue)}" placeholder="defaults to user@host" autocomplete="off" spellcheck="false"></label>
-          <label class="field"><span>host</span><input name="host" value="${escapeHTML(existing?.host ?? '')}" placeholder="192.168.1.60" autocomplete="off" spellcheck="false" required></label>
-          <div class="field-row">
-            <label class="field"><span>user</span><input name="user" value="${escapeHTML(existing?.username ?? '')}" placeholder="esko" autocomplete="off" spellcheck="false" required></label>
-            <label class="field"><span>port</span><input name="port" type="number" min="1" max="65535" value="${existing?.port ?? 22}"></label>
-          </div>
-          <label class="field"><span>protocol</span><select name="protocol"><option value="ssh" ${sel('ssh')}>SSH</option><option value="et" ${sel('et')}>Eternal Terminal</option><option value="mosh" ${sel('mosh')}>Mosh</option></select></label>
-          <label class="field" data-et-port hidden><span>ET port</span><input name="etPort" type="number" min="1" max="65535" value="${existing?.etPort ?? 2022}"></label>
-          ${spField}
-          <div class="key-section">
-            <button type="button" class="key-toggle" data-key-toggle aria-expanded="false">
-              <span class="key-chevron" aria-hidden="true">${CHEVRON_DOWN_SVG}</span>
-              <span class="key-toggle-label">${existing?.identityId ? 'Replace SSH key' : 'Add an SSH key'}</span>
-              <span class="key-toggle-opt">optional</span>
-            </button>
-            <div class="key-body" data-key-body hidden>
-              <label class="field"><span>paste a private key</span><textarea name="key" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" spellcheck="false"></textarea></label>
-              <div class="field">
-                <span>or choose a key file</span>
-                <div class="file-pick">
-                  <button type="button" class="btn-ghost" data-keyfile-btn>Choose file…</button>
-                  <span class="file-name" data-keyfile-name>No file chosen</span>
-                </div>
-                <input type="file" name="keyfile" accept=".pem,.key,text/plain,application/octet-stream" hidden>
-              </div>
-              <label class="field" data-pass hidden><span>passphrase — encrypts the key on this device</span><input name="passphrase" type="password" autocomplete="off"></label>
-              <p class="set-hint field-error" data-err role="alert" hidden></p>
-            </div>
-          </div>
+          ${connectionFieldsHTML(existing)}
+          <p class="set-hint field-error" data-err role="alert" hidden></p>
           <div class="actions">
             <button type="button" class="btn-ghost" data-cancel>Cancel</button>
-            ${existing
-              ? `<button type="submit" class="btn" data-submit>Save</button>`
-              : `<div class="btn-split">
-                  <button type="submit" class="btn btn-split-main" data-submit>Connect &amp; Save</button>
-                  <button type="button" class="btn btn-split-caret" data-connect-menu aria-label="Connect without saving" aria-haspopup="menu" title="Connect without saving">${CHEVRON_DOWN_SVG}</button>
-                </div>`}
+            <button type="submit" class="btn" data-submit>${existing ? 'Save' : 'Save host'}</button>
           </div>
         </form>
       </div>
     `);
 
     const form = modal.querySelector<HTMLFormElement>('#connForm')!;
-    const passField = modal.querySelector<HTMLElement>('[data-pass]')!;
     const errEl = modal.querySelector<HTMLElement>('[data-err]')!;
     const submitBtn = modal.querySelector<HTMLButtonElement>('[data-submit]')!;
-    const keyArea = form.querySelector<HTMLTextAreaElement>('[name="key"]')!;
-    const keyFile = form.querySelector<HTMLInputElement>('[name="keyfile"]')!;
-    const protocolField = form.querySelector<HTMLSelectElement>('[name="protocol"]')!;
-    const etPortField = form.querySelector<HTMLElement>('[data-et-port]')!;
-    const syncProtocolFields = (): void => { etPortField.hidden = protocolField.value !== 'et'; };
-    protocolField.addEventListener('change', syncProtocolFields);
-    syncProtocolFields();
-    const showError = (message: string): void => { errEl.hidden = false; errEl.textContent = message; };
-    const revealPass = (): void => {
-      passField.hidden = !(keyArea.value.trim() || (keyFile.files?.length ?? 0) > 0);
-    };
-    keyArea.addEventListener('input', revealPass);
-    keyFile.addEventListener('change', revealPass);
-
-    // Collapse the whole key block by default — the common case is host/user/
-    // protocol, and the key UI is long. Opens on demand.
-    const keyToggle = modal.querySelector<HTMLButtonElement>('[data-key-toggle]')!;
-    const keyBody = modal.querySelector<HTMLElement>('[data-key-body]')!;
-    keyToggle.addEventListener('click', () => {
-      keyBody.hidden = !keyBody.hidden;
-      keyToggle.setAttribute('aria-expanded', String(!keyBody.hidden));
-      if (!keyBody.hidden) keyArea.focus();
-    });
-
-    // Styled file picker (the native input clashes with the dark form).
-    const keyFileName = modal.querySelector<HTMLElement>('[data-keyfile-name]')!;
-    modal.querySelector<HTMLButtonElement>('[data-keyfile-btn]')?.addEventListener('click', () => keyFile.click());
-    keyFile.addEventListener('change', () => {
-      keyFileName.textContent = keyFile.files?.[0]?.name ?? 'No file chosen';
-    });
+    const { readValues, openKeySection } = wireConnectionFields(form);
 
     modal.querySelector<HTMLButtonElement>('[data-cancel]')?.addEventListener('click', close);
-    // Focus the first thing worth typing once the modal is in the DOM.
     setTimeout(() => form.querySelector<HTMLInputElement>('[name="host"]')?.focus(), 0);
 
-    // `save` distinguishes the two new-host actions: "Connect & Save" persists a
-    // host (and is the Enter-key default), while "Connect" launches a throwaway
-    // session that records to history but never becomes a saved host. Editing an
-    // existing host always saves.
     let submitting = false;
-    const submitForm = async (save: boolean): Promise<void> => {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
       if (submitting) return;
-      const data = new FormData(form);
-      const host = String(data.get('host') ?? '').trim();
-      const user = String(data.get('user') ?? '').trim();
-      const port = Number(data.get('port') ?? 22) || 22;
-      if (!host || !user) return;
-      const protocol = data.get('protocol') === 'mosh' ? 'mosh' : data.get('protocol') === 'et' ? 'et' : 'ssh';
-      const etPort = protocol === 'et' ? Number(data.get('etPort') ?? 2022) || 2022 : undefined;
-      const settingsProfileId = String(data.get('sp') ?? '').trim() || existing?.settingsProfileId;
-      const name = String(data.get('name') ?? '').trim() || `${user}@${host}`;
-
-      const keyText = String(data.get('key') ?? '').trim();
-      const file = keyFile.files?.[0];
-      const passphrase = String(data.get('passphrase') ?? '');
-      if ((keyText || file) && !passphrase) {
-        keyBody.hidden = false;
-        keyToggle.setAttribute('aria-expanded', 'true');
-        showError('Enter a passphrase to encrypt the key on this device.');
-        return;
-      }
-
+      const values = readValues();
+      if (!values.host || !values.user) return;
       errEl.hidden = true;
       submitting = true;
       submitBtn.disabled = true;
-      if (caretBtn) caretBtn.disabled = true;
-      submitBtn.textContent = existing ? 'Saving…' : 'Connecting…';
+      submitBtn.textContent = existing ? 'Saving…' : 'Saving…';
       try {
-        // A pasted key is always persisted as an identity (a separate store), so
-        // key auth works even for a throwaway connection that saves no host.
-        let identityId = existing?.identityId;
-        if (keyText || file) {
-          const pemBytes = file ? await file.arrayBuffer() : (new TextEncoder().encode(keyText).buffer as ArrayBuffer);
-          const pemText = file ? new TextDecoder().decode(pemBytes) : keyText;
-          const encryptedPrivateKey = await encryptPrivateKey(pemBytes, passphrase);
-          identityId = crypto.randomUUID();
-          await saveIdentity({
-            id: identityId,
-            label: `${user}@${host}`,
-            publicKey: '',
-            encryptedPrivateKey,
-            opensshKeyEncrypted: isPemEncrypted(pemText),
-            createdAt: Date.now(),
-          });
-          cacheIdentityPassphrase(identityId, passphrase);
-        }
-
-        if (save) {
-          const profile: Profile = { ...existing, id: existing?.id ?? crypto.randomUUID(), name, protocol, host, port, etPort, username: user, identityId, settingsProfileId };
-          await saveProfile(profile);
-          if (existing) {
-            close();
-            await opts.onSaved?.();
-          } else {
-            close();
-            navigate(`/terminal.html?${specToQuery(profileToSpec(profile))}`);
-          }
-        } else {
-          // Throwaway: launch with an intent that carries no profileId, so it is
-          // recorded in recents but never written to the saved-hosts store.
-          const intent: ConnectionIntent = { protocol, username: user, hostname: host, port, etPort, identityId, settingsProfileId, args: [] };
+        const { spec } = await buildConnectionResult(values, existing, true);
+        if (existing) {
           close();
-          navigate(`/terminal.html?${specToQuery(intent)}`);
+          await opts.onSaved?.();
+        } else {
+          close();
+          navigate(`/terminal.html?${specToQuery(spec)}`);
         }
       } catch (error) {
         submitting = false;
         submitBtn.disabled = false;
-        if (caretBtn) caretBtn.disabled = false;
-        submitBtn.textContent = existing ? 'Save' : 'Connect & Save';
-        showError(`Could not ${save ? 'save the host' : 'connect'}.${error instanceof Error ? ` ${error.message}` : ''}`);
+        submitBtn.textContent = existing ? 'Save' : 'Save host';
+        if (error instanceof Error && error.message.includes('passphrase')) openKeySection();
+        errEl.hidden = false;
+        errEl.textContent = error instanceof Error ? error.message : 'Could not save the host.';
       }
-    };
-
-    // "Connect & Save" is the primary submit; the caret reveals the throwaway
-    // "Connect without saving" so the secondary action stays available but quiet.
-    const caretBtn = modal.querySelector<HTMLButtonElement>('[data-connect-menu]');
-    caretBtn?.addEventListener('click', () => {
-      const rect = caretBtn.getBoundingClientRect();
-      showContextMenu(rect.left, rect.bottom + 4, [
-        { type: 'item', label: 'Connect without saving', onSelect: () => void submitForm(false) },
-      ]);
-    });
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      void submitForm(true);
     });
     return modal;
   });
@@ -1762,7 +2002,7 @@ function createLauncherTab(): TermSession {
   const container = document.createElement('div');
   container.className = 'term-session term-launcher';
   const pickerHost = document.createElement('div');
-  pickerHost.className = 'hostpick-page';
+  pickerHost.className = 'launch-host';
   container.append(pickerHost);
   sessionsHost!.append(container);
   const session: TermSession = {
@@ -1777,7 +2017,14 @@ function createLauncherTab(): TermSession {
     titleSub: null,
   };
   sessions.push(session);
-  void renderHostPicker(pickerHost, { onPick: (spec) => void connectLauncherTab(session, spec) });
+  // The in-window new-tab uses the same two-column launcher as the home route,
+  // but launching upgrades this tab in place (keeping sibling tabs) instead of
+  // navigating the window.
+  const tabCtx: LauncherCtx = {
+    onLaunch: (spec) => void connectLauncherTab(session, spec),
+    reload: () => renderLauncherInto(pickerHost, tabCtx),
+  };
+  void renderLauncherInto(pickerHost, tabCtx);
   renderTabs();
   return session;
 }
@@ -1846,6 +2093,17 @@ function onPaneStatus(session: TermSession, paneId: number, state: TerminalTrans
   if (state === 'connected' && session.panes.keys().next().value === paneId) {
     session.resumeEtSessionId = conn.transport.getPersistentSessionId?.() ?? session.resumeEtSessionId;
     saveTabLayout();
+    // Capture a host thumbnail shortly after the first pane connects so a freshly
+    // connected host shows a real screenshot on the launcher without waiting for a
+    // tab switch — give the shell a beat to paint its prompt first.
+    window.setTimeout(() => {
+      if (sessions.includes(session) && sessionHasConnectedPane(session)) void refreshSessionPreview(session);
+    }, 1500);
+  }
+  // Capture once more on a non-reconnecting disconnect: the pane still holds its
+  // final frame, so the launcher keeps a useful last-seen screenshot.
+  if ((state === 'disconnected' || effectiveState === 'error') && !conn.reconnecting) {
+    void refreshSessionPreview(session);
   }
   // A clean disconnect closes that pane (the tab ends with its last pane);
   // errors stay readable, a reconnect's own cycle is ignored, and "keep open"
@@ -1870,9 +2128,9 @@ function updateSharedStatus(session: TermSession, state: TerminalTransportStatus
 }
 
 function setActiveSession(id: string): void {
+  const previous = activeSession();
   const session = sessions.find((s) => s.id === id);
   if (!session) return;
-  const previous = activeSession();
   if (previous && previous.id !== id) void refreshSessionPreview(previous);
   activeSessionId = id;
   sessions.forEach((s) => (s.container.hidden = s.id !== id));
@@ -1991,7 +2249,12 @@ function paneStatusError(session: TermSession): string | undefined {
 async function refreshSessionPreview(session: TermSession | null | undefined): Promise<void> {
   if (!session?.terminal) return;
   const blob = await session.terminal.capturePreview(TAB_PREVIEW_SIZE).catch(() => null);
-  if (blob && sessions.includes(session)) tabPreviewCache.set(session.id, blob);
+  if (blob && sessions.includes(session)) {
+    tabPreviewCache.set(session.id, blob);
+    // Persist the capture against the host so the launcher can show a real
+    // session screenshot on the card later (best-effort; failure is harmless).
+    if (session.spec) void saveHostScreenshot(hostTargetKey(session.spec), blob).catch(() => undefined);
+  }
 }
 
 function tabOverviewEntry(session: TermSession): TabOverviewEntry {
@@ -2035,10 +2298,9 @@ function renderTabs(): void {
       </div>`;
     })
     .join('');
-  tabStrip.innerHTML = `${tabs}<div class="term-tab-newgroup">
-      <button class="term-tab-new" type="button" data-newtab aria-label="New tab" title="New tab">${PLUS_SVG}</button>
-      <button class="term-tab-newmenu" type="button" data-newtab-menu aria-label="New tab from profile" title="New tab from profile">${CHEVRON_DOWN_SVG}</button>
-    </div>`;
+  // A single "+" that opens the new-tab menu (new tab, duplicate, open a host);
+  // revealed only on top-bar hover via CSS.
+  tabStrip.innerHTML = `${tabs}<button class="term-tab-new" type="button" data-newtab-menu aria-label="New tab" title="New tab">${PLUS_SVG}</button>`;
 }
 
 let dragTabId: string | null = null;
@@ -2094,37 +2356,34 @@ function onTabStripClick(event: MouseEvent): void {
     void openNewTabMenu(menuBtn);
     return;
   }
-  if (target.closest('[data-newtab]')) {
-    // "+" opens an unconnected launcher tab (host picker); the dropdown still
-    // offers duplicate / open-from-host shortcuts.
-    setActiveSession(createLauncherTab().id);
-    return;
-  }
   const close = target.closest<HTMLElement>('[data-close]');
   if (close) {
     event.stopPropagation();
     const session = sessions.find((s) => s.id === close.dataset.close);
-    if (session && confirmCloseSession(session)) closeSession(session);
+    if (session) confirmCloseSession(session, () => closeSession(session));
     return;
   }
   const tab = target.closest<HTMLElement>('.term-tab');
   if (tab?.dataset.id) setActiveSession(tab.dataset.id);
 }
 
-/** Dropdown beside the new-tab "+" to open a tab from any saved profile. */
+/** Menu opened by the new-tab "+": new/duplicate tab, then a tab from any host. */
 async function openNewTabMenu(anchor: HTMLElement): Promise<void> {
   const profiles = await listProfiles();
   const rect = anchor.getBoundingClientRect();
-  const items: ContextMenuItem[] = profiles.length
-    ? profiles.map((profile) => ({
-        type: 'item' as const,
-        label: profileDisplayName(profile),
-        onSelect: () => void openTab(profileToSpec(profile)),
-      }))
-    : [{ type: 'item' as const, label: 'No saved hosts', disabled: true, onSelect: () => undefined }];
-  if (activeSpec) {
-    items.unshift({ type: 'separator' });
-    items.unshift({ type: 'item', label: 'Duplicate current tab', onSelect: () => activeSpec && void openTab(activeSpec) });
+  // "+" now does everything the old segmented control did: a blank launcher tab,
+  // duplicate, and open-from-host all live in this one menu.
+  const items: ContextMenuItem[] = [
+    { type: 'item', label: 'New tab', onSelect: () => setActiveSession(createLauncherTab().id) },
+  ];
+  if (activeSpec) items.push({ type: 'item', label: 'Duplicate current tab', onSelect: () => activeSpec && void openTab(activeSpec) });
+  items.push({ type: 'separator' });
+  if (profiles.length) {
+    for (const profile of profiles) {
+      items.push({ type: 'item', label: profileDisplayName(profile), onSelect: () => void openTab(profileToSpec(profile)) });
+    }
+  } else {
+    items.push({ type: 'item', label: 'No saved hosts', disabled: true, onSelect: () => undefined });
   }
   showContextMenu(rect.left, rect.bottom + 2, items);
 }
@@ -2215,15 +2474,17 @@ function openTabOverview(): void {
 
     const closeEntry = (tabId: string): void => {
       const session = sessions.find((s) => s.id === tabId);
-      if (!session || !confirmCloseSession(session)) return;
-      const closingLast = sessions.length <= 1;
-      const closedIndex = matches.findIndex((entry) => entry.id === tabId);
-      closeSession(session);
-      if (closingLast) {
-        close();
-        return;
-      }
-      renderList(input.value, closedIndex >= 0 ? Math.min(closedIndex, selected) : selected);
+      if (!session) return;
+      confirmCloseSession(session, () => {
+        const closingLast = sessions.length <= 1;
+        const closedIndex = matches.findIndex((entry) => entry.id === tabId);
+        closeSession(session);
+        if (closingLast) {
+          close();
+          return;
+        }
+        renderList(input.value, closedIndex >= 0 ? Math.min(closedIndex, selected) : selected);
+      });
     };
 
     input.addEventListener('input', () => renderList(input.value, 0));
@@ -2293,6 +2554,32 @@ function closeActivePane(): boolean {
   return session?.terminal?.closeActivePane() ?? false;
 }
 
+/** Move pane focus spatially (left/right/up/down). */
+function focusPaneInDirection(dir: PaneDirection): boolean {
+  return activeSession()?.terminal?.focusPaneInDirection(dir) ?? false;
+}
+
+/** Grow/shrink the focused pane toward a direction. */
+function resizeActivePane(dir: PaneDirection): boolean {
+  return activeSession()?.terminal?.resizeActivePane(dir) ?? false;
+}
+
+/** Toggle maximize for the focused pane. */
+function toggleZoomActivePane(): boolean {
+  return activeSession()?.terminal?.toggleZoomActivePane() ?? false;
+}
+
+/** Map an arrow KeyboardEvent.code to a pane direction, or null. */
+function arrowDirection(code: string): PaneDirection | null {
+  switch (code) {
+    case 'ArrowLeft': return 'left';
+    case 'ArrowRight': return 'right';
+    case 'ArrowUp': return 'up';
+    case 'ArrowDown': return 'down';
+    default: return null;
+  }
+}
+
 /** In-window tab + split keys for the unframed app window (ADR 0008). */
 function installTabShortcuts(): void {
   const handler = (event: KeyboardEvent): void => {
@@ -2302,6 +2589,16 @@ function installTabShortcuts(): void {
         event.stopImmediatePropagation();
         if (event.altKey) void uploadClipboardImageAndPastePath();
         else void pasteClipboard();
+        return;
+      }
+      // Ctrl+Alt+Arrow resizes the focused pane toward the arrow (app feature,
+      // always claimed). Handled before the generic Alt pass-through below.
+      if (event.altKey && !event.shiftKey) {
+        const dir = arrowDirection(event.code);
+        if (dir && resizeActivePane(dir)) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
         return;
       }
       if (event.altKey) return;
@@ -2319,6 +2616,19 @@ function installTabShortcuts(): void {
           event.preventDefault();
           event.stopImmediatePropagation();
           openCommandPalette();
+          return;
+        }
+        // Ctrl+Shift+Z maximizes/restores the focused pane (app feature).
+        if (event.code === 'KeyZ' && toggleZoomActivePane()) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          return;
+        }
+        // Ctrl+Shift+Arrow moves focus to the neighboring pane in that direction.
+        const navDir = arrowDirection(event.code);
+        if (navDir && focusPaneInDirection(navDir)) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
           return;
         }
         // Splits are an app feature (not a system shortcut), so always handled:
@@ -2347,7 +2657,7 @@ function installTabShortcuts(): void {
         if (session) {
           event.preventDefault();
           event.stopImmediatePropagation();
-          if (confirmCloseSession(session)) closeSession(session);
+          confirmCloseSession(session, () => closeSession(session));
         }
       }
   };
@@ -2498,6 +2808,7 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
       ...([
             { type: 'item', label: 'Split right', key: '⌃⇧E', onSelect: () => void splitActivePane('vertical') },
             { type: 'item', label: 'Split down', key: '⌃⇧D', onSelect: () => void splitActivePane('horizontal') },
+            { type: 'item', label: activeTerminal?.isPaneZoomed() ? 'Restore pane' : 'Zoom pane', key: '⌃⇧Z', disabled: paneCount <= 1, onSelect: () => void toggleZoomActivePane() },
             { type: 'item', label: 'Close pane', key: '⌃⇧W', disabled: paneCount <= 1, onSelect: () => void closeActivePane() },
             { type: 'separator' },
           ] as ContextMenuItem[]),
@@ -2560,11 +2871,14 @@ function buildPaletteCommands(): PaletteCommand[] {
     { label: 'New tab', group: 'Tabs', key: '⌃T', run: () => setActiveSession(createLauncherTab().id) },
     { label: 'Tab overview', group: 'Tabs', disabled: sessions.length === 0, run: openTabOverview },
     { label: 'Duplicate session', group: 'Tabs', disabled: !activeSpec, run: duplicateSession },
-    { label: 'Close tab', group: 'Tabs', key: '⌃W', disabled: !session, run: () => session && confirmCloseSession(session) && closeSession(session) },
+    { label: 'Close tab', group: 'Tabs', key: '⌃W', disabled: !session, run: () => { if (session) confirmCloseSession(session, () => closeSession(session)); } },
     { label: 'Next tab', group: 'Tabs', key: '⌃Tab', disabled: sessions.length < 2, run: () => cycleTab(1) },
     { label: 'Previous tab', group: 'Tabs', key: '⌃⇧Tab', disabled: sessions.length < 2, run: () => cycleTab(-1) },
     { label: 'Split right', group: 'Panes', key: '⌃⇧E', run: () => void splitActivePane('vertical') },
     { label: 'Split down', group: 'Panes', key: '⌃⇧D', run: () => void splitActivePane('horizontal') },
+    { label: 'Focus next pane', group: 'Panes', disabled: paneCount <= 1, run: () => void activeTerminal?.cyclePane(1) },
+    { label: 'Focus previous pane', group: 'Panes', disabled: paneCount <= 1, run: () => void activeTerminal?.cyclePane(-1) },
+    { label: activeTerminal?.isPaneZoomed() ? 'Restore pane' : 'Zoom pane', group: 'Panes', key: '⌃⇧Z', disabled: paneCount <= 1, run: () => void toggleZoomActivePane() },
     { label: 'Close pane', group: 'Panes', key: '⌃⇧W', disabled: paneCount <= 1, run: () => void closeActivePane() },
     { label: 'Copy', group: 'Clipboard', key: '⌃⇧C', disabled: !canCopy, run: copySelection },
     { label: 'Paste', group: 'Clipboard', key: '⌃⇧V', run: () => void pasteClipboard() },
@@ -2714,10 +3028,6 @@ type HostPickEntry = {
   search: string;
 };
 
-/** Identity of a connection target, for de-duping recents against saved hosts. */
-function hostTargetKey(intent: { protocol?: string; username?: string; hostname: string; port?: number; etPort?: number }): string {
-  return `${intent.protocol ?? 'ssh'}:${intent.username ?? ''}@${intent.hostname.toLowerCase()}:${intent.port ?? ''}:${intent.etPort ?? ''}`;
-}
 
 /**
  * The shared host picker: a search field over recent connections + saved hosts,
@@ -2853,34 +3163,22 @@ async function renderHostPicker(
   if (opts.autofocus !== false) setTimeout(() => input.focus(), 0);
 }
 
-/** Overlay picker to jump to a resumable ET session or a saved connection. */
+/** Overlay picker to jump to a saved connection (every protocol launches fresh). */
 async function openSessionPicker(): Promise<void> {
-  await purgeStaleEtSessions();
-  const [profiles, etSessions] = await Promise.all([listProfiles(), listEtSessionSummaries()]);
+  const profiles = await listProfiles();
   openOverlay((close) => {
-    const sessionRows = etSessions
-      .map((s) => {
-        const port = s.etPort && s.etPort !== 2022 ? `:${s.etPort}` : '';
-        return `<button class="conn-row" type="button" data-pick-resume="${escapeHTML(s.id)}">${protocolPill('et')}<span class="conn-body"><span class="conn-target">${escapeHTML(`${s.username}@${s.host}${port}`)}</span><span class="conn-meta">${escapeHTML(s.phase)}</span></span></button>`;
-      })
-      .join('');
     const profileRows = profiles
       .map((p) => `<button class="conn-row" type="button" data-pick-launch="${escapeHTML(p.id)}">${protocolPill(p.protocol)}<span class="conn-body"><span class="conn-target">${escapeHTML(profileDisplayName(p))}</span></span></button>`)
       .join('');
-    const empty = '<p class="set-hint">No active sessions or saved connections.</p>';
+    const empty = '<p class="set-hint">No saved connections.</p>';
     const modal = elFromHTML(`
       <div class="modal">
         <h2>Switch session</h2>
-        ${etSessions.length ? `<div class="home-head"><span class="section-label">Active sessions</span></div><div class="conn-list">${sessionRows}</div>` : ''}
-        ${profiles.length ? `<div class="home-head"><span class="section-label">Connections</span></div><div class="conn-list">${profileRows}</div>` : ''}
-        ${etSessions.length || profiles.length ? '' : empty}
+        ${profiles.length ? `<div class="home-head"><span class="section-label">Connections</span></div><div class="conn-list">${profileRows}</div>` : empty}
         <div class="actions"><button type="button" class="btn-ghost" data-cancel>Close</button></div>
       </div>
     `);
     modal.querySelector<HTMLButtonElement>('[data-cancel]')?.addEventListener('click', close);
-    modal.querySelectorAll<HTMLElement>('[data-pick-resume]').forEach((el) => {
-      el.addEventListener('click', () => { close(); navigate(`/terminal.html?resume=${encodeURIComponent(el.dataset.pickResume!)}`); });
-    });
     modal.querySelectorAll<HTMLElement>('[data-pick-launch]').forEach((el) => {
       el.addEventListener('click', () => {
         const profile = profiles.find((p) => p.id === el.dataset.pickLaunch);
@@ -2976,9 +3274,12 @@ function renderTerminalConnect(root: HTMLElement): void {
   setThemeColor('#000000');
   clearTerminalChromeColors();
   document.title = 'iwa-ssh';
-  root.innerHTML = `<div class="connect-page"><div class="hostpick-page" data-host-picker></div></div>`;
-  const host = requiredElement<HTMLElement>('[data-host-picker]', root);
-  void renderHostPicker(host, { onPick: (spec) => navigate(`/terminal.html?${specToQuery(spec)}`) });
+  // The no-spec connect fallback shows the same full launcher; navigating opens
+  // the chosen host in this window.
+  void renderLauncherInto(root, {
+    onLaunch: (spec) => navigate(`/terminal.html?${specToQuery(spec)}`),
+    reload: () => renderTerminalConnect(root),
+  });
 }
 
 // ------------------------------------------------------------------- misc --
