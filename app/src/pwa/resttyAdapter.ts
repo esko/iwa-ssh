@@ -11,7 +11,8 @@ import type { PwaTerminalSettings } from './types';
 import { DEFAULT_FONT_ID, bundledFontForSelection, isCustomSelection, customSelectionId } from './terminalFonts';
 import { getCustomFontData } from './customFontStore';
 import { getThemePalette } from './themes';
-import { deviceAttributeReply } from './deviceAttributes';
+import { DA1_REPLY } from './deviceAttributes';
+import { TerminalQueryScanner, stripInboundTerminalProbes } from '../terminal/terminalAutoReplies';
 import type { TerminalPalette } from './types';
 import { clipboardImageToPng, encodeKittyPng } from './kittyImage';
 import { scrollbackBytesForLines } from './scrollback';
@@ -180,11 +181,6 @@ type PaneCallbacks = {
 };
 type PaneConnectOptions = { url?: string; cols?: number; rows?: number; callbacks: PaneCallbacks };
 
-// Restty buffers PTY output for up to 40 ms before parsing it and draining
-// generated replies. Keep the synthetic DA1 completion behind that drain so
-// Kitty's detector sees its graphics acknowledgements before it exits.
-const DA1_REPLY_DELAY_MS = 50;
-
 /** The per-pane sink a {@link TerminalTransport} binds to (one per split). */
 export type ResttyPaneSink = TerminalSink & { readonly paneId: number; insertText(data: string): void };
 
@@ -211,7 +207,9 @@ export class PaneBridge implements TerminalSink {
   private viewport: TerminalViewport = { ...DEFAULT_TERMINAL_VIEWPORT };
   private readonly inputListeners = new Set<(data: string) => void>();
   private readonly resizeListeners = new Set<(viewport: TerminalViewport) => void>();
-  private readonly daReplyTimers = new Set<ReturnType<typeof setTimeout>>();
+  // Per-pane scanner that answers DA1 + Kitty graphics capability queries on the
+  // raw SSH/Mosh output stream (the ET worker answers them upstream instead).
+  private readonly queryScanner = new TerminalQueryScanner();
   private readonly decoder = new TextDecoder();
 
   constructor(
@@ -222,6 +220,7 @@ export class PaneBridge implements TerminalSink {
   // --- PtyTransport surface (restty -> bridge) ---
 
   connect(options: PaneConnectOptions): void {
+    this.queryScanner.reset();
     this.callbacks = options.callbacks;
     this.updateViewport({ cols: options.cols, rows: options.rows });
     this.connected = true;
@@ -257,8 +256,7 @@ export class PaneBridge implements TerminalSink {
     this.callbacks = null;
     this.inputListeners.clear();
     this.resizeListeners.clear();
-    this.daReplyTimers.forEach((timer) => clearTimeout(timer));
-    this.daReplyTimers.clear();
+    this.queryScanner.reset();
   }
 
   // --- TerminalAdapter sink (transport -> bridge -> pane) ---
@@ -268,20 +266,21 @@ export class PaneBridge implements TerminalSink {
   write(data: string | Uint8Array): void {
     const text = typeof data === 'string' ? data : this.decoder.decode(data, { stream: true });
     this.owner.captureOsc(this, text);
-    this.callbacks?.onData?.(text);
-    // ghostty-vt does not reply to the DA1 query through the PtyTransport, so
-    // answer it at the boundary (fish hangs ~10s otherwise). Only meaningful
-    // once a transport is listening on the input path.
-    if (this.connected) {
-      const reply = deviceAttributeReply(text);
-      if (reply) {
-        const timer = setTimeout(() => {
-          this.daReplyTimers.delete(timer);
-          if (this.connected) this.emitInput(reply);
-        }, DA1_REPLY_DELAY_MS);
-        this.daReplyTimers.add(timer);
-      }
+    if (!this.connected) {
+      this.callbacks?.onData?.(text);
+      return;
     }
+    // Restty/ghostty-vt does not reliably emit DA1 or Kitty graphics query
+    // replies back through the PtyTransport — fish stalls ~10s waiting for DA1,
+    // and image previewers (Yazi, kitten icat) never detect Kitty support. So
+    // answer both at the boundary and strip the probes from what Restty renders.
+    // This mirrors the ET worker, which answers + strips probes upstream, so the
+    // scanner no-ops on ET output. Kitty image transmit packets (a=T) and the
+    // DSR cursor query are left intact for Restty to render / answer.
+    const { kittyReplies, sendDa1 } = this.queryScanner.ingest(text);
+    for (const reply of kittyReplies) this.emitInput(reply);
+    if (sendDa1) this.emitInput(DA1_REPLY);
+    this.callbacks?.onData?.(stripInboundTerminalProbes(text));
   }
 
   /** Render trusted local output without OSC capture, DA replies, or remote input. */

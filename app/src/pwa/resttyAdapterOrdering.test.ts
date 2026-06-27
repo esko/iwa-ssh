@@ -1,12 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { DA1_REPLY } from './deviceAttributes';
 import { PaneBridge, type ResttyTerminalAdapter } from './resttyAdapter';
 
 describe('PaneBridge terminal reply ordering', () => {
-  afterEach(() => vi.useRealTimers());
-
-  it('sends queued Kitty acknowledgements before DA1 completes detection', async () => {
-    vi.useFakeTimers();
+  const makeBridge = () => {
     const owner = {
       notifyPaneOpen() {},
       captureOsc() {},
@@ -14,19 +11,46 @@ describe('PaneBridge terminal reply ordering', () => {
     } as unknown as ResttyTerminalAdapter;
     const bridge = new PaneBridge(1, owner);
     const sent: string[] = [];
-    const kittyAck = '\x1b_Gi=1;OK\x1b\\';
+    const rendered: string[] = [];
     bridge.onInput((data) => sent.push(data));
-    bridge.connect({
-      callbacks: {
-        // Restty drains parser-generated replies after accepting the output
-        // chunk. ET commonly coalesces all three Kitty probes and DA1 here.
-        onData: () => setTimeout(() => bridge.emitInput(kittyAck), 40),
-      },
-    });
+    bridge.connect({ callbacks: { onData: (d: string) => rendered.push(d) } });
+    return { bridge, sent, rendered };
+  };
 
+  it('answers a Kitty graphics probe then DA1, and hides both from Restty', () => {
+    const { bridge, sent, rendered } = makeBridge();
+
+    // Direct-medium (t=d) probe + DA1 sentinel, as Yazi/kitten icat send it.
     bridge.write('\x1b_Gi=1,a=q,t=d,f=24,s=1,v=1;MTIz\x1b\\\x1b[c');
-    await vi.advanceTimersByTimeAsync(50);
 
-    expect(sent).toEqual([kittyAck, DA1_REPLY]);
+    // Kitty ack precedes the DA1 terminator so detection completes.
+    expect(sent).toEqual(['\x1b_Gi=1;OK\x1b\\', DA1_REPLY]);
+    // The probe and DA1 query are answered at the boundary, not rendered.
+    expect(rendered.join('')).toBe('');
+  });
+
+  it('preserves image transmit packets for Restty while still answering DA1', () => {
+    const { bridge, sent, rendered } = makeBridge();
+
+    const transmit = '\x1b_Ga=T,f=100,i=1,s=1,v=1,m=1;AAAA\x1b\\';
+    bridge.write(`${transmit}\x1b[c`);
+
+    expect(sent).toEqual([DA1_REPLY]);
+    expect(rendered.join('')).toBe(transmit);
+  });
+
+  it('does not answer queries before a transport connects', () => {
+    const owner = {
+      notifyPaneOpen() {},
+      captureOsc() {},
+      focusPane() {},
+    } as unknown as ResttyTerminalAdapter;
+    const bridge = new PaneBridge(1, owner);
+    const sent: string[] = [];
+    bridge.onInput((data) => sent.push(data));
+
+    bridge.write('\x1b[c');
+
+    expect(sent).toEqual([]);
   });
 });
