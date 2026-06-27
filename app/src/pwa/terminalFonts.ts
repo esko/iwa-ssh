@@ -25,6 +25,8 @@ export type BundledFont = {
 
 export const BUNDLED_FONTS: readonly BundledFont[] = [
   { id: 'jetbrains-mono', family: 'JetBrains Mono', regular: '/fonts/JetBrainsMono-Regular.ttf', bold: '/fonts/JetBrainsMono-Bold.ttf' },
+  { id: 'fira-code', family: 'Fira Code', regular: '/fonts/FiraCode-Regular.ttf', bold: '/fonts/FiraCode-Bold.ttf' },
+  { id: 'source-code-pro', family: 'Source Code Pro', regular: '/fonts/SourceCodePro-Regular.ttf', bold: '/fonts/SourceCodePro-Bold.ttf' },
   { id: 'ibm-plex-mono', family: 'IBM Plex Mono', regular: '/fonts/IBMPlexMono-Regular.ttf', bold: '/fonts/IBMPlexMono-Bold.ttf' },
   { id: 'geist-mono', family: 'Geist Mono', regular: '/fonts/GeistMono-Regular.ttf', bold: '/fonts/GeistMono-Bold.ttf' },
   { id: 'red-hat-mono', family: 'Red Hat Mono', regular: '/fonts/RedHatMono-Regular.ttf', bold: '/fonts/RedHatMono-Bold.ttf' },
