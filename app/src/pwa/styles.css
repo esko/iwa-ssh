@@ -92,6 +92,18 @@
 @font-face { font-family: 'Red Hat Mono'; font-weight: 400; font-style: normal; font-display: swap; src: url('/fonts/RedHatMono-Regular.ttf') format('truetype'); }
 @font-face { font-family: 'Red Hat Mono'; font-weight: 700; font-style: normal; font-display: swap; src: url('/fonts/RedHatMono-Bold.ttf') format('truetype'); }
 @font-face { font-family: 'DM Mono'; font-weight: 400; font-style: normal; font-display: swap; src: url('/fonts/DMMono-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'Commit Mono'; font-weight: 400; font-style: normal; font-display: swap; src: url('/fonts/CommitMono-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'Commit Mono'; font-weight: 700; font-style: normal; font-display: swap; src: url('/fonts/CommitMono-Bold.ttf') format('truetype'); }
+@font-face { font-family: 'Meslo LG S'; font-weight: 400; font-style: normal; font-display: swap; src: url('/fonts/MesloLGS-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'Meslo LG S'; font-weight: 700; font-style: normal; font-display: swap; src: url('/fonts/MesloLGS-Bold.ttf') format('truetype'); }
+@font-face { font-family: 'Cascadia Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/fonts/CascadiaCode-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'Cascadia Code'; font-weight: 700; font-style: normal; font-display: swap; src: url('/fonts/CascadiaCode-Bold.ttf') format('truetype'); }
+@font-face { font-family: 'Hack'; font-weight: 400; font-style: normal; font-display: swap; src: url('/fonts/Hack-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'Hack'; font-weight: 700; font-style: normal; font-display: swap; src: url('/fonts/Hack-Bold.ttf') format('truetype'); }
+@font-face { font-family: 'Roboto Mono'; font-weight: 400; font-style: normal; font-display: swap; src: url('/fonts/RobotoMono-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'Roboto Mono'; font-weight: 700; font-style: normal; font-display: swap; src: url('/fonts/RobotoMono-Bold.ttf') format('truetype'); }
+@font-face { font-family: 'Intel One Mono'; font-weight: 400; font-style: normal; font-display: swap; src: url('/fonts/IntelOneMono-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'Intel One Mono'; font-weight: 700; font-style: normal; font-display: swap; src: url('/fonts/IntelOneMono-Bold.ttf') format('truetype'); }
 
 body {
   margin: 0;
