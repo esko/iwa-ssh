@@ -11,6 +11,8 @@ import { RemoteImageUploader } from '../ssh/RemoteImageUploader';
 import { connectNasshSftpSidecar, isSftpSubsystemUnavailable } from '../ssh/NasshSftpSidecar';
 import { uploadViaNasshExec } from '../ssh/NasshExecUploader';
 import { isTerminalAutoReplyOnly, stripInboundTerminalProbes, stripTerminalAutoReplies } from '../terminal/terminalAutoReplies';
+import { hostTargetKey } from './profileModel';
+import { HEARTBEAT_INTERVAL_MS, clearHeartbeat, recordHeartbeat } from '../storage/sessionLiveness';
 
 export type TransportStatusHandler = (status: TerminalTransportStatus, error?: string, meta?: SessionStatusMeta) => void;
 
@@ -235,11 +237,59 @@ export class EtDirectSocketsTransport implements TerminalTransport {
   }
 }
 
+/**
+ * Wrap a persistent transport (ET, Mosh) so it heartbeats per-host liveness
+ * while connected (ADR 0008 — the launcher shows a live dot on ET/Mosh pills).
+ * Protocol-agnostic and outside the transports themselves, so the ET worker and
+ * nassh bridge stay untouched: it only observes the status stream and clears the
+ * heartbeat on disconnect/dispose. SSH/echo are ephemeral and get no heartbeat.
+ */
+function withLivenessHeartbeat(
+  spec: LaunchConnectionIntent,
+  onStatus: TransportStatusHandler,
+  build: (status: TransportStatusHandler) => TerminalTransport,
+): TerminalTransport {
+  const key = hostTargetKey(spec);
+  const protocol = spec.protocol ?? 'ssh';
+  let timer: ReturnType<typeof setInterval> | null = null;
+  const stop = (): void => {
+    if (timer !== null) {
+      clearInterval(timer);
+      timer = null;
+    }
+    clearHeartbeat(key);
+  };
+  const start = (): void => {
+    if (timer !== null) return;
+    recordHeartbeat(key, protocol);
+    timer = setInterval(() => recordHeartbeat(key, protocol), HEARTBEAT_INTERVAL_MS);
+  };
+  const transport = build((status, error, meta) => {
+    if (status === 'connected') start();
+    else if (status === 'disconnected' || status === 'disconnecting' || status === 'error') stop();
+    onStatus(status, error, meta);
+  });
+  const dispose = transport.dispose.bind(transport);
+  transport.dispose = () => {
+    stop();
+    dispose();
+  };
+  return transport;
+}
+
 export function createTransport(spec: LaunchConnectionIntent, onStatus: TransportStatusHandler): TerminalTransport {
-  if (spec.protocol === 'et') return new EtDirectSocketsTransport(spec, onStatus);
-  return spec.protocol === 'echo'
-    ? new EchoTransport(spec, onStatus, {
-        banner: `\x1b[1;36miwa-ssh Ghostty echo\x1b[0m\r\nTarget: ${spec.username ?? 'user'}@${spec.hostname}`
-      })
-    : new SshDirectSocketsTransport(spec, onStatus);
+  if (spec.protocol === 'et') {
+    return withLivenessHeartbeat(spec, onStatus, (status) => new EtDirectSocketsTransport(spec, status));
+  }
+  if (spec.protocol === 'echo') {
+    return new EchoTransport(spec, onStatus, {
+      banner: `\x1b[1;36miwa-ssh Ghostty echo\x1b[0m\r\nTarget: ${spec.username ?? 'user'}@${spec.hostname}`,
+    });
+  }
+  // SSH and Mosh both run through the nassh bridge; only Mosh (persistent) gets
+  // a liveness heartbeat.
+  if (spec.protocol === 'mosh') {
+    return withLivenessHeartbeat(spec, onStatus, (status) => new SshDirectSocketsTransport(spec, status));
+  }
+  return new SshDirectSocketsTransport(spec, onStatus);
 }

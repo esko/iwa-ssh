@@ -45,3 +45,12 @@ async function saveProfileLastConnected(profileId: string, lastConnectedAt: numb
 function connectionKey(intent: Pick<ConnectionIntent, 'protocol' | 'username' | 'hostname' | 'port' | 'etPort'>): string {
   return `${intent.protocol}:${intent.username ?? ''}@${intent.hostname}:${intent.port ?? ''}:${intent.etPort ?? ''}`;
 }
+
+/**
+ * Case-insensitive identity of a connection target — used to de-dupe recents
+ * against saved hosts and to key per-host session liveness. Distinct from the
+ * private {@link connectionKey} (which preserves host case for recents dedup).
+ */
+export function hostTargetKey(intent: { protocol?: string; username?: string; hostname: string; port?: number; etPort?: number }): string {
+  return `${intent.protocol ?? 'ssh'}:${intent.username ?? ''}@${intent.hostname.toLowerCase()}:${intent.port ?? ''}:${intent.etPort ?? ''}`;
+}
