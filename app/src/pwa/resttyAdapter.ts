@@ -892,29 +892,36 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     state.oscBuffer = (state.oscBuffer + data).slice(-2048);
     let consumed = 0;
 
-    const titleRe = /\x1b\]([02]);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
-    let m: RegExpExecArray | null;
-    let lastTitle: RegExpExecArray | null = null;
-    while ((m = titleRe.exec(state.oscBuffer))) lastTitle = m;
-    if (lastTitle) {
-      consumed = Math.max(consumed, lastTitle.index + lastTitle[0].length);
-      const title = lastTitle[2];
-      if (title !== state.title) {
-        state.title = title;
-        if (bridge.paneId === this.activePaneId) this.titleListeners.forEach((cb) => cb(title));
+    // The buffer only ever holds a sequence once it contains an OSC introducer,
+    // but a dangling partial keeps it non-empty across later writes; skip the
+    // (global, backtracking) scans unless the relevant marker is actually present.
+    if (state.oscBuffer.includes('\x1b]0;') || state.oscBuffer.includes('\x1b]2;')) {
+      const titleRe = /\x1b\]([02]);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+      let m: RegExpExecArray | null;
+      let lastTitle: RegExpExecArray | null = null;
+      while ((m = titleRe.exec(state.oscBuffer))) lastTitle = m;
+      if (lastTitle) {
+        consumed = Math.max(consumed, lastTitle.index + lastTitle[0].length);
+        const title = lastTitle[2];
+        if (title !== state.title) {
+          state.title = title;
+          if (bridge.paneId === this.activePaneId) this.titleListeners.forEach((cb) => cb(title));
+        }
       }
     }
 
-    const cwdRe = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
-    let c: RegExpExecArray | null;
-    let lastCwd: RegExpExecArray | null = null;
-    while ((c = cwdRe.exec(state.oscBuffer))) lastCwd = c;
-    if (lastCwd) {
-      consumed = Math.max(consumed, lastCwd.index + lastCwd[0].length);
-      try {
-        state.cwd = decodeURIComponent(lastCwd[1]);
-      } catch {
-        state.cwd = lastCwd[1];
+    if (state.oscBuffer.includes('\x1b]7;file://')) {
+      const cwdRe = /\x1b\]7;file:\/\/[^/]*([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+      let c: RegExpExecArray | null;
+      let lastCwd: RegExpExecArray | null = null;
+      while ((c = cwdRe.exec(state.oscBuffer))) lastCwd = c;
+      if (lastCwd) {
+        consumed = Math.max(consumed, lastCwd.index + lastCwd[0].length);
+        try {
+          state.cwd = decodeURIComponent(lastCwd[1]);
+        } catch {
+          state.cwd = lastCwd[1];
+        }
       }
     }
 

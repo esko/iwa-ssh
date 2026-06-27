@@ -13,13 +13,26 @@ function randomText(length: number): string {
   return [...random].map((value) => ALPHANUMERIC[value % ALPHANUMERIC.length]).join('');
 }
 
+/**
+ * Cap retained bootstrap output. Both the IDPASSKEY parse and the failure scan
+ * only ever match in recent output, so dropping the older prefix keeps the
+ * per-write regex scans bounded (otherwise a chatty MOTD makes this O(n^2))
+ * while always preserving more than enough tail for any single line.
+ */
+const CAPTURE_OUTPUT_LIMIT = 256 * 1024;
+
 class CaptureTerminal implements TerminalSink {
   private output = '';
   private readonly listeners = new Set<(value: string) => void>();
+  // One decoder per terminal so a multi-byte UTF-8 sequence split across writes
+  // is stitched together instead of mis-decoded (a fresh decoder per call loses
+  // the streaming carry-over).
+  private readonly decoder = new TextDecoder();
 
   open(): void {}
   write(data: string | Uint8Array): void {
-    this.output += typeof data === 'string' ? data : new TextDecoder().decode(data, { stream: true });
+    this.output += typeof data === 'string' ? data : this.decoder.decode(data, { stream: true });
+    if (this.output.length > CAPTURE_OUTPUT_LIMIT) this.output = this.output.slice(-CAPTURE_OUTPUT_LIMIT);
     for (const listener of this.listeners) listener(this.output);
   }
   onInput(): TerminalSubscription { return { dispose() {} }; }
