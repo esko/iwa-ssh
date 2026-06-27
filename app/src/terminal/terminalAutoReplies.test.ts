@@ -33,6 +33,16 @@ describe('terminalQueryReplies', () => {
     const probes = ICAT_DIRECT_QUERY + ICAT_DIRECT_QUERY;
     expect(terminalQueryReplies(probes)).toEqual(['\x1b_Gi=1;OK\x1b\\']);
   });
+
+  it('answers DA1 for a kitty probe whose id is not 1 (Yazi TRT)', () => {
+    // Yazi's emulator detection probes kitty graphics with i=31 then uses DA1
+    // as the read sentinel; suppressing DA1 here makes Yazi time out (TRT).
+    const probes = '\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c';
+    expect(terminalQueryReplies(probes)).toEqual([
+      '\x1b_Gi=31;EINVAL: unsupported medium\x1b\\',
+      DA1_REPLY,
+    ]);
+  });
 });
 
 describe('TerminalQueryScanner', () => {

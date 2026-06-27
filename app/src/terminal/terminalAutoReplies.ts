@@ -60,8 +60,16 @@ export class TerminalQueryScanner {
       kittyReplies.push(kittyQueryReply(id));
     }
 
+    // DA1 doubles as the end-of-probe sentinel for kitty-graphics capability
+    // detection, so it must not arrive before the kitty reply it terminates.
+    // kitten/icat sends DIRECT(i=1) FILE(i=2) MEMORY(i=3) then DA1, gating on the
+    // direct probe — wait for i=1 there. Other apps (notably Yazi) probe with a
+    // different id (i=31) and send DA1 in the same write; answering that probe in
+    // this chunk lets DA1 follow immediately (kittyReplies are flushed first).
+    // Without the `kittyReplies.length` arm, DA1 stays suppressed forever (i=1
+    // never comes) and the app reports a terminal-response timeout (TRT).
     const sendDa1 = deviceAttributeReply(chunkText) !== null
-      && (this.answeredKittyIds.has('1') || !this.sawKittyProbe);
+      && (!this.sawKittyProbe || this.answeredKittyIds.has('1') || kittyReplies.length > 0);
 
     if (sendDa1) {
       this.answeredKittyIds.clear();
