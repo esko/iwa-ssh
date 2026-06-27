@@ -1980,6 +1980,48 @@ textarea {
   line-height: 1.55;
 }
 
+.secure-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.secure-input-wrap .secure-input-field {
+  flex: 1;
+  padding-right: 40px;
+}
+.secure-input-reveal {
+  position: absolute;
+  right: 6px;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.secure-input-reveal:hover {
+  color: var(--term-fg, #fff);
+  background: var(--line-2);
+}
+.secure-input-reveal[aria-pressed='true'] {
+  color: var(--accent, #6ea8fe);
+}
+.secure-caps-hint {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #f0b429;
+}
+.secure-caps-hint[hidden] {
+  display: none;
+}
+
 .prompt-fingerprint {
   margin: 0 0 8px;
   padding: 11px 13px;

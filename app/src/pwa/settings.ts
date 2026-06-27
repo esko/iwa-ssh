@@ -22,7 +22,7 @@ export const DEFAULT_PWA_SETTINGS: PwaTerminalSettings = {
   cursorStyle: 'block',
   terminalPadding: 0,
   scrollSensitivity: 1,
-  fontSmoothing: 'smooth',
+  fontSmoothing: 'grayscale',
   fontHinting: 'light',
   ligatures: true,
   nerdFontFallback: true,

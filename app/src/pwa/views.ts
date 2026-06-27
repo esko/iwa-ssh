@@ -387,14 +387,18 @@ function openOverlay(build: (close: () => void) => HTMLElement): void {
     if (index >= 0) overlayStack.splice(index, 1);
     window.removeEventListener('keydown', onKey, true);
   }
-  overlay.addEventListener('pointerdown', (event) => {
-    if (event.target === overlay) close();
-  });
   window.addEventListener('keydown', onKey, true);
   // Each stacked overlay paints above the previous one.
   overlay.style.zIndex = String(50 + overlayStack.length);
   overlayStack.push(overlay);
-  overlay.append(build(close));
+  const content = build(close);
+  // Close on any press that lands outside the modal content. Checking
+  // `!content.contains(target)` is more robust than `target === overlay`, which
+  // misses presses on an intermediate wrapper (some builders nest the dialog).
+  overlay.addEventListener('pointerdown', (event) => {
+    if (!content.contains(event.target as Node)) close();
+  });
+  overlay.append(content);
   document.body.append(overlay);
 }
 
@@ -1577,9 +1581,9 @@ function renderRenderingTab(body: HTMLElement, profileId: string): void {
   body.innerHTML =
     `<div class="group-title">Text rendering</div>` +
     setRow(
-      'Font smoothing',
-      `<select name="fontSmoothing">${opt('smooth', s.fontSmoothing, 'Smooth')}${opt('grayscale', s.fontSmoothing, 'Grayscale')}</select>`,
-      'Smooth uses gamma-corrected antialiasing; grayscale is sharper and flatter.',
+      'Text weight',
+      `<select name="fontSmoothing">${opt('grayscale', s.fontSmoothing, 'Thicker')}${opt('smooth', s.fontSmoothing, 'Normal')}</select>`,
+      'Thicker uses heavier (gamma-incorrect) glyph blending; Normal is lighter and gamma-corrected. Restty rasterizes grayscale either way — there is no subpixel mode.',
     ) +
     setRow(
       'Font hinting',
@@ -2211,7 +2215,15 @@ function placeTabStrip(): void {
   if (!tabStrip) return;
   const slot = document.getElementById(CAPTION_TABS_SLOT_ID);
   const host = slot ?? document.querySelector('.term-shell');
-  if (!host || tabStrip.parentElement === host) return;
+  if (!host) return;
+  // A prior terminal render parks its strip in the caption slot, which lives
+  // outside `root` — so a later root.innerHTML rewrite leaves it stranded. Drop
+  // any strip that isn't the current one, or the "+" new-tab button piles up
+  // (one stale strip per re-render, e.g. repeated auth/password retries).
+  host.querySelectorAll('.term-tabs').forEach((el) => {
+    if (el !== tabStrip) el.remove();
+  });
+  if (tabStrip.parentElement === host) return;
   if (slot) slot.append(tabStrip);
   else host.prepend(tabStrip);
 }

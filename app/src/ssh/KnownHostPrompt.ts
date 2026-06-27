@@ -137,8 +137,8 @@ export function showKnownHostPrompt(options: KnownHostPromptOptions): Promise<Ho
       });
     });
 
-    backdrop.addEventListener('click', (event) => {
-      if (event.target === backdrop) finish('cancel');
+    backdrop.addEventListener('pointerdown', (event) => {
+      if (!dialog.contains(event.target as Node)) finish('cancel');
     });
 
     document.addEventListener('keydown', onKeyDown, true);
