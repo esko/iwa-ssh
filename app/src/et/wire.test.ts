@@ -58,4 +58,44 @@ describe('Eternal Terminal wire protocol', () => {
     expect(packet.type).toBe(2);
     expect([...packet.payload]).toEqual([8, 9]);
   });
+
+  it('reads consecutive packets coalesced into a single stream chunk', async () => {
+    const first = framePacket({ encrypted: false, type: 2, payload: new Uint8Array([8, 9]) });
+    const second = framePacket({ encrypted: true, type: 3, payload: new Uint8Array([4, 5, 6]) });
+    const merged = new Uint8Array(first.byteLength + second.byteLength);
+    merged.set(first);
+    merged.set(second, first.byteLength);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        // One socket chunk spans both packets; the reader must hand out the first
+        // and resume mid-chunk for the second without losing bytes.
+        controller.enqueue(merged);
+        controller.close();
+      },
+    });
+    const reader = new EtStreamReader(stream);
+    const a = await reader.packet();
+    const b = await reader.packet();
+    expect([a.type, [...a.payload]]).toEqual([2, [8, 9]]);
+    expect([b.type, [...b.payload]]).toEqual([3, [4, 5, 6]]);
+  });
+
+  it('reassembles a large message fragmented across many small chunks', async () => {
+    const payload = new Uint8Array(200_000);
+    for (let i = 0; i < payload.byteLength; i += 1) payload[i] = i & 0xff;
+    const framed = framePacket({ encrypted: false, type: 7, payload });
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let offset = 0; offset < framed.byteLength; offset += 1500) {
+          controller.enqueue(framed.subarray(offset, offset + 1500));
+        }
+        controller.close();
+      },
+    });
+    const packet = await new EtStreamReader(stream).packet();
+    expect(packet.type).toBe(7);
+    expect(packet.payload.byteLength).toBe(payload.byteLength);
+    expect(packet.payload[0]).toBe(0);
+    expect(packet.payload[199_999]).toBe(199_999 & 0xff);
+  });
 });

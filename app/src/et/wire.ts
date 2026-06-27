@@ -72,7 +72,13 @@ export async function decryptEtPayload(passkey: string, sequence: number, cipher
 
 export class EtStreamReader {
   private readonly reader: ReadableStreamDefaultReader<Uint8Array>;
-  private buffered = new Uint8Array();
+  // Unconsumed socket chunks held by reference; `chunkOffset` tracks how far into
+  // the head chunk we've already read. Reassembling into one growing buffer would
+  // be O(n^2) on the hot inbound path and on the up-to-128 MiB catch-up handshake;
+  // this keeps it to a single copy per byte (only into the exact() result).
+  private chunks: Uint8Array[] = [];
+  private chunkOffset = 0;
+  private available = 0;
 
   constructor(stream: ReadableStream<Uint8Array>) {
     this.reader = stream.getReader();
@@ -80,17 +86,27 @@ export class EtStreamReader {
 
   async exact(length: number): Promise<Uint8Array> {
     if (length < 0 || length > ET_MAX_MESSAGE) throw new Error(`Invalid ET read length: ${length}`);
-    while (this.buffered.byteLength < length) {
+    while (this.available < length) {
       const { value, done } = await this.reader.read();
       if (done) throw new Error('ET socket closed');
       if (!value?.byteLength) continue;
-      const joined = new Uint8Array(this.buffered.byteLength + value.byteLength);
-      joined.set(this.buffered);
-      joined.set(value, this.buffered.byteLength);
-      this.buffered = joined;
+      this.chunks.push(value);
+      this.available += value.byteLength;
     }
-    const result = this.buffered.slice(0, length);
-    this.buffered = this.buffered.slice(length);
+    const result = new Uint8Array(length);
+    let written = 0;
+    while (written < length) {
+      const head = this.chunks[0];
+      const take = Math.min(head.byteLength - this.chunkOffset, length - written);
+      result.set(head.subarray(this.chunkOffset, this.chunkOffset + take), written);
+      written += take;
+      this.chunkOffset += take;
+      this.available -= take;
+      if (this.chunkOffset >= head.byteLength) {
+        this.chunks.shift();
+        this.chunkOffset = 0;
+      }
+    }
     return result;
   }
 
