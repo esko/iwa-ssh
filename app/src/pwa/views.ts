@@ -1581,7 +1581,7 @@ function renderRenderingTab(body: HTMLElement, profileId: string): void {
   body.innerHTML =
     `<div class="group-title">Text rendering</div>` +
     setRow(
-      'Text weight',
+      'Text rendering',
       `<select name="fontSmoothing">${opt('grayscale', s.fontSmoothing, 'Thicker')}${opt('smooth', s.fontSmoothing, 'Normal')}</select>`,
       'Thicker uses heavier (gamma-incorrect) glyph blending; Normal is lighter and gamma-corrected. Restty rasterizes grayscale either way — there is no subpixel mode.',
     ) +
