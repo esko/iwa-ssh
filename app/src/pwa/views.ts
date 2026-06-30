@@ -1269,14 +1269,13 @@ function openConnectionForm(opts: { profile?: Profile; onSaved?: () => void | Pr
 
 // ------------------------------------------------------------- settings ----
 
-type SettingsTab = 'appearance' | 'rendering' | 'keyboard' | 'behavior' | 'security' | 'about';
+type SettingsTab = 'appearance' | 'keyboard' | 'behavior' | 'security' | 'diagnostics';
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'appearance', label: 'Appearance' },
-  { id: 'rendering', label: 'Rendering' },
   { id: 'keyboard', label: 'Keyboard' },
   { id: 'behavior', label: 'Behavior' },
   { id: 'security', label: 'Security' },
-  { id: 'about', label: 'Diagnostics' },
+  { id: 'diagnostics', label: 'Diagnostics' },
 ];
 
 /**
@@ -1440,8 +1439,7 @@ export function openSettings(initial: SettingsTab = 'appearance'): void {
 
 function renderSettingsTab(body: HTMLElement, tab: SettingsTab, profileId: string): void {
   if (tab === 'appearance') return void renderAppearanceTab(body, profileId);
-  if (tab === 'rendering') return renderRenderingTab(body, profileId);
-  if (tab === 'about') return void renderAboutTab(body);
+  if (tab === 'diagnostics') return void renderDiagnosticsTab(body);
   if (tab === 'keyboard') return renderKeyboardTab(body, profileId);
   if (tab === 'security') return void renderSecurityTab(body);
   return renderBehaviorTab(body, profileId);
@@ -1571,83 +1569,6 @@ function openMasterPasswordModal(opts: { mode: 'set' | 'change' | 'remove'; onDo
   });
 }
 
-function renderRenderingTab(body: HTMLElement, profileId: string): void {
-  const s = getSettingsProfile(profileId).settings;
-  const save = (patch: Record<string, unknown>): void => {
-    const current = getSettingsProfile(profileId);
-    upsertSettingsProfile({ ...current, settings: normalizePwaSettings({ ...current.settings, ...patch }) });
-    void syncActiveTerminalSettings();
-  };
-  const opt = (value: string, current: string, label: string): string =>
-    `<option value="${value}"${value === current ? ' selected' : ''}>${label}</option>`;
-  // Base-weight "Medium" is offered only when the chosen bundled font ships a
-  // Medium cut (custom uploads are a single face, so never).
-  const selectedFontHasMedium = !isCustomSelection(s.fontFamily) && fontHasMedium(bundledFontForSelection(s.fontFamily));
-  body.innerHTML =
-    `<div class="group-title">Text rendering</div>` +
-    setRow(
-      'Text rendering',
-      `<select name="fontSmoothing">${opt('grayscale', s.fontSmoothing, 'Thicker')}${opt('smooth', s.fontSmoothing, 'Normal')}</select>`,
-      'Thicker uses heavier (gamma-incorrect) glyph blending; Normal is lighter and gamma-corrected. Restty rasterizes grayscale either way — there is no subpixel mode.',
-    ) +
-    setRow(
-      'Base weight',
-      `<select name="fontWeight"${selectedFontHasMedium ? '' : ' disabled'}>${opt('regular', s.fontWeight, 'Regular')}${selectedFontHasMedium ? opt('medium', s.fontWeight, 'Medium') : ''}</select>`,
-      selectedFontHasMedium
-        ? 'Render normal text in the font’s Medium (500) cut instead of Regular (400).'
-        : 'The selected font ships only a Regular cut — Medium is unavailable.',
-    ) +
-    setRow(
-      'Italics',
-      `<select name="useItalics"><option value="on"${s.useItalics ? ' selected' : ''}>On</option><option value="off"${s.useItalics ? '' : ' selected'}>Off</option></select>`,
-      'Render italic text where the app or theme asks for it (using the font’s italic cut); off keeps everything upright.',
-    ) +
-    setRow(
-      'Font hinting',
-      `<select name="fontHinting">${opt('light', s.fontHinting, 'Light')}${opt('normal', s.fontHinting, 'Normal')}${opt('off', s.fontHinting, 'Off')}</select>`,
-      'Aligns glyph stems to the pixel grid at small sizes.',
-    ) +
-    setRow(
-      'Ligatures',
-      `<select name="ligatures"><option value="on"${s.ligatures ? ' selected' : ''}>On</option><option value="off"${s.ligatures ? '' : ' selected'}>Off</option></select>`,
-      'Shapes programming ligatures (→, !=, =>) when the font provides them.',
-    ) +
-    setRow(
-      'Nerd Font icons',
-      `<select name="nerdFontFallback"><option value="on"${s.nerdFontFallback ? ' selected' : ''}>On</option><option value="off"${s.nerdFontFallback ? '' : ' selected'}>Off</option></select>`,
-      'Falls back to the bundled Symbols Nerd Font so prompt icons render with any text font.',
-    ) +
-    setRow(
-      'Nerd Font icon scale',
-      `<select name="nerdFontScale">${NERD_SCALE_STEPS.map(
-        (value) => opt(String(value), String(s.nerdFontScale), `${Math.round(value * 100)}%`),
-      ).join('')}</select>`,
-      'Scales icon glyphs relative to text (100% matches the text em square).',
-    ) +
-    `<p class="set-hint set-note">Rendering changes apply to newly opened tabs.</p>`;
-  body.querySelector<HTMLSelectElement>('[name="fontSmoothing"]')?.addEventListener('change', (e) =>
-    save({ fontSmoothing: (e.target as HTMLSelectElement).value }),
-  );
-  body.querySelector<HTMLSelectElement>('[name="fontWeight"]')?.addEventListener('change', (e) =>
-    save({ fontWeight: (e.target as HTMLSelectElement).value }),
-  );
-  body.querySelector<HTMLSelectElement>('[name="useItalics"]')?.addEventListener('change', (e) =>
-    save({ useItalics: (e.target as HTMLSelectElement).value === 'on' }),
-  );
-  body.querySelector<HTMLSelectElement>('[name="fontHinting"]')?.addEventListener('change', (e) =>
-    save({ fontHinting: (e.target as HTMLSelectElement).value }),
-  );
-  body.querySelector<HTMLSelectElement>('[name="ligatures"]')?.addEventListener('change', (e) =>
-    save({ ligatures: (e.target as HTMLSelectElement).value === 'on' }),
-  );
-  body.querySelector<HTMLSelectElement>('[name="nerdFontFallback"]')?.addEventListener('change', (e) =>
-    save({ nerdFontFallback: (e.target as HTMLSelectElement).value === 'on' }),
-  );
-  body.querySelector<HTMLSelectElement>('[name="nerdFontScale"]')?.addEventListener('change', (e) =>
-    save({ nerdFontScale: Number((e.target as HTMLSelectElement).value) }),
-  );
-}
-
 /** Discrete Nerd Font icon-scale steps, rendered as percentages (within the 0.5–1.5 clamp). */
 const NERD_SCALE_STEPS: number[] = [0.5, 0.65, 0.75, 0.9, 1, 1.25, 1.5];
 
@@ -1753,6 +1674,14 @@ async function renderAppearanceTab(body: HTMLElement, profileId: string): Promis
     ? customFonts.find((f) => customSelection(f.id) === selectedFont)
     : undefined;
 
+  // Font-rendering helpers (merged from the former Rendering tab). Base-weight
+  // "Medium" is offered only when the chosen bundled font ships a Medium cut.
+  const selectedFontHasMedium = !isCustomSelection(s.fontFamily) && fontHasMedium(bundledFontForSelection(s.fontFamily));
+  const onOff = (name: string, on: boolean): string =>
+    `<select name="${name}"><option value="on"${on ? ' selected' : ''}>On</option><option value="off"${on ? '' : ' selected'}>Off</option></select>`;
+  const labeled = (name: string, current: string, entries: [string, string][]): string =>
+    `<select name="${name}">${entries.map(([v, l]) => `<option value="${v}"${v === current ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
+
   const swatches = [...THEME_PRESETS.entries()]
     .map(([id, p]) => {
       // A tiny faux terminal so the palette previews the way it will actually read.
@@ -1790,10 +1719,36 @@ README  <span style="color:${p.magenta}">.env</span></span>`;
     ${setRow('Size', `<select class="control-narrow" name="fontSize">${opts([12, 13, 14, 15, 16, 18, 20, 22], s.fontSize)}</select>`)}
     ${setRow('Cursor', `<select name="cursorStyle">${opts(['block', 'bar', 'underline'], s.cursorStyle)}</select>`)}
     ${setRow('Cursor blink', `<select name="cursorBlink">${opts(['on', 'off'], s.cursorBlink ? 'on' : 'off')}</select>`)}
+    <div class="group-title">Font rendering</div>
+    ${setRow(
+      'Text rendering',
+      labeled('fontSmoothing', s.fontSmoothing, [['grayscale', 'Thicker'], ['smooth', 'Normal']]),
+      'Thicker uses heavier (gamma-incorrect) glyph blending; Normal is lighter and gamma-corrected. Restty rasterizes grayscale either way — there is no subpixel mode.',
+    )}
+    ${setRow(
+      'Base weight',
+      selectedFontHasMedium
+        ? labeled('fontWeight', s.fontWeight, [['regular', 'Regular'], ['medium', 'Medium']])
+        : `<select name="fontWeight" disabled><option value="regular" selected>Regular</option></select>`,
+      selectedFontHasMedium
+        ? 'Render normal text in the font’s Medium (500) cut instead of Regular (400).'
+        : 'The selected font ships only a Regular cut — Medium is unavailable.',
+    )}
+    ${setRow('Italics', onOff('useItalics', s.useItalics), 'Render italic text where the app or theme asks for it (using the font’s italic cut); off keeps everything upright.')}
+    ${setRow('Font hinting', labeled('fontHinting', s.fontHinting, [['light', 'Light'], ['normal', 'Normal'], ['off', 'Off']]), 'Aligns glyph stems to the pixel grid at small sizes.')}
+    ${setRow('Ligatures', onOff('ligatures', s.ligatures), 'Shapes programming ligatures (→, !=, =>) when the font provides them.')}
+    ${setRow('Nerd Font icons', onOff('nerdFontFallback', s.nerdFontFallback), 'Falls back to the bundled Symbols Nerd Font so prompt icons render with any text font.')}
+    ${setRow(
+      'Nerd Font icon scale',
+      labeled('nerdFontScale', String(s.nerdFontScale), NERD_SCALE_STEPS.map((v): [string, string] => [String(v), `${Math.round(v * 100)}%`])),
+      'Scales icon glyphs relative to text (100% matches the text em square).',
+    )}
     <div class="group-title">Window</div>
     ${setRow('Padding', `<select class="control-narrow" name="terminalPadding">${opts([0, 4, 8, 12, 16, 24], s.terminalPadding)}</select>`, 'Space around the terminal canvas')}
     ${setRow('Scroll speed', `<select class="control-narrow" name="scrollSensitivity">${opts([0.5, 0.75, 1, 1.5, 2], s.scrollSensitivity)}</select>`, 'Trackpad / wheel scrollback multiplier')}
     ${setRow('Scrollback', `<select name="scrollback">${opts([1000, 5000, 10000, 20000], s.scrollback)}</select>`, 'Line history for new tabs and panes')}
+    ${setRow('Accent', labeled('accent', s.accent, [['green', 'Green'], ['blue', 'Blue'], ['amber', 'Amber']]), 'Status/affordance accent color in the app chrome.')}
+    ${setRow('Density', labeled('density', s.density, [['comfortable', 'Comfortable'], ['compact', 'Compact']]), 'Spacing of tabs and app chrome.')}
   `;
 
   const fontMsg = body.querySelector<HTMLElement>('#fontMsg');
@@ -1838,22 +1793,33 @@ README  <span style="color:${p.magenta}">.env</span></span>`;
     }),
   );
   body.querySelectorAll<HTMLElement>('input, select').forEach((field) =>
-    field.addEventListener('change', () => {
+    field.addEventListener('change', (event) => {
       const get = (n: string): string => body.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="${n}"]`)?.value ?? '';
       save({
         fontFamily: get('fontFamily'),
         fontSize: Number(get('fontSize')),
         cursorStyle: get('cursorStyle'),
         cursorBlink: get('cursorBlink') === 'on',
+        fontSmoothing: get('fontSmoothing'),
+        fontWeight: get('fontWeight'),
+        useItalics: get('useItalics') === 'on',
+        fontHinting: get('fontHinting'),
+        ligatures: get('ligatures') === 'on',
+        nerdFontFallback: get('nerdFontFallback') === 'on',
+        nerdFontScale: Number(get('nerdFontScale')),
         terminalPadding: Number(get('terminalPadding')),
         scrollSensitivity: Number(get('scrollSensitivity')),
         scrollback: Number(get('scrollback')),
+        accent: get('accent'),
+        density: get('density'),
       });
+      // Changing the font flips Medium availability and the Remove-font row.
+      if ((event.target as HTMLElement).getAttribute('name') === 'fontFamily') rerender();
     }),
   );
 }
 
-async function renderAboutTab(body: HTMLElement): Promise<void> {
+async function renderDiagnosticsTab(body: HTMLElement): Promise<void> {
   const gen = body.dataset.gen;
   const [diag, knownHosts] = await Promise.all([readDiagnostics(), listKnownHosts()]);
   if (body.dataset.gen !== gen) return;
@@ -1888,7 +1854,7 @@ async function renderAboutTab(body: HTMLElement): Promise<void> {
       body: 'Remove all trusted host keys from IndexedDB and nassh known_hosts. The next connect to each host will show the fingerprint prompt again.',
       confirmLabel: 'Clear',
       danger: true,
-      onConfirm: () => void wipeTrustedHostKeys().then(() => renderAboutTab(body)),
+      onConfirm: () => void wipeTrustedHostKeys().then(() => renderDiagnosticsTab(body)),
     }),
   );
 }
