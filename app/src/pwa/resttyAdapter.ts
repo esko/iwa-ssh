@@ -209,6 +209,35 @@ function pushWheelLog(data: Record<string, unknown>): void {
 const PTY_LOG_LIMIT = 60;
 const sharedTextDecoder = new TextDecoder();
 
+/** Throttle: a flood of BEL bytes (e.g. a misbehaving build log) plays one tone, not N. */
+const BELL_TONE_MIN_INTERVAL_MS = 250;
+let lastBellToneAt = 0;
+let bellAudioContext: AudioContext | null = null;
+
+/** Short, quiet two-tone blip — audible without resembling a system alert. */
+function playBellTone(): void {
+  const now = performance.now();
+  if (now - lastBellToneAt < BELL_TONE_MIN_INTERVAL_MS) return;
+  lastBellToneAt = now;
+  try {
+    bellAudioContext ??= new AudioContext();
+    const ctx = bellAudioContext;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+    gain.connect(ctx.destination);
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    osc.connect(gain);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.13);
+  } catch {
+    /* AudioContext unavailable (autoplay policy, headless test env) — silent. */
+  }
+}
+
 /** Trim the PTY input ring (kept for the debug HUD; no network egress). */
 function pushPtyLog(data: string): void {
   const win = window as unknown as { __resttyPtyLog?: string[] };
@@ -315,6 +344,7 @@ export class PaneBridge implements TerminalSink {
 
   write(data: string | Uint8Array): void {
     const text = typeof data === 'string' ? data : this.decoder.decode(data, { stream: true });
+    if (text.includes('\x07')) this.owner.triggerBell(this.paneId);
     this.owner.captureOsc(this, text);
     if (!this.connected) {
       this.callbacks?.onData?.(text);
@@ -1268,6 +1298,22 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
   /** Whether SGR italic should render; false makes PaneBridge strip it (upright). */
   get italicsEnabled(): boolean {
     return this.settings?.useItalics !== false;
+  }
+
+  /** BEL (\x07) handling for a pane, per the Behavior tab's bell setting. */
+  triggerBell(paneId: number): void {
+    const mode = this.settings?.bell ?? 'none';
+    if (mode === 'none') return;
+    if (mode === 'sound') {
+      playBellTone();
+      return;
+    }
+    const el = this.paneContainer(paneId);
+    if (!el) return;
+    el.classList.remove('pane-bell-flash');
+    // Force reflow so re-triggering the flash on a rapid second bell restarts the animation.
+    void el.offsetWidth;
+    el.classList.add('pane-bell-flash');
   }
 
   private applyAppearanceToPane(id: number, settings: PwaTerminalSettings): void {

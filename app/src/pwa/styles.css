@@ -2827,6 +2827,17 @@ html.app-chrome .term-debug-panel {
   top: calc(var(--titlebar-h) + 40px);
 }
 
+/* Visual bell: a brief inverted flash on the pane that rang BEL. */
+@keyframes pane-bell-flash {
+  0% { filter: invert(0); }
+  35% { filter: invert(1); }
+  100% { filter: invert(0); }
+}
+
+.pane-bell-flash {
+  animation: pane-bell-flash 180ms ease-out 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

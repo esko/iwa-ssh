@@ -53,4 +53,38 @@ describe('PaneBridge terminal reply ordering', () => {
 
     expect(sent).toEqual([]);
   });
+
+  it('triggers the owner bell on BEL and forwards the byte to Restty', () => {
+    const bellPaneIds: number[] = [];
+    const owner = {
+      notifyPaneOpen() {},
+      captureOsc() {},
+      focusPane() {},
+      triggerBell(paneId: number) { bellPaneIds.push(paneId); },
+    } as unknown as ResttyTerminalAdapter;
+    const bridge = new PaneBridge(7, owner);
+    const rendered: string[] = [];
+    bridge.connect({ callbacks: { onData: (d: string) => rendered.push(d) } });
+
+    bridge.write('build failed\x07');
+
+    expect(bellPaneIds).toEqual([7]);
+    expect(rendered.join('')).toBe('build failed\x07');
+  });
+
+  it('does not trigger the bell for output without BEL', () => {
+    const bellPaneIds: number[] = [];
+    const owner = {
+      notifyPaneOpen() {},
+      captureOsc() {},
+      focusPane() {},
+      triggerBell(paneId: number) { bellPaneIds.push(paneId); },
+    } as unknown as ResttyTerminalAdapter;
+    const bridge = new PaneBridge(1, owner);
+    bridge.connect({ callbacks: { onData: () => {} } });
+
+    bridge.write('no bell here');
+
+    expect(bellPaneIds).toEqual([]);
+  });
 });

@@ -1643,6 +1643,11 @@ function renderBehaviorTab(body: HTMLElement, profileId: string, forceCustomTerm
       `<select name="termType">${TERM_TYPE_PRESETS.map((t) => `<option value="${t}"${!isCustom && t === s.termType ? ' selected' : ''}>${t}</option>`).join('')}<option value="custom"${isCustom ? ' selected' : ''}>Custom…</option></select>`
       + (isCustom ? `<input type="text" name="termTypeCustom" class="control-narrow" value="${escapeHTML(TERM_TYPE_PRESETS.includes(s.termType) ? '' : s.termType)}" placeholder="my-term" autocomplete="off" spellcheck="false">` : ''),
       'TERM sent to the remote shell (e.g. xterm-256color). Applies to new connections.',
+    ) +
+    setRow(
+      'Bell',
+      `<select name="bell"><option value="none"${s.bell === 'none' ? ' selected' : ''}>None</option><option value="visual"${s.bell === 'visual' ? ' selected' : ''}>Visual</option><option value="sound"${s.bell === 'sound' ? ' selected' : ''}>Sound</option></select>`,
+      'How BEL (\\x07) from the remote shell is reported.',
     );
 
   const termTypeSelect = body.querySelector<HTMLSelectElement>('[name="termType"]')!;
@@ -1663,6 +1668,9 @@ function renderBehaviorTab(body: HTMLElement, profileId: string, forceCustomTerm
   );
   body.querySelector<HTMLSelectElement>('[name="closeOnExit"]')?.addEventListener('change', (e) =>
     save({ closeOnExit: (e.target as HTMLSelectElement).value === 'on' }),
+  );
+  body.querySelector<HTMLSelectElement>('[name="bell"]')?.addEventListener('change', (e) =>
+    save({ bell: (e.target as HTMLSelectElement).value }),
   );
 }
 
@@ -2625,11 +2633,17 @@ function arrowDirection(code: string): PaneDirection | null {
 function installTabShortcuts(): void {
   const handler = (event: KeyboardEvent): void => {
       if (!event.ctrlKey || event.metaKey) return;
-      if (event.shiftKey && event.code === 'KeyV') {
+      if (event.shiftKey && event.code === 'KeyV' && currentSettings().ctrlShiftCopyPaste) {
         event.preventDefault();
         event.stopImmediatePropagation();
         if (event.altKey) void uploadClipboardImageAndPastePath();
         else void pasteClipboard();
+        return;
+      }
+      if (event.shiftKey && !event.altKey && event.code === 'KeyC' && currentSettings().ctrlShiftCopyPaste) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        copySelection();
         return;
       }
       // Ctrl+Alt+Arrow resizes the focused pane toward the arrow (app feature,
@@ -2836,6 +2850,10 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
   terminalRoot.addEventListener('contextmenu', (event) => {
     event.preventDefault();
     event.stopPropagation();
+    if (currentSettings().rightClickPaste) {
+      void pasteClipboard();
+      return;
+    }
     // restty copies its own canvas selection (no public selection-text query),
     // so enable Copy whenever that path exists; it's a no-op with no selection.
     const canCopy = (activeTerminal?.hasSelection() ?? false) || canCopyViaRenderer();
@@ -2864,6 +2882,24 @@ function installTerminalContextMenu(terminalRoot: HTMLElement): void {
     ];
     showContextMenu(event.clientX, event.clientY, items);
   }, { capture: true });
+
+  // Middle-click paste (button 1; auxclick fires for non-primary buttons).
+  terminalRoot.addEventListener('auxclick', (event) => {
+    if (event.button !== 1) return;
+    if (!currentSettings().middleClickPaste) return;
+    event.preventDefault();
+    void pasteClipboard();
+  });
+
+  // Best-effort copy-on-select: restty exposes no selection-changed event, so
+  // this fires on every mouseup and relies on copySelection()/restty's own
+  // copy path being a silent no-op when nothing is selected.
+  terminalRoot.addEventListener('mouseup', (event) => {
+    if (event.button !== 0) return;
+    if (!currentSettings().copyOnSelect) return;
+    if (!(activeTerminal?.hasSelection() ?? false)) return;
+    copySelection();
+  });
 }
 
 /** One runnable entry in the command palette. */
