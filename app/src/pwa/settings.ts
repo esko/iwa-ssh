@@ -32,7 +32,25 @@ export const DEFAULT_PWA_SETTINGS: PwaTerminalSettings = {
   captureShortcuts: true,
   confirmClose: false,
   closeOnExit: true,
+  termType: 'xterm-256color',
+  bell: 'none',
+  copyOnSelect: false,
+  ctrlShiftCopyPaste: true,
+  rightClickPaste: false,
+  middleClickPaste: false,
 };
+
+/** Common TERM values offered in the Behavior tab; a custom value is also accepted. */
+export const TERM_TYPE_PRESETS: readonly string[] = [
+  'xterm-256color',
+  'xterm',
+  'screen-256color',
+  'tmux-256color',
+  'linux',
+];
+
+/** Conservative terminfo-identifier charset — guards against env/argv injection. */
+const TERM_TYPE_RE = /^[A-Za-z0-9_+.-]{1,40}$/;
 
 export function loadPwaSettings(): PwaTerminalSettings {
   try {
@@ -58,6 +76,10 @@ export function normalizePwaSettings(value: Partial<PwaTerminalSettings> | Recor
   const fontSmoothing = value.fontSmoothing === 'grayscale' ? 'grayscale' : 'smooth';
   const fontHinting = value.fontHinting === 'off' || value.fontHinting === 'normal' ? value.fontHinting : 'light';
   const terminalPadding = Number(value.terminalPadding);
+  const bell = value.bell === 'visual' || value.bell === 'sound' ? value.bell : 'none';
+  const termType = typeof value.termType === 'string' && TERM_TYPE_RE.test(value.termType.trim())
+    ? value.termType.trim()
+    : DEFAULT_PWA_SETTINGS.termType;
   let theme: TerminalTheme = { preset: 'dark' };
 
   if (value.theme && typeof value.theme === 'object') {
@@ -119,6 +141,12 @@ export function normalizePwaSettings(value: Partial<PwaTerminalSettings> | Recor
     captureShortcuts: typeof value.captureShortcuts === 'boolean' ? value.captureShortcuts : DEFAULT_PWA_SETTINGS.captureShortcuts,
     confirmClose: typeof value.confirmClose === 'boolean' ? value.confirmClose : DEFAULT_PWA_SETTINGS.confirmClose,
     closeOnExit: typeof value.closeOnExit === 'boolean' ? value.closeOnExit : DEFAULT_PWA_SETTINGS.closeOnExit,
+    termType,
+    bell,
+    copyOnSelect: typeof value.copyOnSelect === 'boolean' ? value.copyOnSelect : DEFAULT_PWA_SETTINGS.copyOnSelect,
+    ctrlShiftCopyPaste: typeof value.ctrlShiftCopyPaste === 'boolean' ? value.ctrlShiftCopyPaste : DEFAULT_PWA_SETTINGS.ctrlShiftCopyPaste,
+    rightClickPaste: typeof value.rightClickPaste === 'boolean' ? value.rightClickPaste : DEFAULT_PWA_SETTINGS.rightClickPaste,
+    middleClickPaste: typeof value.middleClickPaste === 'boolean' ? value.middleClickPaste : DEFAULT_PWA_SETTINGS.middleClickPaste,
   };
 }
 

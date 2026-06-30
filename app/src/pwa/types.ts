@@ -60,6 +60,18 @@ export type PwaTerminalSettings = {
   confirmClose: boolean;
   /** Auto-close a tab/pane when its session ends (off keeps it for reading). */
   closeOnExit: boolean;
+  /** TERM sent to the remote shell (SSH/ET bootstrap). */
+  termType: string;
+  /** BEL (\x07) handling: silent, a screen flash, or a short tone. */
+  bell: 'none' | 'visual' | 'sound';
+  /** Copy the active selection to the clipboard as soon as it is made. */
+  copyOnSelect: boolean;
+  /** Ctrl+Shift+C / Ctrl+Shift+V copy/paste (in addition to the OS default). */
+  ctrlShiftCopyPaste: boolean;
+  /** Paste clipboard contents on right-click instead of opening the context menu. */
+  rightClickPaste: boolean;
+  /** Paste the primary selection on middle-click. */
+  middleClickPaste: boolean;
 };
 
 export type RecentConnection = ConnectionIntent & {

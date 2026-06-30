@@ -1,5 +1,3 @@
-import type { TerminalAppearance } from '../settings/types';
-
 export type TerminalSubscription = {
   dispose(): void;
 };
@@ -52,5 +50,4 @@ export interface TerminalAdapter extends TerminalSink {
   open(el: HTMLElement): void;
   dispose(): void;
   fit?(): void;
-  updateAppearance?(appearance: TerminalAppearance): void;
 }

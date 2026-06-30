@@ -1,6 +1,3 @@
-export type CursorStyle = 'block' | 'bar' | 'underline';
-export type BellMode = 'none' | 'visual' | 'sound';
-
 export type ITheme = {
   background?: string;
   foreground?: string;
@@ -33,54 +30,6 @@ export type ThemePresetId =
   | 'solarized-light'
   | 'custom';
 
-export type TerminalAppearance = {
-  fontFamily: string;
-  fontSize: number;
-  lineHeight: number;
-  letterSpacing: number;
-  cursorStyle: CursorStyle;
-  cursorBlink: boolean;
-  boldTextEnabled: boolean;
-  bell: BellMode;
-  scrollbackLines: number;
-  themePreset: ThemePresetId;
-  customTheme?: ITheme;
-  theme: ITheme;
-};
-
-export type KeyboardSettings = {
-  ctrlShiftCopyPaste: boolean;
-  ctrlCopyPaste: boolean;
-  ctrlTNewTab: boolean;
-  ctrlWCloseTab: boolean;
-  ctrlTabSwitch: boolean;
-  altNumberSwitchTab: boolean;
-  copyOnSelect: boolean;
-  rightClickPaste: boolean;
-  middleClickPaste: boolean;
-  scrollToBottomOnKeypress: boolean;
-  altSendsEscape: boolean;
-  backspaceSendsDelete: boolean;
-  deleteSendsEscapeSequence: boolean;
-  kittyKeyboardProtocol: boolean;
-};
-
-export type TerminalBehavior = {
-  confirmCloseTab: boolean;
-  reconnectOnDisconnect: boolean;
-};
-
-export type TerminalPerformance = {
-  resizeDebounceMs: number;
-};
-
-export type AppSettings = {
-  appearance: TerminalAppearance;
-  keyboard: KeyboardSettings;
-  behavior: TerminalBehavior;
-  performance: TerminalPerformance;
-};
-
 export type Profile = {
   id: string;
   name: string;
@@ -93,7 +42,6 @@ export type Profile = {
   identityId?: string;
   connectionArgs?: string;
   startupCommand?: string;
-  terminalOverrides?: Partial<TerminalAppearance>;
   /** Connection profiles use one settings profile (see pwa/settingsProfiles). */
   settingsProfileId?: string;
   lastConnectedAt?: number;

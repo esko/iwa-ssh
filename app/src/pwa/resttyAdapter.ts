@@ -1259,8 +1259,6 @@ export class ResttyTerminalAdapter implements TerminalAdapter {
     return this.panes.get(this.activePaneId)?.cwd ?? null;
   }
 
-  updateAppearance(): void {}
-
   /** Apply theme colors, cursor shape/blink, and font size to every pane. */
   setAppearance(settings: PwaTerminalSettings): void {
     this.settings = settings;

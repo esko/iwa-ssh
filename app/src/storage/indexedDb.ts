@@ -1,12 +1,12 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { AppSettings, Identity, KnownHost, Profile } from '../settings/types';
-import { DEFAULT_SETTINGS } from '../settings/defaults';
+import type { Identity, KnownHost, Profile } from '../settings/types';
 import { normalizeIdentity } from './identityNormalize';
 
 interface GoshDb extends DBSchema {
+  /** Unused legacy store kept for schema continuity; no live readers/writers. */
   settings: {
     key: 'app';
-    value: AppSettings;
+    value: unknown;
   };
   profiles: {
     key: string;
@@ -502,37 +502,6 @@ export async function clearEtSessionRecovery(sessionId: string): Promise<EtSessi
   await tx.objectStore('etSessions').put(next);
   await tx.done;
   return next;
-}
-
-export async function loadSettings(): Promise<AppSettings> {
-  const db = await getDb();
-  const stored = await db.get('settings', 'app');
-  if (!stored) return structuredClone(DEFAULT_SETTINGS);
-  return {
-    ...DEFAULT_SETTINGS,
-    ...stored,
-    appearance: {
-      ...DEFAULT_SETTINGS.appearance,
-      ...stored.appearance,
-    },
-    keyboard: {
-      ...DEFAULT_SETTINGS.keyboard,
-      ...stored.keyboard,
-    },
-    behavior: {
-      ...DEFAULT_SETTINGS.behavior,
-      ...stored.behavior,
-    },
-    performance: {
-      ...DEFAULT_SETTINGS.performance,
-      ...stored.performance,
-    },
-  };
-}
-
-export async function saveSettings(settings: AppSettings): Promise<void> {
-  const db = await getDb();
-  await db.put('settings', settings, 'app');
 }
 
 export async function listProfiles(): Promise<Profile[]> {
