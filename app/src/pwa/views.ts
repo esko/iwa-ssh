@@ -46,7 +46,25 @@ import {
   recordConnection,
   specToQuery,
 } from './profileModel';
-import { shouldPassThroughSystemShortcut } from './shortcuts';
+import {
+  shouldPassThroughSystemShortcut,
+  chordKeyFromEvent,
+  describeChordKey,
+  loadUserPassThroughChordKeys,
+  addUserPassThroughChordKey,
+  removeUserPassThroughChordKey,
+  CHROMEOS_SYSTEM_KEYS,
+  CTRL_BROWSER_CODES,
+} from './shortcuts';
+import {
+  SHORTCUT_ACTIONS,
+  loadKeybindings,
+  resolveAction,
+  setBinding,
+  resetKeybindings,
+  type ShortcutAction,
+  type ShortcutGroup,
+} from './keybindings';
 import { showContextMenu, type ContextMenuItem } from './contextMenu';
 import { CAPTION_TABS_SLOT_ID } from './windowControls';
 import { createTransport, type TerminalTransport } from './transport';
@@ -83,6 +101,17 @@ let homeKeydownCleanup: (() => void) | null = null;
 /** Removes the terminal view's document-level keydown listeners on teardown. */
 let tabShortcutsCleanup: (() => void) | null = null;
 let passThroughCleanup: (() => void) | null = null;
+/**
+ * When set, installTabShortcuts() routes the next Ctrl-chord here instead of
+ * dispatching it, so the Keyboard tab's rebind/add-pass-through flow can
+ * capture a chord that's still claimed by another binding (which would
+ * otherwise fire its action and swallow the keystroke before it gets here).
+ * `isLive` is checked first so a stray keystroke after Settings closes
+ * (Escape, backdrop click — both bypass openSettings' own render path) falls
+ * through to normal dispatch instead of being silently swallowed forever.
+ */
+let rebindCapture: { isLive: () => boolean; onKey: (event: KeyboardEvent) => void } | null = null;
+const MODIFIER_ONLY_CODES = new Set(['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight']);
 
 /** One restty split pane: its own transport bound to the pane's sink (ADR 0008). */
 type PaneConn = {
@@ -1572,13 +1601,29 @@ function openMasterPasswordModal(opts: { mode: 'set' | 'change' | 'remove'; onDo
 /** Discrete Nerd Font icon-scale steps, rendered as percentages (within the 0.5–1.5 clamp). */
 const NERD_SCALE_STEPS: number[] = [0.5, 0.65, 0.75, 0.9, 1, 1.25, 1.5];
 
-/** Shared on/off select, persisted to the settings profile and reapplied live. */
-function renderToggleTab(
+const SHORTCUT_GROUPS: ShortcutGroup[] = ['Tabs', 'Panes', 'View', 'Clipboard'];
+
+/** A short, human-readable sample of the built-in ChromeOS-reserved chords. */
+function builtInReservedSample(): string {
+  const ctrlSample = ['T', 'W', 'N', 'R', 'Tab'].filter((label) =>
+    CTRL_BROWSER_CODES.has(label === 'Tab' ? 'Tab' : `Key${label}`),
+  );
+  return `Ctrl+${ctrlSample.join(', Ctrl+')}, and hardware keys (volume, brightness, ${[...CHROMEOS_SYSTEM_KEYS][0]}, …)`;
+}
+
+/**
+ * `listening` tracks an in-progress rebind/add-pass-through capture so the tab
+ * can show "Press a key…" and so a rerender (tab switch, profile switch) tears
+ * down the previous capture via the `rebindCapture` guard in installTabShortcuts.
+ */
+function renderKeyboardTab(
   body: HTMLElement,
   profileId: string,
-  groupTitle: string,
-  rows: { name: keyof PwaTerminalSettings; label: string; hint: string; value: boolean }[],
+  listening: ShortcutAction | 'passthrough' | null = null,
+  message: string | null = null,
 ): void {
+  rebindCapture = null;
+  const s = getSettingsProfile(profileId).settings;
   const save = (patch: Record<string, unknown>): void => {
     const current = getSettingsProfile(profileId);
     upsertSettingsProfile({ ...current, settings: normalizePwaSettings({ ...current.settings, ...patch }) });
@@ -1586,26 +1631,95 @@ function renderToggleTab(
   };
   const onOff = (on: boolean): string =>
     `<option value="on"${on ? ' selected' : ''}>On</option><option value="off"${on ? '' : ' selected'}>Off</option>`;
-  body.innerHTML =
-    `<div class="group-title">${groupTitle}</div>` +
-    rows.map((r) => setRow(r.label, `<select name="${r.name}">${onOff(r.value)}</select>`, r.hint)).join('');
-  rows.forEach((r) => {
-    body.querySelector<HTMLSelectElement>(`[name="${r.name}"]`)?.addEventListener('change', (event) => {
-      save({ [r.name]: (event.target as HTMLSelectElement).value === 'on' });
-    });
-  });
-}
+  const rerender = (next: ShortcutAction | 'passthrough' | null = null, msg: string | null = null): void =>
+    renderKeyboardTab(body, profileId, next, msg);
 
-function renderKeyboardTab(body: HTMLElement, profileId: string): void {
-  const s = getSettingsProfile(profileId).settings;
-  renderToggleTab(body, profileId, 'Shortcuts', [
-    {
-      name: 'captureShortcuts',
-      label: 'Tab keys handled in app',
-      hint: 'Ctrl+T new tab, Ctrl+W close tab, Ctrl+Tab cycle. Off passes them to ChromeOS.',
-      value: s.captureShortcuts,
-    },
-  ]);
+  const bindings = loadKeybindings();
+  const passThrough = loadUserPassThroughChordKeys();
+
+  const chip = (listeningHere: boolean, label: string, dataAttr: string): string =>
+    listeningHere
+      ? `<span class="kb-chip kb-chip-listening">Press a key…</span>`
+      : `<button type="button" class="btn-ghost kb-chip" ${dataAttr}>${escapeHTML(label)}</button>`;
+
+  const shortcutRows = SHORTCUT_GROUPS.map((group) => {
+    const actions = SHORTCUT_ACTIONS.filter((a) => a.group === group);
+    return `<div class="group-title">${group}</div>` +
+      actions.map((a) => setRow(a.label, chip(listening === a.id, describeChordKey(bindings[a.id]), `data-rebind="${a.id}"`))).join('');
+  }).join('');
+
+  const passThroughRows = passThrough.length
+    ? passThrough.map((c) => setRow(describeChordKey(c), `<button type="button" class="btn-ghost" data-remove-passthrough="${escapeHTML(c)}">Remove</button>`)).join('')
+    : `<p class="set-hint set-note">No extra chords are passed through.</p>`;
+
+  body.innerHTML =
+    (message ? `<p class="set-hint set-note kb-message">${escapeHTML(message)}</p>` : '') +
+    `<div class="group-title">Shortcuts</div>` +
+    `<p class="set-hint set-note">Click a shortcut to rebind it.</p>` +
+    shortcutRows +
+    setRow('Reset all shortcuts', `<button type="button" class="btn-ghost" id="kbReset">Reset to defaults</button>`) +
+    `<div class="group-title">Pass to ChromeOS</div>` +
+    `<p class="set-hint set-note">These chords are never claimed by the app — ChromeOS / the browser handles them instead.</p>` +
+    passThroughRows +
+    setRow('Add a shortcut', chip(listening === 'passthrough', 'Add…', 'id="kbAddPassthrough"')) +
+    `<p class="set-hint set-note">Always reserved by ChromeOS, regardless of this list: ${escapeHTML(builtInReservedSample())}.</p>` +
+    `<div class="group-title">Copy & paste</div>` +
+    setRow('Copy on select', `<select name="copyOnSelect">${onOff(s.copyOnSelect)}</select>`, 'Copy the selection to the clipboard as soon as you make it.') +
+    setRow('Ctrl+Shift+C / Ctrl+Shift+V', `<select name="ctrlShiftCopyPaste">${onOff(s.ctrlShiftCopyPaste)}</select>`, 'Use these chords for copy/paste (in addition to the shortcuts above).') +
+    setRow('Right-click pastes', `<select name="rightClickPaste">${onOff(s.rightClickPaste)}</select>`, 'Off shows the context menu instead.') +
+    setRow('Middle-click pastes', `<select name="middleClickPaste">${onOff(s.middleClickPaste)}</select>`);
+
+  body.querySelectorAll<HTMLButtonElement>('[data-rebind]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.rebind as ShortcutAction;
+      rerender(action);
+      rebindCapture = {
+        isLive: () => body.isConnected,
+        onKey: (event) => {
+          const chord = chordKeyFromEvent(event);
+          const { conflict } = setBinding(bindings, action, chord);
+          if (conflict) {
+            const conflictLabel = SHORTCUT_ACTIONS.find((a) => a.id === conflict)?.label ?? conflict;
+            rerender(null, `${describeChordKey(chord)} is already bound to "${conflictLabel}".`);
+            return;
+          }
+          rerender(null);
+        },
+      };
+    }),
+  );
+  body.querySelector<HTMLButtonElement>('#kbReset')?.addEventListener('click', () => {
+    resetKeybindings();
+    rerender(null);
+  });
+  body.querySelector<HTMLButtonElement>('#kbAddPassthrough')?.addEventListener('click', () => {
+    rerender('passthrough');
+    rebindCapture = {
+      isLive: () => body.isConnected,
+      onKey: (event) => {
+        addUserPassThroughChordKey(chordKeyFromEvent(event));
+        rerender(null);
+      },
+    };
+  });
+  body.querySelectorAll<HTMLButtonElement>('[data-remove-passthrough]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      removeUserPassThroughChordKey(btn.dataset.removePassthrough ?? '');
+      rerender(null);
+    }),
+  );
+  body.querySelector<HTMLSelectElement>('[name="copyOnSelect"]')?.addEventListener('change', (e) =>
+    save({ copyOnSelect: (e.target as HTMLSelectElement).value === 'on' }),
+  );
+  body.querySelector<HTMLSelectElement>('[name="ctrlShiftCopyPaste"]')?.addEventListener('change', (e) =>
+    save({ ctrlShiftCopyPaste: (e.target as HTMLSelectElement).value === 'on' }),
+  );
+  body.querySelector<HTMLSelectElement>('[name="rightClickPaste"]')?.addEventListener('change', (e) =>
+    save({ rightClickPaste: (e.target as HTMLSelectElement).value === 'on' }),
+  );
+  body.querySelector<HTMLSelectElement>('[name="middleClickPaste"]')?.addEventListener('change', (e) =>
+    save({ middleClickPaste: (e.target as HTMLSelectElement).value === 'on' }),
+  );
 }
 
 /**
@@ -2618,103 +2732,86 @@ function toggleZoomActivePane(): boolean {
   return activeSession()?.terminal?.toggleZoomActivePane() ?? false;
 }
 
-/** Map an arrow KeyboardEvent.code to a pane direction, or null. */
-function arrowDirection(code: string): PaneDirection | null {
-  switch (code) {
-    case 'ArrowLeft': return 'left';
-    case 'ArrowRight': return 'right';
-    case 'ArrowUp': return 'up';
-    case 'ArrowDown': return 'down';
-    default: return null;
-  }
-}
+/** Runs an app shortcut action; returns true when it actually did something. */
+const shortcutHandlers: Record<ShortcutAction, () => boolean> = {
+  newTab: () => {
+    setActiveSession(createLauncherTab().id);
+    return true;
+  },
+  closeTab: () => {
+    const session = activeSession();
+    if (!session) return false;
+    confirmCloseSession(session, () => closeSession(session));
+    return true;
+  },
+  cycleTabNext: () => {
+    if (sessions.length < 2) return false;
+    cycleTab(1);
+    return true;
+  },
+  cycleTabPrev: () => {
+    if (sessions.length < 2) return false;
+    cycleTab(-1);
+    return true;
+  },
+  splitVertical: () => splitActivePane('vertical'),
+  splitHorizontal: () => splitActivePane('horizontal'),
+  closePane: () => closeActivePane(),
+  zoomPane: () => toggleZoomActivePane(),
+  focusPaneLeft: () => focusPaneInDirection('left'),
+  focusPaneRight: () => focusPaneInDirection('right'),
+  focusPaneUp: () => focusPaneInDirection('up'),
+  focusPaneDown: () => focusPaneInDirection('down'),
+  resizePaneLeft: () => resizeActivePane('left'),
+  resizePaneRight: () => resizeActivePane('right'),
+  resizePaneUp: () => resizeActivePane('up'),
+  resizePaneDown: () => resizeActivePane('down'),
+  commandPalette: () => {
+    openCommandPalette();
+    return true;
+  },
+  copy: () => {
+    if (!currentSettings().ctrlShiftCopyPaste) return false;
+    copySelection();
+    return true;
+  },
+  paste: () => {
+    if (!currentSettings().ctrlShiftCopyPaste) return false;
+    void pasteClipboard();
+    return true;
+  },
+  pasteImage: () => {
+    if (!currentSettings().ctrlShiftCopyPaste) return false;
+    void uploadClipboardImageAndPastePath();
+    return true;
+  },
+};
 
 /** In-window tab + split keys for the unframed app window (ADR 0008). */
 function installTabShortcuts(): void {
   const handler = (event: KeyboardEvent): void => {
-      if (!event.ctrlKey || event.metaKey) return;
-      if (event.shiftKey && event.code === 'KeyV' && currentSettings().ctrlShiftCopyPaste) {
+    if (rebindCapture) {
+      if (!rebindCapture.isLive()) {
+        rebindCapture = null;
+      } else {
+        if (!event.ctrlKey || MODIFIER_ONLY_CODES.has(event.code)) return;
+        const capture = rebindCapture;
         event.preventDefault();
         event.stopImmediatePropagation();
-        if (event.altKey) void uploadClipboardImageAndPastePath();
-        else void pasteClipboard();
+        capture.onKey(event);
         return;
       }
-      if (event.shiftKey && !event.altKey && event.code === 'KeyC' && currentSettings().ctrlShiftCopyPaste) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        copySelection();
-        return;
-      }
-      // Ctrl+Alt+Arrow resizes the focused pane toward the arrow (app feature,
-      // always claimed). Handled before the generic Alt pass-through below.
-      if (event.altKey && !event.shiftKey) {
-        const dir = arrowDirection(event.code);
-        if (dir && resizeActivePane(dir)) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-        }
-        return;
-      }
-      if (event.altKey) return;
-      if (event.code === 'Tab') {
-        if (!currentSettings().captureShortcuts || sessions.length < 2) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        cycleTab(event.shiftKey ? -1 : 1);
-        return;
-      }
-      if (event.shiftKey) {
-        // The command palette is an app feature (not a system shortcut), so it
-        // is always claimed regardless of the capture-shortcuts setting.
-        if (event.code === 'KeyP') {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          openCommandPalette();
-          return;
-        }
-        // Ctrl+Shift+Z maximizes/restores the focused pane (app feature).
-        if (event.code === 'KeyZ' && toggleZoomActivePane()) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          return;
-        }
-        // Ctrl+Shift+Arrow moves focus to the neighboring pane in that direction.
-        const navDir = arrowDirection(event.code);
-        if (navDir && focusPaneInDirection(navDir)) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          return;
-        }
-        // Splits are an app feature (not a system shortcut), so always handled:
-        // Ctrl+Shift+E → right, Ctrl+Shift+D → down, Ctrl+Shift+W → close pane.
-        if (event.code === 'KeyE' && splitActivePane('vertical')) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-        } else if (event.code === 'KeyD' && splitActivePane('horizontal')) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-        } else if (event.code === 'KeyW' && closeActivePane()) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-        }
-        return;
-      }
-      // Tab keys are gated by the Keyboard setting; when off they fall through
-      // to installShortcutPassThrough and on to ChromeOS.
-      if (!currentSettings().captureShortcuts) return;
-      if (event.code === 'KeyT') {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        setActiveSession(createLauncherTab().id);
-      } else if (event.code === 'KeyW') {
-        const session = activeSession();
-        if (session) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          confirmCloseSession(session, () => closeSession(session));
-        }
-      }
+    }
+    if (!event.ctrlKey || event.metaKey) return;
+    // A chord the user explicitly handed back to ChromeOS is never claimed,
+    // even if it still matches an app binding below.
+    if (loadUserPassThroughChordKeys().includes(chordKeyFromEvent(event))) return;
+    const action = resolveAction(event, loadKeybindings());
+    if (!action) return;
+    if (shortcutHandlers[action]()) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
   };
   document.addEventListener('keydown', handler, { capture: true });
   tabShortcutsCleanup = () => document.removeEventListener('keydown', handler, { capture: true });

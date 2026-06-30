@@ -2827,6 +2827,25 @@ html.app-chrome .term-debug-panel {
   top: calc(var(--titlebar-h) + 40px);
 }
 
+/* Keyboard tab: rebind chip + listening state + conflict message. */
+.kb-chip {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  padding: 6px 12px;
+  min-width: 84px;
+}
+
+.kb-chip-listening {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--accent, #7bd88f);
+  padding: 6px 12px;
+}
+
+.kb-message {
+  color: #e9a0a0;
+}
+
 /* Visual bell: a brief inverted flash on the pane that rang BEL. */
 @keyframes pane-bell-flash {
   0% { filter: invert(0); }

@@ -24,18 +24,16 @@ describe('PWA settings normalization', () => {
     expect(settings.theme).toEqual({ preset: 'dark' });
   });
 
-  it('defaults Keyboard/Behavior toggles and preserves explicit booleans', () => {
+  it('defaults Behavior toggles and preserves explicit booleans', () => {
     vi.stubGlobal('window', { location: { href: 'https://example.test/' } });
 
-    expect(normalizePwaSettings({})).toMatchObject({ captureShortcuts: true, confirmClose: false, closeOnExit: true });
-    expect(normalizePwaSettings({ captureShortcuts: false, confirmClose: true, closeOnExit: false })).toMatchObject({
-      captureShortcuts: false,
+    expect(normalizePwaSettings({})).toMatchObject({ confirmClose: false, closeOnExit: true });
+    expect(normalizePwaSettings({ confirmClose: true, closeOnExit: false })).toMatchObject({
       confirmClose: true,
       closeOnExit: false,
     });
     // Non-boolean inputs fall back to the defaults.
-    expect(normalizePwaSettings({ captureShortcuts: 'yes', confirmClose: 1 })).toMatchObject({
-      captureShortcuts: true,
+    expect(normalizePwaSettings({ confirmClose: 1 })).toMatchObject({
       confirmClose: false,
     });
   });
