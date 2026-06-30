@@ -40,6 +40,8 @@ export type NasshCommandBridgeOptions = {
   identityId?: string;
   connectionArgs?: string;
   startupCommand?: string;
+  /** TERM sent to the remote shell; defaults to NASSH_ENVIRONMENT.TERM. */
+  termType?: string;
   /** Host-key trust via secureInput only (avoids TTY yes corrupting remote commands). */
   allowHostKeyTtyResponse?: boolean;
   onStatus?: (status: ConnectionStatus, error?: string, meta?: SessionStatusMeta) => void;
@@ -224,7 +226,7 @@ export class NasshCommandBridge {
       syncStorage,
       terminalLocation: noopLocation,
       terminalWindow,
-      environment: { ...NASSH_ENVIRONMENT },
+      environment: { ...NASSH_ENVIRONMENT, ...(this.options.termType ? { TERM: this.options.termType } : {}) },
       onExit: (code) => {
         this.handleExit(code, 'nassh');
       },

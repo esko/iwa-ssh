@@ -5,6 +5,7 @@ import type { ConnectionIntent } from '../connections/ConnectionIntent';
 import { isKnownHostReadyForConnect } from '../ssh/nasshKnownHosts';
 import { wrapEtPasskey } from './sessionStore';
 import { buildEtBootstrapCommand } from './bootstrapCommand';
+import { resolveSettings } from '../pwa/settingsProfiles';
 
 const ALPHANUMERIC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -154,7 +155,7 @@ export async function createEtSession(spec: ConnectionIntent): Promise<string> {
   await runEtBootstrapPreflight(spec);
 
   const terminal = new CaptureTerminal();
-  const command = buildEtBootstrapCommand(clientId, passkey);
+  const command = buildEtBootstrapCommand(clientId, passkey, resolveSettings(spec.settingsProfileId).termType);
   let resolveOutput!: () => void;
   let rejectOutput!: (error: Error) => void;
   const outputReady = new Promise<void>((resolve, reject) => {

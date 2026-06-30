@@ -13,6 +13,7 @@ import { uploadViaNasshExec } from '../ssh/NasshExecUploader';
 import { isTerminalAutoReplyOnly, stripInboundTerminalProbes, stripTerminalAutoReplies } from '../terminal/terminalAutoReplies';
 import { hostTargetKey } from './profileModel';
 import { HEARTBEAT_INTERVAL_MS, clearHeartbeat, recordHeartbeat } from '../storage/sessionLiveness';
+import { resolveSettings } from './settingsProfiles';
 
 export type TransportStatusHandler = (status: TerminalTransportStatus, error?: string, meta?: SessionStatusMeta) => void;
 
@@ -108,6 +109,7 @@ export class SshDirectSocketsTransport implements TerminalTransport {
       identityId: this.spec.identityId,
       connectionArgs: this.spec.argstr,
       startupCommand: this.spec.startupCommand,
+      termType: resolveSettings(this.spec.settingsProfileId).termType,
       onStatus: (status, error, meta) => this.onStatus(status, error, meta),
     });
     this.delegate.attachTerminal(adapter);

@@ -8,7 +8,7 @@ import { escapeHTML, formatTime, requiredElement } from './dom';
 import { readDiagnostics } from './diagnostics';
 import { ResttyTerminalAdapter, type PaneDirection, type ResttyPaneSink } from './resttyAdapter';
 import type { TerminalSubscription } from '../terminal/TerminalAdapter';
-import { ensureTerminalFontLoaded, normalizePwaSettings, applyPwaAppearance } from './settings';
+import { ensureTerminalFontLoaded, normalizePwaSettings, applyPwaAppearance, TERM_TYPE_PRESETS } from './settings';
 import {
   BUNDLED_FONTS,
   DEFAULT_FONT_ID,
@@ -1608,22 +1608,62 @@ function renderKeyboardTab(body: HTMLElement, profileId: string): void {
   ]);
 }
 
-function renderBehaviorTab(body: HTMLElement, profileId: string): void {
+/**
+ * `forceCustomTermInput` keeps the custom-TERM text field visible across a
+ * rerender right after picking "Custom…" — at that point the saved settings
+ * value is still a preset (or empty), so deriving "is this custom?" from the
+ * settings alone would immediately collapse the field back to a dropdown.
+ */
+function renderBehaviorTab(body: HTMLElement, profileId: string, forceCustomTermInput = false): void {
   const s = getSettingsProfile(profileId).settings;
-  renderToggleTab(body, profileId, 'Session', [
-    {
-      name: 'confirmClose',
-      label: 'Confirm before closing a connected tab',
-      hint: 'Ctrl+W or the tab × ask first while a session is live.',
-      value: s.confirmClose,
-    },
-    {
-      name: 'closeOnExit',
-      label: 'Close the tab when the session ends',
-      hint: 'Off keeps the terminal open so you can read the final output.',
-      value: s.closeOnExit,
-    },
-  ]);
+  const save = (patch: Record<string, unknown>): void => {
+    const current = getSettingsProfile(profileId);
+    upsertSettingsProfile({ ...current, settings: normalizePwaSettings({ ...current.settings, ...patch }) });
+    void syncActiveTerminalSettings();
+  };
+  const onOff = (on: boolean): string =>
+    `<option value="on"${on ? ' selected' : ''}>On</option><option value="off"${on ? '' : ' selected'}>Off</option>`;
+  const isCustom = forceCustomTermInput || !TERM_TYPE_PRESETS.includes(s.termType);
+
+  body.innerHTML =
+    `<div class="group-title">Session</div>` +
+    setRow(
+      'Confirm before closing a connected tab',
+      `<select name="confirmClose">${onOff(s.confirmClose)}</select>`,
+      'Ctrl+W or the tab × ask first while a session is live.',
+    ) +
+    setRow(
+      'Close the tab when the session ends',
+      `<select name="closeOnExit">${onOff(s.closeOnExit)}</select>`,
+      'Off keeps the terminal open so you can read the final output.',
+    ) +
+    `<div class="group-title">Terminal</div>` +
+    setRow(
+      'Terminal type',
+      `<select name="termType">${TERM_TYPE_PRESETS.map((t) => `<option value="${t}"${!isCustom && t === s.termType ? ' selected' : ''}>${t}</option>`).join('')}<option value="custom"${isCustom ? ' selected' : ''}>Custom…</option></select>`
+      + (isCustom ? `<input type="text" name="termTypeCustom" class="control-narrow" value="${escapeHTML(TERM_TYPE_PRESETS.includes(s.termType) ? '' : s.termType)}" placeholder="my-term" autocomplete="off" spellcheck="false">` : ''),
+      'TERM sent to the remote shell (e.g. xterm-256color). Applies to new connections.',
+    );
+
+  const termTypeSelect = body.querySelector<HTMLSelectElement>('[name="termType"]')!;
+  termTypeSelect.addEventListener('change', () => {
+    if (termTypeSelect.value === 'custom') {
+      renderBehaviorTab(body, profileId, true);
+    } else {
+      save({ termType: termTypeSelect.value });
+      renderBehaviorTab(body, profileId);
+    }
+  });
+  body.querySelector<HTMLInputElement>('[name="termTypeCustom"]')?.addEventListener('change', (e) => {
+    const value = (e.target as HTMLInputElement).value.trim();
+    if (value) save({ termType: value });
+  });
+  body.querySelector<HTMLSelectElement>('[name="confirmClose"]')?.addEventListener('change', (e) =>
+    save({ confirmClose: (e.target as HTMLSelectElement).value === 'on' }),
+  );
+  body.querySelector<HTMLSelectElement>('[name="closeOnExit"]')?.addEventListener('change', (e) =>
+    save({ closeOnExit: (e.target as HTMLSelectElement).value === 'on' }),
+  );
 }
 
 function setRow(label: string, control: string, hint?: string): string {

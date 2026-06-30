@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TerminalAdapter } from '../terminal/TerminalAdapter';
 
 const mocks = vi.hoisted(() => ({
-  bridgeOptions: null as null | { onStatus?: (...args: unknown[]) => void },
+  bridgeOptions: null as null | { onStatus?: (...args: unknown[]) => void; termType?: string },
   et: {
     connectResolve: null as (() => void) | null,
     connectReject: null as ((error: Error) => void) | null,
@@ -38,6 +38,9 @@ vi.mock('../ssh/NasshCommandBridge', () => ({
     async disconnect(): Promise<void> {}
     dispose(): void {}
   },
+}));
+vi.mock('./settingsProfiles', () => ({
+  resolveSettings: vi.fn(() => ({ termType: 'xterm-256color' })),
 }));
 vi.mock('../et/bootstrap', () => ({
   createEtSession: vi.fn(async () => 'session-id'),
@@ -85,6 +88,16 @@ describe('SshDirectSocketsTransport', () => {
       'SSH exited with status 255',
       { disconnectReason: 'transport' },
     );
+  });
+
+  it('passes the resolved settings-profile TERM to the nassh bridge', async () => {
+    const transport = new SshDirectSocketsTransport(
+      { protocol: 'ssh', hostname: 'host', username: 'user', args: [] },
+      vi.fn(),
+    );
+    await transport.connect(adapter);
+
+    expect(mocks.bridgeOptions?.termType).toBe('xterm-256color');
   });
 });
 
